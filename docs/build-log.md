@@ -27902,3 +27902,58 @@ no migration. What a panel might hold that names it, and what becomes of each:
 were both red with the entry in the catalogue -- the second because the row
 came back as an override -- and green without it. The feature pages said five
 built-ins and now say four.
+
+## 2026-11-16 — The file viewer, batch 7c: archives and SQLite, the server's half
+
+Two listing routes beside `preview` and `inline`: `archive-entries` answers a zip's,
+a tar's or a `tar.gz`'s table of contents, and `sqlite` a database's tables
+and the first 200 rows of one. `SniffMedia` names the two kinds, `archive`
+and `sqlite`, and `preview` answers them with headers and no body; `SniffMagic`
+answers exactly what it did, and its guard now holds a zip, a gzip, a tar and
+a database as well. `wire.ts` has the two kinds; drawing them is the viewer's
+half.
+
+The zip is not read with `archive/zip`. That package reads the whole central
+directory into memory before it hands back the first entry, and the directory
+is whatever the archive says it is; so `browse/archive.go` reads the end
+record, refuses a directory the file is too small to hold -- the crafted zip
+claiming a gigabyte in a few hundred bytes -- and then walks the records one
+at a time, stopping at 10,000 entries or 32 MB of directory. A plain tar is
+listed by its headers: `archive/tar` seeks over an entry's bytes when its
+reader can seek, so the budget reader passes seeks through and counts only
+what is read, which is the PAX records and long names, bounded at 16 MB. A
+`tar.gz` cannot be seeked, so reaching the next header means inflating the
+entry, and that is bounded at 64 MB; a hundred megabytes of zeros in 98 KB
+stops there and says so. A gzip that is not a tar -- decided by a tar header's
+checksum in the first 512 bytes inflated -- is one entry with no size,
+because gzip keeps one only modulo 4 GiB. Names are listed as the archive has
+them and marked `unsafe` when they climb, are absolute, or carry a backslash
+or a drive letter: somebody looking at a suspicious archive wants to see the
+name, and the viewer wants to know not to trust it.
+
+The database is opened `?mode=ro&immutable=1`, with `_query_only`,
+`_defensive` and `trusted_schema` off on top. Immutable is the one with a test
+of its own: without it a read-only connection to a WAL database made its
+`-shm` in the project directory, and the route test watches the directory
+stay as it was. The one name a request supplies is matched against the
+database's own list before anything runs, and quoted as well -- two guards,
+because a table can be called `we"ird; x` and the list check alone would pass
+it to a statement it breaks. Every statement has a two-second deadline; a view
+that recurses forever and never yields a row is stopped at it. Views are
+listed and not counted, since counting one runs it. What a row carries is
+bounded in the statement rather than after it: a blob becomes its length and
+text is cut at 1,000 characters by `substr`, so the driver never hands over a
+gigabyte cell.
+
+Measured on this machine: a 10,000-entry zip (1.7 MB) lists in 1.5 ms, and a
+database of three tables and 100,000 rows answers in 3.7 ms, which is why both
+run on the request goroutine. Every guard was removed in turn and watched go
+red, thirty of them. The four write protections on the connection have no test
+each: the code issues no write, so taking any one of them away changes
+nothing a test can see, and they are there for the statement somebody adds
+later.
+
+The listing was `GET /api/projects/{id}/archive` in the design, and `POST` on
+that path archives the project: chi tells them apart by method, but a path
+that means "list this file" or "put this project away" depending on the verb
+reads two ways to everyone who is not a router. It is `archive-entries`.

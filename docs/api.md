@@ -260,6 +260,8 @@ counts and timestamps out of those files and nothing else leaves the machine.
 ### `GET /api/projects/{id}/preview/render?path=&scripts=`
 ### `GET /api/projects/{id}/inline?path=`
 ### `PUT /api/projects/{id}/file?path=`
+### `GET /api/projects/{id}/archive-entries?path=`
+### `GET /api/projects/{id}/sqlite?path=&table=`
 ### `POST /api/projects/{id}/upload?path=`
 ### `POST /api/projects`
 ### `PATCH /api/projects/{id}`
@@ -293,7 +295,9 @@ symlinks included.
 
 `preview` is `download` with a ceiling and an opinion. It answers with the
 bytes, and says what it decided they are in `X-Preview-Kind`: `text`, `image`,
-`pdf`, `video`, `audio` or `binary`. With `meta=1`, a media kind -- image,
+`pdf`, `video`, `audio`, `archive`, `sqlite` or `binary`. An `archive` or a
+`sqlite` is answered with its headers and no body, with or without `meta=1`:
+the viewer reads it from `archive-entries` or `sqlite`, below. With `meta=1`, a media kind -- image,
 PDF, video, audio -- is answered with its headers and no body, whatever its
 size: the viewer then streams it from `inline`. Without it an image or a PDF
 is sent as before, for a tab older than the viewer. For an image or a PDF, `X-Preview-Type` carries the media type it
@@ -371,6 +375,64 @@ The write is a temporary file beside the original and a rename over it, so a
 reader sees the old file or the new one and never half; the file's permission
 bits are kept. Each save is an audit row, `files.write`, with who, the
 project, the path written and the size.
+`archive-entries` is an archive's table of contents, as JSON; nothing in the archive
+is served or opened. A zip (`PK`), a gzip stream, a POSIX tar (`ustar` at
+byte 257), else `415`:
+
+```json
+{"format": "zip", "entries": [
+  {"path": "dir/b.txt", "size": 2, "modified": 1700000000, "isDir": false},
+  {"path": "../../etc/passwd", "size": 1, "modified": 0, "isDir": false, "unsafe": true}
+ ], "truncated": false}
+```
+
+`format` is `zip`, `tar`, `tar.gz`, or `gzip` -- one compressed file with no
+tar in it, listed as one entry named after the stream (or the file without
+`.gz`), with `size` `-1` and a `note` saying why: gzip keeps the size only
+modulo 4 GiB. `modified` is Unix seconds, `0` when the archive does not say; a
+zip with no extended timestamp records local time with no zone, and it is read
+as UTC. A name is listed as the archive holds it, and `unsafe` marks one an
+extractor could be led outside its directory by: absolute, a drive letter, a
+`..` element, a backslash.
+
+What is read is bounded, and an archive cannot claim its way past it: a zip's
+end record and central directory, at most 32 MB of the directory, and a
+directory the file is too small to hold is `422` before any of it is read; a
+tar's headers, seeking over every entry's bytes, with at most 16 MB of PAX
+records and long names read; a `tar.gz`, which cannot be seeked through, at
+most 64 MB inflated. Past 10,000 entries, or past one of those bounds, the
+listing stops, `truncated` is `true`, `X-Preview-Truncated: true` is set, and
+`note` says which. A damaged archive is `422` with a sentence; one damaged after
+some entries is those entries and a `note`.
+
+`sqlite` is a SQLite database's tables and the first rows of one, as JSON. The
+file must start `SQLite format 3\0`, else `415`. It is opened read-only and
+immutable (`?mode=ro&immutable=1`), so nothing is written and nothing appears
+beside it -- no `-wal`, no `-shm`, no lock taken on a file another process may
+be writing. The price of `immutable` is that rows still in another process's
+`-wal` are not seen. Every statement stops at two seconds.
+
+```json
+{"tables": [{"name": "people", "kind": "table", "rows": 250,
+             "columns": [{"name": "id", "type": "INTEGER"}, {"name": "photo", "type": "BLOB"}],
+             "sql": "CREATE TABLE people (...)"}],
+ "table": "people", "columns": [...],
+ "rows": [[1, {"blob": 4096}], [2, null]], "more": true}
+```
+
+`tables` are the tables and views, by name, without SQLite's own; at most
+1,000. `rows` is `-1` when it was not counted: always for a view, since
+counting one runs it, and for a table whose count ran out of time. `table` is
+the one asked for with `?table=`, else the first; a name the database does not
+list is `400` and nothing runs, and the name is quoted in the statement as
+well. Up to 200 rows, `more` when there are others, and at most 200 columns
+and 4 MB of text across them, with `note` saying which bound bit. A cell is
+`null` for NULL, a number for a REAL or an INTEGER that a double holds
+exactly, a string for TEXT, `{"int": "..."}` for a larger INTEGER,
+`{"real": "+Inf"}` for an infinity, `{"blob": n}` for a BLOB of `n` bytes --
+never its bytes -- and `{"text": "...", "more": true}` for TEXT cut at 1,000
+characters. A file that is not a readable database is `422` with a sentence;
+a statement past its time is `422` saying so.
 
 A directory is `400`, and so is a FIFO, a socket or a device node: opening a
 FIFO with no writer never returns, and it would take the request goroutine and
