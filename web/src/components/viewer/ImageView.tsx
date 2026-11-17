@@ -5,8 +5,9 @@ import { clampZoom, zoomAbout, type Zoom } from './zoom'
 
 /**
  * A picture, fitted to the window when it opens and zoomed from there: the
- * zoom keys and Ctrl with the wheel about the pointer, a drag to pan, two
- * fingers to pinch. A transparent picture sits on a checkerboard, so its
+ * zoom keys and the footer's buttons about the middle of the view, Ctrl with
+ * the wheel about the pointer, a double click between fitted and 100%, a drag
+ * to pan, two fingers to pinch. A transparent picture sits on a checkerboard, so its
  * transparency is something the reader can see rather than guess.
  *
  * Streamed from the inline route as an <img>, which runs nothing, an SVG
@@ -25,6 +26,7 @@ export function ImageView({
   onZoom,
   onSize,
   scaleRef,
+  zoomRef,
 }: {
   url: string
   alt: string
@@ -34,21 +36,15 @@ export function ImageView({
   onSize: (w: number, h: number) => void
   /** Where the zoom keys read the scale the picture is drawn at now. */
   scaleRef: React.RefObject<() => number>
+  /**
+   * Where the keys and the footer's buttons zoom: about the middle of the
+   * view. Set while the picture is on screen and null otherwise.
+   */
+  zoomRef: React.RefObject<((z: Zoom) => void) | null>
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
-  // Where to put the scroll after a zoom about a point: set by the gesture,
-  // applied once the new size is laid out.
-  const anchor = useRef<{ x: number; y: number; left: number; top: number; ratio: number } | null>(null)
-  useLayoutEffect(() => {
-    const a = anchor.current
-    const box = boxRef.current
-    if (!a || !box) return
-    anchor.current = null
-    box.scrollLeft = (a.left + a.x) * a.ratio - a.x
-    box.scrollTop = (a.top + a.y) * a.ratio - a.y
-  }, [zoom])
 
   /** The scale the picture is drawn at now: fitted, or set. */
   const scaleNow = () => {
@@ -59,14 +55,55 @@ export function ImageView({
   useLayoutEffect(() => {
     scaleRef.current = scaleNow
   })
+  // The point of the picture to keep where it is through a zoom: a point of
+  // the picture in its own pixels, and where in the view it was. Set by the
+  // gesture and applied on the next layout, whatever else changed, which is
+  // why there is no dependency list. In the picture's pixels rather than as a
+  // ratio of the scroll, because a fitted picture is centred by its margins
+  // and a zoomed one is not, and a ratio of the scroll would put a double click's
+  // 100% a margin's width away from the point clicked.
+  const anchor = useRef<{ px: number; py: number; x: number; y: number } | null>(null)
+  useLayoutEffect(() => {
+    const a = anchor.current
+    const box = boxRef.current
+    const img = imgRef.current
+    if (!a || !box || !img || !natural) return
+    anchor.current = null
+    const to = scaleNow()
+    const r = img.getBoundingClientRect()
+    const b = box.getBoundingClientRect()
+    box.scrollLeft += r.left + a.px * to - (b.left + a.x)
+    box.scrollTop += r.top + a.py * to - (b.top + a.y)
+  })
   const zoomAt = (next: number, clientX: number, clientY: number) => {
     const box = boxRef.current
-    if (!box) return
+    const img = imgRef.current
+    if (!box || !img) return
     const from = scaleNow()
-    const to = clampZoom(next)
-    const r = box.getBoundingClientRect()
-    anchor.current = { x: clientX - r.left, y: clientY - r.top, left: box.scrollLeft, top: box.scrollTop, ratio: to / from }
-    onZoom(to)
+    const r = img.getBoundingClientRect()
+    const b = box.getBoundingClientRect()
+    anchor.current = { px: (clientX - r.left) / from, py: (clientY - r.top) / from, x: clientX - b.left, y: clientY - b.top }
+    onZoom(clampZoom(next))
+  }
+  useLayoutEffect(() => {
+    zoomRef.current = (z: Zoom) => {
+      const box = boxRef.current
+      if (z === 'fit' || !box) return onZoom(z)
+      const b = box.getBoundingClientRect()
+      zoomAt(z, b.left + box.clientWidth / 2, b.top + box.clientHeight / 2)
+    }
+  })
+  useLayoutEffect(
+    () => () => {
+      zoomRef.current = null
+    },
+    [zoomRef],
+  )
+  // Fitted to 100% about the point clicked, and anything else back to fitted:
+  // what a double click does in every picture viewer.
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (zoom === 'fit') zoomAt(1, e.clientX, e.clientY)
+    else onZoom('fit')
   }
 
   const onWheel = (e: React.WheelEvent) => {
@@ -118,6 +155,7 @@ export function ImageView({
       data-testid="viewer-image"
       data-zoom={zoom === 'fit' ? 'fit' : zoom.toFixed(3)}
       onWheel={onWheel}
+      onDoubleClick={onDoubleClick}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}

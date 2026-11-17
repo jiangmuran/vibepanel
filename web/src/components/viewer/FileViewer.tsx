@@ -9,6 +9,8 @@ import {
   FileQuestion,
   Hash,
   Loader2,
+  Minus,
+  Plus,
   Search,
   WrapText,
   X,
@@ -48,7 +50,7 @@ import { findMatches, firstMatchFrom, lineEndings, parseGoTo, splitLines, stepMa
 import { TextBody, type ScrollRequest } from './TextBody'
 import { ImageView } from './ImageView'
 import type { PdfFailure } from './PdfView'
-import { zoomAbout, percent, type Zoom } from './zoom'
+import { MAX_ZOOM, MIN_ZOOM, zoomAbout, percent, type Zoom } from './zoom'
 
 /**
  * The document renderer, fetched the first time a Markdown file is opened.
@@ -241,6 +243,10 @@ function FileContent({
   const [zoom, setZoom] = useState<Zoom>('fit')
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null)
   const imageScale = useRef<() => number>(() => 1)
+  // A picture zooms about the middle of its view; a PDF does that itself.
+  const imageZoom = useRef<((z: Zoom) => void) | null>(null)
+  const zoomTo = (z: Zoom) => (imageZoom.current ?? setZoom)(z)
+  const zoomStep = (dir: 1 | -1) => zoomTo(zoomAbout(imageScale.current(), dir))
   // A PDF's pages: how many, the one at the top of the view, and a page to go
   // to. The zoom and its keys are the image's.
   const pdf = view.kind === 'pdf'
@@ -435,11 +441,12 @@ function FileContent({
       // An image's, and only while one is drawn.
       case 'zoomIn':
       case 'zoomOut':
-        if (showsImage || pdf) setZoom(zoomAbout(imageScale.current(), a === 'zoomIn' ? 1 : -1))
+        if (showsImage || pdf) zoomStep(a === 'zoomIn' ? 1 : -1)
         return
       case 'zoomReset':
-        if (showsImage || pdf) setZoom('fit')
+        if (showsImage || pdf) zoomTo('fit')
         return
+
       case 'prevPage':
         toPage(pageNow - 1)
         return
@@ -783,6 +790,7 @@ function FileContent({
               onZoom={setZoom}
               onSize={(w, h) => setImageSize({ w, h })}
               scaleRef={imageScale}
+              zoomRef={imageZoom}
             />
           ) : null
         }
@@ -811,9 +819,7 @@ function FileContent({
           )}
           <span className="tabular">{formatBytes(entry.size)}</span>
           <span aria-hidden="true">·</span>
-          <span className="tabular" data-testid="viewer-zoom">
-            {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
-          </span>
+          <ZoomControls zoom={zoom} onStep={zoomStep} onTo={zoomTo} />
           {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
         </footer>
       )}
@@ -832,9 +838,7 @@ function FileContent({
           )}
           <span className="tabular">{formatBytes(entry.size)}</span>
           <span aria-hidden="true">·</span>
-          <span className="tabular" data-testid="viewer-zoom">
-            {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
-          </span>
+          <ZoomControls zoom={zoom} onStep={zoomStep} onTo={zoomTo} />
           {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
         </footer>
       )}
@@ -904,6 +908,52 @@ function FileContent({
         </footer>
       )}
     </div>
+  )
+}
+
+/**
+ * The zoom in a footer, as buttons: the keys and Ctrl with the wheel are
+ * invisible, and a picture with nothing on screen to zoom it was a picture
+ * that could not be zoomed (「图片要能缩放」).
+ */
+function ZoomControls({ zoom, onStep, onTo }: { zoom: Zoom; onStep: (dir: 1 | -1) => void; onTo: (z: Zoom) => void }) {
+  return (
+    <span className="ml-auto flex items-center gap-1" data-testid="viewer-zoom-controls">
+      <button
+        type="button"
+        onClick={() => onStep(-1)}
+        disabled={zoom !== 'fit' && zoom <= MIN_ZOOM}
+        data-testid="viewer-zoom-out"
+        aria-label={t('viewer.zoomOut')}
+        title={t('viewer.zoomOut')}
+        className="vp-control disabled:opacity-40"
+      >
+        <Minus size={12} />
+      </button>
+      <span className="tabular min-w-[3.5em] text-center" data-testid="viewer-zoom" aria-live="polite">
+        {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
+      </span>
+      <button
+        type="button"
+        onClick={() => onStep(1)}
+        disabled={zoom !== 'fit' && zoom >= MAX_ZOOM}
+        data-testid="viewer-zoom-in"
+        aria-label={t('viewer.zoomIn')}
+        title={t('viewer.zoomIn')}
+        className="vp-control disabled:opacity-40"
+      >
+        <Plus size={12} />
+      </button>
+      {/* Says where it goes: 100% from fitted, fitted from anything else. */}
+      <button
+        type="button"
+        onClick={() => onTo(zoom === 'fit' ? 1 : 'fit')}
+        data-testid="viewer-zoom-toggle"
+        className="vp-control tabular text-vp-xs"
+      >
+        {zoom === 'fit' ? '100%' : t('viewer.fit')}
+      </button>
+    </span>
   )
 }
 

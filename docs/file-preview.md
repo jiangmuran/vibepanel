@@ -117,9 +117,14 @@ walks the table.
 ## Display
 
 - Images: fit to the window on open, with the real size in the footer
-  (`1920 × 1080 · 2.4M`). `+` `-` `0` and Ctrl+wheel zoom about the cursor;
-  drag pans; pinch zooms on a touch screen. A transparent image sits on a
-  checkerboard. An image that does not fit starts at its top-left, which is
+  (`1920 × 1080 · 2.4M`). The footer has the zoom as buttons too: −, the
+  scale, +, and one that goes to 100% from fitted and to fitted from
+  anything else, which a double click on the picture also does, about the
+  point clicked. `+` `-` `0` and the buttons zoom about the middle of the
+  view, Ctrl+wheel about the cursor; a wheel without Ctrl scrolls a zoomed
+  picture and is left alone on a fitted one; drag pans; pinch zooms on a
+  touch screen. A PDF's footer has the same buttons. A transparent image
+  sits on a checkerboard. An image that does not fit starts at its top-left, which is
   the bug 「图片预览有bug 没法看到开头」 already fixed once, kept by a test.
 - Code colours are theme tokens (`--vp-tok-keyword` and friends), redefined
   under `[data-theme]` and the media query like every other token and nowhere
@@ -155,7 +160,7 @@ In the viewer, when the focus is not in the find box:
 | `w` | wrap on and off |
 | `n` | line numbers on and off |
 | `s` | Source and Rendered |
-| `+` `-` `0` | zoom an image |
+| `+` `-` `0` | zoom an image or a PDF |
 | `d` | download |
 | `c` | copy the path |
 
