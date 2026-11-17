@@ -99,13 +99,14 @@ func TestTheInlineRouteNamesOnlyMediaTypes(t *testing.T) {
 			if !strings.HasPrefix(cd, "inline;") {
 				t.Errorf("%s: %s but %q", rel, ct, cd)
 			}
-			if ct != "application/pdf" && !strings.HasPrefix(csp, "sandbox") {
+			// A PDF too: pdf.js fetches its bytes, and no <object> embeds it.
+			if !strings.HasPrefix(csp, "sandbox") {
 				t.Errorf("%s: %s served inline without a sandbox: %q", rel, ct, csp)
 			}
-			// The panel's own frame-ancestors 'none' is replaced, never just
-			// dropped: the panel may embed these and nothing else may.
-			if !strings.Contains(csp, "frame-ancestors 'self'") {
-				t.Errorf("%s: %s served inline with %q, want frame-ancestors 'self'", rel, ct, csp)
+			// The panel's own frame-ancestors 'none' is kept, not dropped with
+			// the CSP it replaces: nothing frames these, the panel included.
+			if !strings.Contains(csp, "frame-ancestors 'none'") {
+				t.Errorf("%s: %s served inline with %q, want frame-ancestors 'none'", rel, ct, csp)
 			}
 		default:
 			t.Errorf("%s: served as %q, which is neither a listed media type nor a download", rel, ct)

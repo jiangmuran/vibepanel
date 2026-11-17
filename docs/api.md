@@ -326,11 +326,13 @@ an `<img>`, `<video>` or `<audio>` streams what it plays. The type comes from
 the bytes and from one list (`browse.MediaTypes`: PNG, JPEG, GIF, WebP, AVIF,
 ICO, BMP, PDF, MP4, QuickTime, WebM, Ogg, MP3, WAV, FLAC, M4A; and SVG: a
 `.svg` whose first bytes hold an `<svg` element). Anything else is the download's
-`application/octet-stream` attachment. Every inline response but a PDF carries
+`application/octet-stream` attachment. Every inline response carries
 `Content-Security-Policy: sandbox`, so an SVG opened at its own address is a
 document with no scripts and an opaque origin rather than a page on the
-panel's; a PDF is the exception because Chrome will not run its viewer in a
-sandboxed document, and its own script runs inside that viewer.
+panel's. A PDF included: the viewer reads it with pdf.js, which fetches the
+bytes, and a sandbox on a response does nothing to a fetch. The policy keeps
+the panel's `frame-ancestors 'none'`: an `<img>`, `<video>` or `<audio>` is
+not a frame, and nothing else draws these.
 
 A directory is `400`, and so is a FIFO, a socket or a device node: opening a
 FIFO with no writer never returns, and it would take the request goroutine and

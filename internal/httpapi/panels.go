@@ -284,12 +284,16 @@ func (s *Server) openProjectFile(w http.ResponseWriter, r *http.Request) (*os.Fi
 // from one list (browse.MediaTypes, plus SVG decided as the text route decides
 // it), and anything else is the download's octet-stream attachment, never
 // anything a browser draws; TestTheInlineRouteNamesOnlyMediaTypes walks the
-// list and a file of every other kind. And every inline response but a PDF
-// carries `Content-Security-Policy: sandbox`, so the one type on the list that
-// can script -- an SVG, opened at its own URL in a tab -- is a document with an
-// opaque origin and no scripts, not a page on the panel's. A PDF is the
-// exception because Chrome will not run its viewer in a sandboxed document;
-// a PDF's own script runs inside that viewer, not on the page's origin.
+// list and a file of every other kind. And every inline response carries
+// `Content-Security-Policy: sandbox`, so the one type on the list that can
+// script -- an SVG, opened at its own URL in a tab -- is a document with an
+// opaque origin and no scripts, not a page on the panel's.
+//
+// A PDF was the exception while the viewer embedded it in an <object>,
+// because Chrome will not run its viewer in a sandboxed document. pdf.js
+// reads the bytes with fetch now (docs/file-preview.md, 7a), and a response
+// header that governs documents does nothing to a fetch, so there is no
+// exception left.
 func (s *Server) handleInline(w http.ResponseWriter, r *http.Request) {
 	f, info, ok := s.openProjectFile(w, r)
 	if !ok {
@@ -317,15 +321,11 @@ func (s *Server) handleInline(w http.ResponseWriter, r *http.Request) {
 		`inline; filename="`+asciiFilename(name)+`"; filename*=UTF-8''`+rfc5987(name))
 	w.Header().Set("Content-Type", mime)
 	// nosniff comes from securityHeaders, on every response. Its CSP is
-	// replaced here, not added to: `frame-ancestors 'none'` would forbid the
-	// viewer's own <object> from embedding a PDF, so it is 'self' -- the
-	// panel may embed these, nothing else may -- and everything but a PDF is
-	// a sandbox with nothing to load beyond itself.
-	if mime == "application/pdf" {
-		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
-	} else {
-		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'")
-	}
+	// replaced here, not added to: a sandbox with nothing to load beyond
+	// itself. Nothing frames it -- <img>, <video> and <audio> are not frames
+	// -- so it keeps the panel's frame-ancestors 'none'. It was 'self' for
+	// the <object> a PDF used to be drawn in, and went with it.
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'")
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 
