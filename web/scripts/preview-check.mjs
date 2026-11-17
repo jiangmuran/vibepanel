@@ -55,6 +55,41 @@ writeFileSync(join(PROJ, 'large/nine-megabytes.bin'), Buffer.alloc(9 * 1024 * 10
 // A minified bundle: most of two megabytes on one line, short enough that
 // the server's 2 MB cut leaves its end -- where find has to reach -- in.
 writeFileSync(join(PROJ, 'large/bundle.min.js'), 'var a=1;'.repeat(240 * 1024) + 'var needle_at_the_end=2;\n')
+// Two hundred pages, for what a long PDF costs: the first page's paint, and
+// how many pages hold a canvas once all of them have been scrolled past.
+writeFileSync(join(PROJ, 'large/two-hundred-pages.pdf'), longPdf(200))
+
+/**
+ * A PDF of `n` pages, a line at the top of each and one at the bottom,
+ * written by hand as make.py does. The bottom line is for find: a match low
+ * on a page far from the view is where bringing the page into view is not
+ * enough, and the match itself has to be centred once the page is drawn.
+ */
+function longPdf(n) {
+  const objs = []
+  const obj = (body) => objs.push(body)
+  obj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+  const pagesId = 2 + 2 * n
+  for (let i = 1; i <= n; i++) {
+    const ops = `BT /F1 24 Tf 72 720 Td (Long PDF, page ${i} of ${n}) Tj ET BT /F1 12 Tf 72 60 Td (the bottom of page ${i}.) Tj ET`
+    obj(`<< /Length ${ops.length} >>\nstream\n${ops}\nendstream`)
+    obj(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 792] /Contents ${objs.length} 0 R /Resources << /Font << /F1 1 0 R >> >> >>`)
+  }
+  const kids = Array.from({ length: n }, (_, i) => `${3 + 2 * i} 0 R`).join(' ')
+  obj(`<< /Type /Pages /Kids [${kids}] /Count ${n} >>`)
+  obj(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`)
+  let out = '%PDF-1.4\n'
+  const offsets = []
+  objs.forEach((body, i) => {
+    offsets.push(out.length)
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`
+  })
+  const xref = out.length
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`
+  for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`
+  out += `trailer\n<< /Size ${objs.length + 1} /Root ${objs.length} 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return out
+}
 
 let cleanedUp = false
 const server = spawn(BIN, ['serve'], {
@@ -114,6 +149,8 @@ const KIND = [
   [/^img\/icon\.svg$/, 'text'],
   [/^media\/clip\./, 'video'],
   [/^media\/tone\./, 'audio'],
+  // The magic says PDF; pdf.js says it cannot open them (7a).
+  [/^docs\/(locked|broken)\.pdf$/, 'error'],
   [/\.pdf$/, 'pdf'],
   // Nine megabytes of 0x07: mostly control characters, so its bytes (batch 5).
   [/^large\/nine-megabytes\.bin$/, 'binary'],
@@ -241,8 +278,11 @@ try {
       try {
         await filesAtRoot(page)
         const v = await openFile(page, f)
-        const kind = await v.locator('[data-testid="viewer-content"]').getAttribute('data-kind')
         const want = kindOf(f)
+        // A PDF pdf.js cannot open is a PDF until pdf.js has said so.
+        await page.waitForFunction(([sel, w]) => document.querySelector(`${sel} [data-testid="viewer-content"]`)?.dataset.kind === w,
+          [VIEWER, want], { timeout: 5000 }).catch(() => {})
+        const kind = await v.locator('[data-testid="viewer-content"]').getAttribute('data-kind')
         if (kind !== want) note('FAIL', 'kinds', `${shape.name} ${f}: opened as ${kind}, want ${want}`)
         // The plain body, where there is one, must be the file's lines. The
         // preview this replaced ran a one-line sanitiser over whole files and
@@ -869,6 +909,239 @@ try {
     const z = await box.getAttribute('data-zoom')
     if (z === 'fit' || !(Number(z) > 0)) note('FAIL', 'media', `a pinch on a phone did not zoom (${z})`)
     else note('PASS', 'media', `a pinch on a phone zoomed to ${z}`)
+    await ctx.close()
+  }
+
+  // ── PDF ──────────────────────────────────────────────────────────────────
+  // 7a: pdf.js draws the pages, each when it comes near the view; the text is
+  // a layer over them that find searches and marks; PgUp, PgDn, g and G turn
+  // pages, Ctrl+G goes to one; the zoom is the image's. The bytes come from
+  // the inline route, sandboxed like every other medium, and there is no
+  // <object> left anywhere.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    const inline = []
+    page.on('response', (r) => {
+      if (r.url().includes('/inline?')) inline.push({ status: r.status(), csp: r.headers()['content-security-policy'] ?? '' })
+    })
+    const errors = []
+    page.on('pageerror', (e) => errors.push(String(e)))
+    await filesAtRoot(page)
+    const t0 = Date.now()
+    const v = await openFile(page, 'docs/manual.pdf')
+    const pdf = v.locator('[data-testid="viewer-pdf"]')
+    const drawn = (n) => page.waitForFunction(([sel, n]) =>
+      document.querySelector(`${sel} [data-page="${n}"][data-drawn]`), [VIEWER, n], { timeout: 10000 })
+    await drawn(1)
+    const firstPaint = Date.now() - t0
+    if ((await pdf.getAttribute('data-pages')) !== '3') note('FAIL', 'pdf', `manual.pdf has ${await pdf.getAttribute('data-pages')} pages, want 3`)
+    if (await page.locator('object').count()) note('FAIL', 'pdf', 'an <object> is still on the page')
+    const footer = () => v.locator('[data-testid="viewer-page"]').textContent()
+    if ((await v.locator('[data-testid="viewer-page"]').getAttribute('data-page')) !== '1') note('FAIL', 'pdf', `the footer says ${await footer()} on open`)
+    // Ink on the canvas: something was drawn, not a white rectangle.
+    const ink = (n) => v.locator(`[data-page="${n}"] canvas`).evaluate((c) => {
+      if (!c.width) return { dark: 0, colour: 0, width: 0 }
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+      let dark = 0
+      let colour = 0
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] < 100 && d[i + 1] < 100 && d[i + 2] < 100) dark++
+        if (Math.abs(d[i] - d[i + 2]) > 40 && d[i + 2] > 120) colour++
+      }
+      return { dark, colour, width: c.width }
+    })
+    const p1 = await ink(1)
+    if (p1.dark < 100) note('FAIL', 'pdf', `page 1 has ${p1.dark} dark pixels: nothing was drawn`)
+    // The text layer holds the page's words, for selection and find.
+    const layer = await v.locator('[data-page="1"] .vp-pdf-text').textContent()
+    if (!layer.includes('The first of three pages')) note('FAIL', 'pdf', `page 1's text layer reads ${JSON.stringify(layer.slice(0, 60))}`)
+    const sandboxed = inline.length > 0 && inline.every((x) => x.csp.startsWith('sandbox'))
+    if (!sandboxed) note('FAIL', 'pdf', `the PDF's bytes came without the sandbox: ${JSON.stringify(inline.slice(0, 2))}`)
+
+    // The page keys.
+    const pageIs = async (want, what) => {
+      await page.waitForFunction(([sel, w]) => document.querySelector(`${sel} [data-testid="viewer-page"]`)?.dataset.page === String(w),
+        [VIEWER, want], { timeout: 3000 })
+        .catch(async () => note('FAIL', 'pdf', `${what}: the footer says ${JSON.stringify(await footer())}, want page ${want}`))
+    }
+    await page.keyboard.press('PageDown')
+    await pageIs(2, 'PgDn')
+    await page.keyboard.press('G')
+    await pageIs(3, 'G')
+    await drawn(3)
+    const p3 = await ink(3)
+    if (p3.colour < 1000) note('FAIL', 'pdf', `page 3's picture is not on its canvas (${p3.colour} coloured pixels)`)
+    await page.keyboard.press('PageUp')
+    await pageIs(2, 'PgUp')
+    await page.keyboard.press('g')
+    await pageIs(1, 'g')
+    // Ctrl+G is go to page here, and the focus comes back to the pages.
+    await page.keyboard.press('Control+g')
+    const goto = v.locator('[data-testid="viewer-goto"]')
+    await goto.waitFor({ timeout: 3000 })
+    if (!(await goto.getAttribute('placeholder'))?.includes('3')) note('FAIL', 'pdf', `go to page says ${await goto.getAttribute('placeholder')}`)
+    await goto.fill('3')
+    await page.keyboard.press('Enter')
+    await pageIs(3, 'Ctrl+G 3')
+    const focusBack = await page.evaluate((sel) => document.activeElement?.dataset.testid === 'viewer-pdf' ||
+      document.querySelector(sel).contains(document.activeElement) && document.activeElement.tagName !== 'INPUT', VIEWER)
+    if (!focusBack) note('FAIL', 'pdf', 'after go to page the focus is not in the viewer')
+    await page.keyboard.press('g')
+    await pageIs(1, 'g after go to page')
+
+    // Scrolled by hand so page 2 starts a quarter of the way down the view,
+    // above the third the footer counts from, the footer says page 2. The
+    // pages were once measured from the dialog and not from the scroller, and
+    // by the header's height the footer read page 1 with page 2 filling most
+    // of the view.
+    await pdf.evaluate((b) => {
+      const p2 = b.querySelector('[data-page="2"]')
+      b.scrollTop += p2.getBoundingClientRect().top - b.getBoundingClientRect().top - b.clientHeight / 4
+    })
+    await pageIs(2, 'page 2 scrolled to the top of the view')
+    await page.keyboard.press('g')
+    await pageIs(1, 'g after scrolling')
+
+    // Find: a word only on page two, found, counted, marked and brought into
+    // view.
+    await page.keyboard.press('Control+f')
+    await v.locator('[data-testid="viewer-find"]').fill('lighthouse')
+    await page.waitForFunction((sel) => /1/.test(document.querySelector(`${sel} [data-testid="viewer-find-count"]`)?.textContent ?? '') &&
+      !document.querySelector(`${sel} [data-testid="viewer-find-count"]`).textContent.includes('+'), VIEWER, { timeout: 5000 })
+      .catch(async () => note('FAIL', 'pdf', `find "lighthouse" counted ${JSON.stringify(await v.locator('[data-testid="viewer-find-count"]').textContent())}`))
+    await page.keyboard.press('Enter')
+    const hit = v.locator('[data-page="2"] .vp-pdf-hit[data-current]')
+    await hit.waitFor({ timeout: 5000 }).catch(() => note('FAIL', 'pdf', 'Enter did not mark the match on page 2'))
+    if (await hit.count()) {
+      const seen = await hit.evaluate((h) => {
+        const r = h.getBoundingClientRect()
+        const b = h.closest('[data-testid="viewer-pdf"]').getBoundingClientRect()
+        return { inView: r.top >= b.top && r.bottom <= b.bottom, text: h.textContent }
+      })
+      if (!seen.inView) note('FAIL', 'pdf', 'the current match is not in view')
+      if (seen.text.toLowerCase() !== 'lighthouse') note('FAIL', 'pdf', `the mark covers ${JSON.stringify(seen.text)}, not the word`)
+    }
+    await v.locator('[data-testid="viewer-find"]').fill('page')
+    await page.waitForFunction((sel) => {
+      const t = document.querySelector(`${sel} [data-testid="viewer-find-count"]`)?.textContent ?? ''
+      return /\b4\b/.test(t) && !t.includes('+')
+    }, VIEWER, { timeout: 5000 })
+      .catch(async () => note('FAIL', 'pdf', `find "page" counted ${JSON.stringify(await v.locator('[data-testid="viewer-find-count"]').textContent())}, want 4`))
+    await page.screenshot({ path: join(SHOTS, 'pdf-find.png') })
+    await page.keyboard.press('Escape')
+
+    // Zoom: the keys, and the canvas drawn again at the new size once it
+    // settles rather than stretched for good.
+    await page.keyboard.press('g')
+    await pageIs(1, 'g before zoom')
+    const w0 = (await ink(1)).width
+    await page.keyboard.press('+')
+    await page.keyboard.press('+')
+    if ((await pdf.getAttribute('data-zoom')) === 'fit') note('FAIL', 'pdf', '`+` did not zoom')
+    await page.waitForFunction(([sel, w0]) => document.querySelector(`${sel} [data-page="1"] canvas`)?.width > w0 * 1.2,
+      [VIEWER, w0], { timeout: 5000 }).catch(() => note('FAIL', 'pdf', 'zoomed in, the page was not drawn again at the new size'))
+    await page.keyboard.press('0')
+    if ((await pdf.getAttribute('data-zoom')) !== 'fit') note('FAIL', 'pdf', '`0` did not fit')
+    const r = await pdf.boundingBox()
+    await page.mouse.move(r.x + r.width / 2, r.y + r.height / 3)
+    await page.keyboard.down('Control')
+    await page.mouse.wheel(0, -200)
+    await page.keyboard.up('Control')
+    await sleep(200)
+    if ((await pdf.getAttribute('data-zoom')) === 'fit') note('FAIL', 'pdf', 'Ctrl with the wheel did not zoom')
+    await page.screenshot({ path: join(SHOTS, 'pdf-zoom.png') })
+    await page.keyboard.press('Escape')
+    await page.locator(VIEWER).waitFor({ state: 'detached', timeout: 3000 }).catch(() => {})
+
+    // A PDF pdf.js cannot open says why, and offers the download.
+    for (const [f, want] of [['docs/locked.pdf', /protected by a password|有密码/], ['docs/broken.pdf', /pdf\.js/]]) {
+      await filesAtRoot(page)
+      const w = await openFile(page, f)
+      const msg = w.locator('[data-testid="preview-unavailable"]')
+      await msg.waitFor({ timeout: 10000 }).catch(() => {})
+      const text = (await msg.textContent().catch(() => '')) ?? ''
+      if (!want.test(text)) note('FAIL', 'pdf', `${f} says ${JSON.stringify(text.slice(0, 100))}`)
+      await page.keyboard.press('Escape')
+    }
+
+    // Two hundred pages: the first paint, and the canvases held after
+    // scrolling through all of them.
+    await filesAtRoot(page)
+    const t1 = Date.now()
+    const long = await openFile(page, 'large/two-hundred-pages.pdf')
+    await drawn(1)
+    const longPaint = Date.now() - t1
+    const lp = long.locator('[data-testid="viewer-pdf"]')
+    for (let i = 0; i < 25; i++) {
+      await lp.evaluate((b, i) => { b.scrollTop = (b.scrollHeight * (i + 1)) / 25 }, i)
+      await sleep(60)
+    }
+    await sleep(600)
+    const held = await lp.evaluate((b) => [...b.querySelectorAll('canvas')].filter((c) => c.width > 0).length)
+    await page.keyboard.press('G')
+    await pageIs(200, 'G on 200 pages')
+    // A match at the bottom of a page far away: its page is brought into
+    // view, drawn, and then the match centred, which only the page can do.
+    await page.keyboard.press('Control+f')
+    await long.locator('[data-testid="viewer-find"]').fill('bottom of page 150.')
+    await page.waitForFunction((sel) => /\b1\b/.test(document.querySelector(`${sel} [data-testid="viewer-find-count"]`)?.textContent ?? '') &&
+      !document.querySelector(`${sel} [data-testid="viewer-find-count"]`).textContent.includes('+'), VIEWER, { timeout: 15000 })
+      .catch(async () => note('FAIL', 'pdf', `find on 200 pages counted ${JSON.stringify(await long.locator('[data-testid="viewer-find-count"]').textContent())}`))
+    await page.keyboard.press('Enter')
+    const far = long.locator('[data-page="150"] .vp-pdf-hit[data-current]')
+    await far.waitFor({ timeout: 5000 }).catch(() => note('FAIL', 'pdf', 'the match on page 150 was not marked'))
+    await sleep(300)
+    if (await far.count()) {
+      const inView = await far.evaluate((h) => {
+        const r = h.getBoundingClientRect()
+        const b = h.closest('[data-testid="viewer-pdf"]').getBoundingClientRect()
+        return r.top >= b.top && r.bottom <= b.bottom
+      })
+      if (!inView) note('FAIL', 'pdf', 'the match at the bottom of page 150 was not brought into view')
+    }
+    await page.keyboard.press('Escape')
+    if (held > 8) note('FAIL', 'pdf', `${held} of 200 pages hold a canvas after scrolling through; pages far from the view must give theirs back`)
+    if (longPaint > 5000) note('FAIL', 'pdf', `the first page of 200 took ${longPaint} ms`)
+    await page.keyboard.press('Escape')
+    if (errors.length) note('FAIL', 'pdf', `thrown: ${errors[0].slice(0, 200)}`)
+    note('PASS', 'pdf', `3 pages drawn (first paint ${firstPaint} ms), a picture on page 3, the page keys and go to page, "lighthouse" found and marked on page 2, zoom redrawn; 200 pages: first paint ${longPaint} ms, ${held} canvases held after scrolling through`)
+    await ctx.close()
+  }
+
+  // A phone: the page fits the width, and two fingers zoom while one scrolls.
+  {
+    const ctx = await contextFor({ width: 320, height: 640, scheme: 'dark', phone: true })
+    const page = await ctx.newPage()
+    await filesAtRoot(page)
+    const v = await openFile(page, 'docs/manual.pdf')
+    await page.waitForFunction((sel) => document.querySelector(`${sel} [data-page="1"][data-drawn]`), VIEWER, { timeout: 10000 })
+      .catch(() => note('FAIL', 'pdf', 'phone: page 1 was not drawn'))
+    const pdf = v.locator('[data-testid="viewer-pdf"]')
+    await page.screenshot({ path: join(SHOTS, 'pdf-phone-fit.png') })
+    const fits = await pdf.evaluate((b) => b.querySelector('[data-page="1"]').getBoundingClientRect().width <= b.clientWidth)
+    if (!fits) note('FAIL', 'pdf', 'phone: the page is wider than the screen when fitted')
+    const touch = await pdf.evaluate((b) => getComputedStyle(b).touchAction)
+    if (touch !== 'pan-x pan-y') note('FAIL', 'pdf', `phone: touch-action is ${touch}; one finger must scroll natively and two must reach the viewer`)
+    const r = await pdf.boundingBox()
+    const cdp = await ctx.newCDPSession(page)
+    const cx = r.x + r.width / 2
+    const cy = r.y + r.height / 2
+    const pts = (d) => ({ touchPoints: [
+      { x: cx - d, y: cy, id: 1, radiusX: 4, radiusY: 4, force: 1 },
+      { x: cx + d, y: cy, id: 2, radiusX: 4, radiusY: 4, force: 1 },
+    ] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', ...pts(20) })
+    for (let d = 30; d <= 100; d += 10) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', ...pts(d) })
+      await sleep(16)
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await sleep(300)
+    const z = await pdf.getAttribute('data-zoom')
+    if (z === 'fit' || !(Number(z) > 0)) note('FAIL', 'pdf', `phone: a pinch did not zoom (${z})`)
+    await page.screenshot({ path: join(SHOTS, 'pdf-phone.png') })
+    note('PASS', 'pdf', `phone: fitted to 320, touch-action pan-x pan-y, a pinch zoomed to ${z}`)
     await ctx.close()
   }
 

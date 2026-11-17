@@ -56,6 +56,7 @@ export function shortcutLines(mac: boolean, side: 'terminal' | 'panel'): { title
     { combo: ['W'], what: 'keys.viewerWrap' },
     { combo: ['N'], what: 'keys.viewerNumbers' },
     { combo: ['S'], what: 'keys.viewerSource' },
+    { combo: ['PgUp', 'PgDn', 'G', `${k.shift}G`], what: 'keys.viewerPages' },
     { combo: ['+', '−', '0'], what: 'keys.viewerZoom' },
     { combo: ['D'], what: 'keys.viewerDownload' },
     { combo: ['C'], what: 'keys.viewerCopyPath' },

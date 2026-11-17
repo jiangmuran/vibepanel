@@ -27,6 +27,10 @@ export type ViewerAction =
   | 'zoomReset'
   | 'download'
   | 'copyPath'
+  | 'prevPage'
+  | 'nextPage'
+  | 'firstPage'
+  | 'lastPage'
 
 export interface KeyLike {
   key: string
@@ -47,6 +51,12 @@ export interface KeyContext {
   findOpen: boolean
   /** ⌘ rather than Ctrl is the platform's command key. */
   mac: boolean
+  /**
+   * The file on screen has pages (a PDF). Only then are PgUp, PgDn, `g` and
+   * `G` the viewer's: everywhere else PgUp and PgDn are the browser's scroll,
+   * and taking them would leave a log with no way to page through it.
+   */
+  pages?: boolean
 }
 
 /**
@@ -73,6 +83,19 @@ export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
   }
   if (ctx.inField) return null
   if (e.ctrlKey || e.metaKey || e.altKey) return null
+  if (ctx.pages) {
+    switch (e.key) {
+      case 'PageUp':
+        return 'prevPage'
+      case 'PageDown':
+        return 'nextPage'
+      // Shift is what makes `G`; the key is the letter it made.
+      case 'g':
+        return 'firstPage'
+      case 'G':
+        return 'lastPage'
+    }
+  }
   switch (e.key) {
     case '[':
       return 'prevFile'
