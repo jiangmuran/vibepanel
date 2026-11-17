@@ -1030,7 +1030,6 @@ const DICT = {
   'profile.name.builtin:claude': { zh: 'Claude Code', en: 'Claude Code' },
   'profile.name.builtin:codex': { zh: 'Codex', en: 'Codex' },
   'profile.name.builtin:opencode': { zh: 'opencode', en: 'opencode' },
-  'profile.name.builtin:agy': { zh: 'Antigravity CLI', en: 'Antigravity CLI' },
   'profile.builtinTag': { zh: '内置', en: 'Built in' },
   'profile.none': { zh: '还没有自己的配置', en: 'None of your own yet' },
   'profile.new': { zh: '新建配置', en: 'New profile' },

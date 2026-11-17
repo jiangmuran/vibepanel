@@ -27873,3 +27873,32 @@ re-reads the bytes on disk, where UTF-16 has NULs and Latin-1 is not UTF-8.
 `TestADecodedFileCannotBeSavedOver` checks both halves, for a UTF-16 file and
 a Latin-1 one. Before the condition it was red on the ETag half and green on
 the save half, and the condition taken out again turns it red.
+## 2026-11-16 — agy leaves the launch picker
+
+「很奇怪」: a fresh panel offered Antigravity CLI in the launch picker beside a
+shell, Claude Code, Codex and opencode, to everybody, whether or not they had
+ever installed it. `builtin:agy` is out of the catalogue. Nothing else about
+agy changes: its hook, its usage reader, its detection in a pane and its place
+in the chat bridge all stay, because those answer "this session is agy" and
+the picker answered "you probably want to start agy", which nobody had said.
+
+A built-in is a Go constant rather than a row, so leaving the catalogue needs
+no migration. What a panel might hold that names it, and what becomes of each:
+
+- **A row at `builtin:agy`**, written when somebody edited the built-in. That
+  edit is the owner's work, so it lists as one of their own profiles under the
+  name they gave it, no longer marked `overridden`, editable and deletable as
+  a row, and untouched by *Restore built-ins*, which only removes override rows
+  of built-ins that exist.
+- **`builtin:agy` in the arrangement's hidden list or its order.** Left alone.
+  Both are read only by matching ids in the list, so an id that matches nothing
+  does nothing, and pruning it would un-hide agy for whoever hid it if a later
+  release puts it back.
+- **A session started with it.** Its row keeps the id; restore after a reboot
+  already treats a profile that resolves to nothing as gone and restores the
+  session without it, and agy's built-in had no variables, so nothing is lost.
+
+`TestTheDefaultListDoesNotOfferAgy` and `TestAnEditedAgyIsKeptAsTheOwnersProfile`
+were both red with the entry in the catalogue -- the second because the row
+came back as an override -- and green without it. The feature pages said five
+built-ins and now say four.

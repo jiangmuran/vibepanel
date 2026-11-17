@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -481,5 +482,52 @@ func TestATildeInAProfileIsTheHomeDirectory(t *testing.T) {
 	}
 	if got := p.EnvPairs(); !reflect.DeepEqual(got, want) {
 		t.Errorf("EnvPairs = %v, want %v", got, want)
+	}
+}
+
+// 「很奇怪」: a fresh panel's picker offered Antigravity CLI next to Claude Code
+// and Codex. The panel still recognises agy -- hooks, usage, the chat bridge --
+// it just does not offer to start it.
+func TestTheDefaultListDoesNotOfferAgy(t *testing.T) {
+	db, ctx := openTemp(t)
+	list, err := db.ListLaunchProfiles(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, p := range list {
+		if p.ID == BuiltinPrefix+"agy" || slices.Contains(p.Command, "agy") {
+			t.Errorf("a fresh panel offers %+v", p)
+		}
+	}
+	if IsBuiltinLaunchProfile(BuiltinPrefix + "agy") {
+		t.Error("builtin:agy is still a built-in")
+	}
+}
+
+// A panel that edited the agy built-in before it left the catalogue has a row
+// at builtin:agy. That edit is the owner's work, so it stays as one of their
+// own profiles: listed, under the name they gave it, no longer an override of
+// something that is not there.
+func TestAnEditedAgyIsKeptAsTheOwnersProfile(t *testing.T) {
+	db, ctx := openTemp(t)
+	id := BuiltinPrefix + "agy"
+	if err := db.UpsertLaunchProfile(ctx, id, LaunchProfile{Name: "agy here", Command: []string{"agy"}}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	list, err := db.ListLaunchProfiles(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found []LaunchProfile
+	for _, p := range list {
+		if p.ID == id {
+			found = append(found, p)
+		}
+	}
+	if len(found) != 1 || found[0].Name != "agy here" || found[0].Builtin || found[0].Overridden {
+		t.Fatalf("the edited agy is listed as %+v, want it once, as the owner's own", found)
+	}
+	if p, err := db.GetLaunchProfile(ctx, id); err != nil || p.Name != "agy here" {
+		t.Fatalf("get: %+v %v", p, err)
 	}
 }
