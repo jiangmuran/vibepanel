@@ -172,7 +172,14 @@ async function failure(res: Response): Promise<Error> {
  * it -- so they come back as values while a 403 or a 500 throws.
  */
 export type FilePreview =
-  | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null }
+  | {
+      kind: 'text'
+      text: string
+      truncated: boolean
+      markup: Markup | null
+      /** What the file was before the server decoded it; null for UTF-8. */
+      encoding: string | null
+    }
   /** The first bytes of a file that is none of the others, for the hex view. */
   | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
   /** A medium: streamed from the inline route, so only its type comes back here. */
@@ -193,6 +200,15 @@ export type Markup = 'html' | 'svg'
  *  server must not offer to render a kind it has no isolation story for. */
 function markupOf(header: string | null): Markup | null {
   return header === 'html' || header === 'svg' ? header : null
+}
+
+/**
+ * The encodings the server decodes (browse.Decode), and nothing else: the
+ * footer draws this, and a header is a string anything could have put there.
+ */
+const ENCODINGS = ['UTF-16 LE', 'UTF-16 BE', 'Latin-1'] as const
+function encodingOf(header: string | null): string | null {
+  return ENCODINGS.find((e) => e === header) ?? null
 }
 
 
@@ -1427,6 +1443,7 @@ export const api = {
         text: await res.text(),
         truncated: res.headers.get('X-Preview-Truncated') === 'true',
         markup: markupOf(res.headers.get('X-Preview-Markup')),
+        encoding: encodingOf(res.headers.get('X-Preview-Encoding')),
       }
     }
     if (kind === 'binary') {
