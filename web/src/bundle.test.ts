@@ -42,8 +42,10 @@ describe('the bundle', () => {
   it('stays inside its sizes', () => {
     expect(main!.bytes, `${main!.name}`).toBeLessThanOrEqual(1_400_000)
     // 48 KB in batch 1; Prism's core joined it in batch 2, about 22 KB; 7a's
-    // page keys, footer and the PDF view's wiring, about 2 KB.
-    expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(68_000)
+    // page keys, footer and the PDF view's wiring, about 2 KB; 7b's notebook
+    // parser -- needed here, to know a notebook is one before drawing it --
+    // and the wiring for notebooks and encodings, about 3 KB.
+    expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(72_000)
   })
 
   it('keeps the Markdown parser in a chunk of its own', () => {
@@ -100,5 +102,12 @@ describe('the bundle', () => {
       if (!/\.(m?js)$/.test(f)) continue
       expect(readFileSync(join(DIST, f), 'utf8'), f).not.toMatch(/skia\.[a-z0-9-]+\.node/)
     }
+  })
+
+  it('keeps the notebook in a chunk of its own', () => {
+    // 7b: small, and only a notebook ever needs it.
+    const nb = chunk('NotebookView-')
+    expect(nb, 'the notebook view is not a separate chunk').not.toBeNull()
+    expect(nb!.bytes, nb!.name).toBeLessThanOrEqual(6_000)
   })
 })

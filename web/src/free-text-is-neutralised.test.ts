@@ -64,6 +64,11 @@ describe('text from outside the panel', () => {
             // render. What this is looking for is a value reaching the DOM.
             if (/=\s*$/.test(line.slice(0, match.index))) continue
             if (expr.includes('safeText(')) continue
+            // safeBody is safeText for a body of lines: the same bidi
+            // overrides and invisibles go, and newlines and tabs stay. A
+            // multi-line text through safeText is one run-on line of U+FFFD,
+            // which is the bug the file viewer's first batch found.
+            if (expr.includes('safeBody(')) continue
             if (/[=!]==?|\?\?|&&|\|\||\.\.\./.test(expr)) continue
             bad.push(`${file.slice(SRC.length)}: ${expr.trim()}`)
           }
