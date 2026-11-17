@@ -31,6 +31,7 @@ export type ViewerAction =
   | 'nextPage'
   | 'firstPage'
   | 'lastPage'
+  | 'selectAll'
 
 export interface KeyLike {
   key: string
@@ -75,6 +76,9 @@ export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
     const k = e.key.toLowerCase()
     if (k === 'f') return 'find'
     if (k === 'g') return 'goToLine'
+    // The body's text and nothing around it. In a field it is the field's:
+    // the find box's text is what somebody selecting there means.
+    if (k === 'a') return ctx.inField ? null : 'selectAll'
     return null
   }
   if (e.key === 'Escape') return ctx.findOpen ? 'closeFind' : 'close'

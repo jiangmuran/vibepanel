@@ -60,6 +60,7 @@ export function shortcutLines(mac: boolean, side: 'terminal' | 'panel'): { title
     { combo: ['+', '−', '0'], what: 'keys.viewerZoom' },
     { combo: ['D'], what: 'keys.viewerDownload' },
     { combo: ['C'], what: 'keys.viewerCopyPath' },
+    { combo: [`${k.cmd}A`], what: 'keys.viewerSelectAll' },
   ]
   // The Files tab's, while a row has the focus (panels/treeKeys.ts).
   const files: Line[] = [

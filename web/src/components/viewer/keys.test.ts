@@ -42,6 +42,16 @@ describe('viewerAction', () => {
     expect(viewerAction(key('f', { metaKey: true }), body)).toBeNull()
   })
 
+  it('selects the body with the command key and A, except in a field', () => {
+    expect(viewerAction(key('a', { ctrlKey: true }), body)).toBe('selectAll')
+    expect(viewerAction(key('A', { ctrlKey: true, shiftKey: true }), body)).toBe('selectAll')
+    expect(viewerAction(key('a', { metaKey: true }), { ...body, mac: true })).toBe('selectAll')
+    expect(viewerAction(key('a', { ctrlKey: true }), { ...body, mac: true })).toBeNull()
+    // The find box's own select-all.
+    expect(viewerAction(key('a', { ctrlKey: true }), finding)).toBeNull()
+    expect(viewerAction(key('a'), body)).toBeNull()
+  })
+
   it('closes find before it closes the viewer', () => {
     expect(viewerAction(key('Escape'), finding)).toBe('closeFind')
     expect(viewerAction(key('Escape'), { ...body, findOpen: true })).toBe('closeFind')

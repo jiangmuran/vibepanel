@@ -294,6 +294,7 @@ const DICT = {
   'keys.viewerZoom': { zh: '放大、缩小、适应窗口', en: 'Zoom in, out, to fit' },
   'keys.viewerDownload': { zh: '下载', en: 'Download' },
   'keys.viewerCopyPath': { zh: '复制路径', en: 'Copy the path' },
+  'keys.viewerSelectAll': { zh: '全选正文', en: 'Select the body' },
   'keys.prevNext': { zh: '上一个 / 下一个会话', en: 'Previous / next session' },
   'keys.goto': { zh: '按侧栏顺序跳到第 N 个会话', en: 'The Nth session in the sidebar' },
   'keys.projects': { zh: '上一个 / 下一个项目', en: 'Previous / next project' },

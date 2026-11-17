@@ -387,6 +387,18 @@ function FileContent({
     a.download = entry.name
     a.click()
   }
+  // Select-all is the body's text: the browser's own selects the whole page
+  // behind the dialog, header, footer and sidebar with it. A picture or a
+  // player has no text to select, and the one it would get is its help line.
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const selectBody = () => {
+    const el = bodyRef.current
+    const sel = window.getSelection()
+    if (!el || !sel) return
+    if (showsImage || view.kind === 'video' || view.kind === 'audio') sel.removeAllRanges()
+    else sel.selectAllChildren(el)
+  }
+
   const copyPath = () => {
     copyTextInGesture(entry.path, (ok) => {
       setCopied(ok)
@@ -446,7 +458,9 @@ function FileContent({
       case 'zoomReset':
         if (showsImage || pdf) zoomTo('fit')
         return
-
+      case 'selectAll':
+        selectBody()
+        return
       case 'prevPage':
         toPage(pageNow - 1)
         return
@@ -731,78 +745,82 @@ function FileContent({
         )}
       </header>
 
-      <Body
-        view={view}
-        entry={entry}
-        projectId={projectId}
-        scripts={scripts}
-        onScripts={setScripts}
-        plainBody={
-          <TextBody
-            lines={lines}
-            wrap={wrap}
-            numbers={numbers && !binary}
-            matches={found.matches}
-            current={current}
-            scrollTo={scrollTo}
-            onTopLine={onTopLine}
-            lang={colour}
-            diff={colour === 'diff'}
-          />
-        }
-        plain={plain}
-        drawnBody={
-          notebook !== null && !source ? (
-            <Suspense fallback={null}>
-              <Notebook doc={notebook} projectId={projectId} path={entry.path} />
-            </Suspense>
-          ) : font !== null && !source ? (
-            <Suspense fallback={null}>
-              <FontSpecimen url={api.downloadURL(projectId, entry.path)} fileName={entry.name} format={font} />
-            </Suspense>
-          ) : null
-        }
-        pdfBody={
-          view.kind === 'pdf' ? (
-            <Suspense fallback={null}>
-              <PdfView
-                url={view.url}
+      {/* What select-all selects: the body, and not the header or the footer.
+          `contents`, so the wrapper is no box of its own in the column. */}
+      <div ref={bodyRef} data-testid="viewer-body" className="contents">
+        <Body
+          view={view}
+          entry={entry}
+          projectId={projectId}
+          scripts={scripts}
+          onScripts={setScripts}
+          plainBody={
+            <TextBody
+              lines={lines}
+              wrap={wrap}
+              numbers={numbers && !binary}
+              matches={found.matches}
+              current={current}
+              scrollTo={scrollTo}
+              onTopLine={onTopLine}
+              lang={colour}
+              diff={colour === 'diff'}
+            />
+          }
+          plain={plain}
+          drawnBody={
+            notebook !== null && !source ? (
+              <Suspense fallback={null}>
+                <Notebook doc={notebook} projectId={projectId} path={entry.path} />
+              </Suspense>
+            ) : font !== null && !source ? (
+              <Suspense fallback={null}>
+                <FontSpecimen url={api.downloadURL(projectId, entry.path)} fileName={entry.name} format={font} />
+              </Suspense>
+            ) : null
+          }
+          pdfBody={
+            view.kind === 'pdf' ? (
+              <Suspense fallback={null}>
+                <PdfView
+                  url={view.url}
+                  zoom={zoom}
+                  onZoom={setZoom}
+                  scaleRef={imageScale}
+                  query={findOpen ? query : ''}
+                  current={current}
+                  onCount={onCount}
+                  onPages={setPageCount}
+                  onPage={setPageNow}
+                  goTo={pageGoTo}
+                  onFail={onPdfFail}
+                />
+              </Suspense>
+            ) : null
+          }
+          imageBody={
+            showsImage ? (
+              <ImageView
+                url={api.inlineURL(projectId, entry.path)}
+                alt={t('preview.imageAlt', { name: safeText(entry.name) })}
                 zoom={zoom}
                 onZoom={setZoom}
+                onSize={(w, h) => setImageSize({ w, h })}
                 scaleRef={imageScale}
-                query={findOpen ? query : ''}
-                current={current}
-                onCount={onCount}
-                onPages={setPageCount}
-                onPage={setPageNow}
-                goTo={pageGoTo}
-                onFail={onPdfFail}
+                zoomRef={imageZoom}
               />
-            </Suspense>
-          ) : null
-        }
-        imageBody={
-          showsImage ? (
-            <ImageView
-              url={api.inlineURL(projectId, entry.path)}
-              alt={t('preview.imageAlt', { name: safeText(entry.name) })}
-              zoom={zoom}
-              onZoom={setZoom}
-              onSize={(w, h) => setImageSize({ w, h })}
-              scaleRef={imageScale}
-              zoomRef={imageZoom}
-            />
-          ) : null
-        }
-        structured={
-          !structured ? null : json !== null ? (
-            <JsonTree value={json.value} query={findOpen ? query : ''} current={current} onCount={onCount} />
-          ) : (
-            <CsvTable rows={table!.rows} more={table!.more} query={findOpen ? query : ''} current={current} onCount={onCount} />
-          )
-        }
-        download={download}
-      />
+            ) : null
+          }
+          structured={
+            !structured ? null : json !== null ? (
+              <JsonTree value={json.value} query={findOpen ? query : ''} current={current} onCount={onCount} />
+            ) : (
+              <CsvTable rows={table!.rows} more={table!.more} query={findOpen ? query : ''} current={current} onCount={onCount} />
+            )
+          }
+          download={download}
+        />
+      </div>
 
       {showsImage && view.kind === 'image' && (
         <footer
