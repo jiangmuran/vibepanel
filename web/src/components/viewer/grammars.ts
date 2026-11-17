@@ -156,11 +156,30 @@ const BY_NAME: Record<string, string> = {
  */
 export function grammarFor(name: string): string | null {
   const base = (name.split('/').pop() ?? name).toLowerCase()
-  if (BY_NAME[base]) return BY_NAME[base]
+  // Own keys only: these are plain objects, and a file called `a.constructor`
+  // found Object's own constructor and handed a function to the tokeniser as
+  // the name of a grammar.
+  if (Object.hasOwn(BY_NAME, base)) return BY_NAME[base]
   if (/^(docker|container)file\./.test(base)) return 'docker'
   const dot = base.lastIndexOf('.')
   const ext = dot < 0 ? '' : base.slice(dot + 1)
-  return BY_EXTENSION[ext] ?? null
+  return Object.hasOwn(BY_EXTENSION, ext) ? BY_EXTENSION[ext] : null
+}
+
+/**
+ * The grammar for a language as people name it -- a Markdown fence's info
+ * string, a notebook's kernel language -- or null.
+ *
+ * By Prism's name first and then as an extension, because both are what
+ * people write: ```python and ```py, `javascript` and `js`. Extension only was
+ * the first version, and a ```python fence, the commonest there is, had no
+ * colour.
+ */
+export function grammarForLanguage(name: string): string | null {
+  const lang = name.trim().toLowerCase()
+  if (lang === '') return null
+  if (Object.hasOwn(L, lang) || CORE.has(lang)) return lang
+  return grammarFor(`x.${lang}`)
 }
 
 /** Loads a language and what it extends. Resolves when it can be used. */

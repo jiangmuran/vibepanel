@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { CONTEXT_LINES, blockTokens, tokenLines, type Tok } from './tokens'
-import { LANGUAGES, grammarFor, loadGrammar, loadOrder, loaders } from './grammars'
+import { LANGUAGES, grammarFor, grammarForLanguage, loadGrammar, loadOrder, loaders } from './grammars'
 import Prism from 'prismjs'
 
 const components = createRequire(import.meta.url)('prismjs/components.json') as {
@@ -41,6 +41,23 @@ describe('the grammar table', () => {
     expect(grammarFor('src/Dockerfile')).toBe('docker')
     expect(grammarFor('Dockerfile.dev')).toBe('docker')
     expect(grammarFor('a/b/c.tsx')).toBe('tsx')
+    // A name that is a key of every object is not a grammar.
+    expect(grammarFor('a.constructor')).toBeNull()
+    expect(grammarFor('x.toString')).toBeNull()
+    expect(grammarFor('__proto__')).toBeNull()
+  })
+
+  it('names a language by Prism\'s name or by its extension', () => {
+    // A fence or a kernel says `python` as often as `py`.
+    expect(grammarForLanguage('python')).toBe('python')
+    expect(grammarForLanguage('py')).toBe('python')
+    expect(grammarForLanguage(' Python ')).toBe('python')
+    expect(grammarForLanguage('javascript')).toBe('javascript')
+    expect(grammarForLanguage('ts')).toBe('typescript')
+    expect(grammarForLanguage('')).toBeNull()
+    expect(grammarForLanguage('no-such-language')).toBeNull()
+    // Not a key that every object has.
+    expect(grammarForLanguage('constructor')).toBeNull()
     expect(grammarFor('main.go')).toBe('go')
     expect(grammarFor('.zshrc')).toBe('bash')
     expect(grammarFor('page.html')).toBe('markup')
