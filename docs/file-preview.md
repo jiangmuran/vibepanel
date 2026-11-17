@@ -192,9 +192,13 @@ changes asks first.
 
 The save is `PUT /api/projects/{id}/file?path=` with the new content and an
 `If-Match` carrying the `ETag` the preview route sent when the file was
-read: the SHA-256 of the bytes. A file changed since then -- by an agent in
-the session, most likely -- answers 412 with a sentence, and the viewer
-offers to reload rather than overwrite. The server writes only a text file
+read: the SHA-256 of the bytes, quoted, and sent only for a text file the
+read did not cut -- a cut file has no ETag, so it cannot be saved back as
+its first two megabytes. A save without `If-Match` answers 428; a file
+changed since it was read -- by an agent in the session, most likely --
+answers 412 with a sentence, and the viewer offers to reload rather than
+overwrite. The compare and the rename are one step under a lock, so two
+saves of the same file cannot both win. The server writes only a text file
 that already exists (binary and media answer 415, a missing file 404), at
 most 2 MB, through a temporary file in the same directory renamed over the
 original with its mode kept, and records `files.write` in the audit log with
