@@ -22,7 +22,9 @@ func TestSniffMediaKnowsTheFixtures(t *testing.T) {
 		"img/alpha.png":       {"image", "image/png"},
 		"img/photo.webp":      {"image", "image/webp"},
 		"docs/manual.pdf":     {"pdf", "application/pdf"},
-		"archives/bundle.zip": {"binary", ""},
+		"archives/bundle.zip": {"archive", ""},
+		"archives/bundle.tar": {"archive", ""},
+		"archives/log.gz":     {"archive", ""},
 		"bin/program":         {"binary", ""},
 		// FF FE, a UTF-16 byte-order mark, looked like an MPEG frame.
 		"encodings/utf16.txt": {"binary", ""},
@@ -57,6 +59,12 @@ func TestSniffMagicIsUnchangedBySniffMedia(t *testing.T) {
 		[]byte("OggS\x00\x02......OpusHead"),
 		[]byte("RIFF\x10\x00\x00\x00WAVEfmt "),
 		[]byte("\x00\x00\x00\x18ftypisom\x00\x00\x02\x00"),
+		// The listings' kinds, batch 7c.
+		[]byte("PK\x03\x04\x14\x00\x00\x00"),
+		[]byte("PK\x05\x06\x00\x00\x00\x00"),
+		[]byte("\x1f\x8b\x08\x00\x00\x00\x00\x00"),
+		append(append(make([]byte, 257), "ustar\x0000"...), make([]byte, 243)...),
+		[]byte("SQLite format 3\x00"),
 	} {
 		if k, _ := SniffMagic(head); k != KindBinary {
 			t.Errorf("SniffMagic now calls %q %s", head[:8], k)

@@ -26,28 +26,40 @@ const (
 	KindPDF    Kind = "pdf"
 	KindVideo  Kind = "video"
 	KindAudio  Kind = "audio"
+	// KindArchive and KindSQLite are listed by their own routes, never
+	// served: a table of contents and a database's tables, read on the
+	// server (archive.go, sqlite.go).
+	KindArchive Kind = "archive"
+	KindSQLite  Kind = "sqlite"
 )
 
 // Kinds is every kind the preview route answers with, in the order the client
 // lists them: TestThePreviewKindsMatchTheClient compares it with PreviewKind
 // in web/src/protocol/wire.ts, so a kind added here is a kind the panel was
 // told about.
-var Kinds = []Kind{KindText, KindBinary, KindImage, KindPDF, KindVideo, KindAudio}
+var Kinds = []Kind{KindText, KindBinary, KindImage, KindPDF, KindVideo, KindAudio, KindArchive, KindSQLite}
 
 // SniffMedia is SniffMagic and then the file viewer's further kinds: video,
-// audio, and two image formats SniffMagic leaves out. A separate function so
+// audio, two image formats SniffMagic leaves out, and the archives and
+// databases the viewer lists. A separate function so
 // SniffMagic keeps answering exactly what it did -- share pages decide what a
 // bundle may hold with it (internal/pages), and a viewer's wider list is not
 // a reason for a page to accept a video.
 //
 // Every answer is a media type from this function's own list, and the inline
 // route serves nothing else as anything but octet-stream
-// (TestTheInlineRouteNamesOnlyMediaTypes).
+// (TestTheInlineRouteNamesOnlyMediaTypes). An archive and a database answer
+// with no media type at all: they are read by their listing routes, and the
+// inline route serves them as the download it serves everything else as.
 func SniffMedia(head []byte, size int64) (Kind, string) {
 	if k, mime := SniffMagic(head); k != KindBinary {
 		return k, mime
 	}
 	switch {
+	case IsArchive(head):
+		return KindArchive, ""
+	case IsSQLite(head):
+		return KindSQLite, ""
 	// ICO: reserved zero, type 1 (icon), and a count that is not zero.
 	case len(head) >= 6 && bytes.HasPrefix(head, []byte{0, 0, 1, 0}) && (head[4] != 0 || head[5] != 0):
 		return KindImage, "image/x-icon"

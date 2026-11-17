@@ -422,7 +422,7 @@ export interface UsageSample {
  * both ways: a kind the server sends that this does not name is a file the
  * viewer quietly cannot show.
  */
-export type PreviewKind = 'text' | 'binary' | 'image' | 'pdf' | 'video' | 'audio'
+export type PreviewKind = 'text' | 'binary' | 'image' | 'pdf' | 'video' | 'audio' | 'archive' | 'sqlite'
 
 export type UsageTool = 'claude' | 'codex' | 'opencode' | 'hermes' | 'pi' | 'omp' | 'agy'
 
