@@ -155,7 +155,8 @@ const KIND = [
   // Nine megabytes of 0x07: mostly control characters, so its bytes (batch 5).
   [/^large\/nine-megabytes\.bin$/, 'binary'],
   [/^(media|archives|bin)\//, 'binary'],
-  [/^encodings\/(latin1|utf16)\.txt$/, 'binary'],
+  // Bytes, drawn as a specimen (7b).
+  [/^fonts\//, 'binary'],
 ]
 const kindOf = (f) => KIND.find(([re]) => re.test(f))?.[1] ?? 'text'
 
@@ -257,7 +258,7 @@ try {
   // Every file at the widest; the narrower shapes take one of each kind and the
   // awkward names, which is where a layout breaks.
   const SAMPLE = files.filter((f) =>
-    /README|src\/app\.ts|config\.json|table\.csv|table\.tsv|huge\.png|manual\.pdf|fifty-thousand|nine-mega|中文|very-long|minified|page\.html|bundle\.zip/.test(f))
+    /README|src\/app\.ts|config\.json|table\.csv|table\.tsv|huge\.png|manual\.pdf|fifty-thousand|nine-mega|中文|very-long|minified|page\.html|bundle\.zip|analysis\.ipynb|fixture\.otf|utf16/.test(f))
   let opened = 0
   for (const shape of SHAPES) {
     const ctx = await contextFor(shape)
@@ -299,7 +300,9 @@ try {
           if (shown.includes('\uFFFD') && !/controls/.test(f)) {
             note('FAIL', 'text', `${shape.name} ${f}: drawn with U+FFFD in it: ${JSON.stringify(shown.slice(0, 80))}`)
           }
-          const firstLine = readFileSync(join(PROJ, f), 'utf8').split(/\r\n|\n|\r/)[0]
+          // In its own encoding: the server decodes these two (7b).
+          const enc = /latin1/.test(f) ? 'latin1' : /utf16/.test(f) ? 'utf16le' : 'utf8'
+          const firstLine = readFileSync(join(PROJ, f), enc).replace(/^\uFEFF/, '').split(/\r\n|\n|\r/)[0]
           if (firstLine && !/controls|bom/.test(f) && !shown.includes(firstLine.slice(0, 40))) {
             note('FAIL', 'text', `${shape.name} ${f}: the first line ${JSON.stringify(firstLine.slice(0, 40))} is not on screen`)
           }
@@ -1142,6 +1145,118 @@ try {
     if (z === 'fit' || !(Number(z) > 0)) note('FAIL', 'pdf', `phone: a pinch did not zoom (${z})`)
     await page.screenshot({ path: join(SHOTS, 'pdf-phone.png') })
     note('PASS', 'pdf', `phone: fitted to 320, touch-action pan-x pan-y, a pinch zoomed to ${z}`)
+    await ctx.close()
+  }
+
+  // ── notebooks, fonts, encodings ──────────────────────────────────────────
+  // 7b. A notebook is its cells: markdown drawn, code coloured with its
+  // count, every output as what it is, HTML as its source and never run, a
+  // traceback without its terminal colours; Source is its JSON. A font is a
+  // specimen set in itself, named from the file, and gone from the document
+  // when the viewer closes. Text in another encoding is decoded on the
+  // server and the footer says which.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    const errors = []
+    page.on('pageerror', (e) => errors.push(String(e)))
+    await filesAtRoot(page)
+    let v = await openFile(page, 'notebooks/analysis.ipynb')
+    const nb = v.locator('[data-testid="viewer-notebook"]')
+    await nb.waitFor({ timeout: 10000 }).catch(() => note('FAIL', 'notebook', 'analysis.ipynb did not open as a notebook'))
+    if (await nb.count()) {
+      const got = await nb.evaluate((el) => ({
+        counts: [...el.querySelectorAll('[data-testid="nb-count"]')].map((c) => c.textContent),
+        heading: el.querySelector('[data-cell="markdown"] h1')?.textContent ?? null,
+        coloured: !!el.querySelector('[data-cell="code"] [data-testid="preview-code"] span[class*="--vp-tok-keyword"]'),
+        outputs: [...el.querySelectorAll('[data-testid="nb-output"]')].map((o) => o.dataset.output),
+        picture: (() => {
+          const img = el.querySelector('[data-output="image"]')
+          return img ? { w: img.naturalWidth, src: img.getAttribute('src').slice(0, 22) } : null
+        })(),
+        htmlAsText: el.querySelector('[data-output="html"]')?.textContent.includes('<script>') ?? false,
+        rendered: !!document.getElementById('nb-html-rendered'),
+        traceback: el.querySelector('[data-output="error"]')?.textContent ?? '',
+      }))
+      const want = ['[1]', '[2]', '[3]', '[4]', '[5]', '[ ]']
+      if (JSON.stringify(got.counts) !== JSON.stringify(want)) note('FAIL', 'notebook', `execution counts ${JSON.stringify(got.counts)}, want ${JSON.stringify(want)}`)
+      if (got.heading !== 'Notebook fixture') note('FAIL', 'notebook', `the markdown cell's heading is ${JSON.stringify(got.heading)}`)
+      if (!got.coloured) note('FAIL', 'notebook', 'the code cells are not coloured as Python')
+      const outs = ['text', 'stderr', 'image', 'text', 'html', 'error']
+      if (JSON.stringify(got.outputs) !== JSON.stringify(outs)) note('FAIL', 'notebook', `outputs ${JSON.stringify(got.outputs)}, want ${JSON.stringify(outs)}`)
+      if (!got.picture || got.picture.w !== 48 || got.picture.src !== 'data:image/png;base64') note('FAIL', 'notebook', `the picture output is ${JSON.stringify(got.picture)}`)
+      if (!got.htmlAsText || got.rendered) note('FAIL', 'notebook', 'an HTML output was rendered rather than shown as its source')
+      if ((await page.title()) === 'ran') note('FAIL', 'notebook', "an HTML output's script ran")
+      if (!got.traceback.includes('ZeroDivisionError') || /\x1b|\[0;31m/.test(got.traceback)) note('FAIL', 'notebook', `the traceback reads ${JSON.stringify(got.traceback.slice(0, 80))}`)
+      const cells = await v.locator('[data-testid="viewer-cells"]').textContent().catch(() => '')
+      if (!/7/.test(cells)) note('FAIL', 'notebook', `the footer says ${JSON.stringify(cells)}, want 7 cells`)
+      await page.screenshot({ path: join(SHOTS, 'notebook.png') })
+      await page.keyboard.press('s')
+      const json = await v.locator('[data-testid="viewer-text"]').textContent().catch(() => '')
+      if (!json.includes('"nbformat": 4')) note('FAIL', 'notebook', 'Source is not the JSON')
+    }
+    await page.keyboard.press('Escape')
+
+    for (const [ext, format, name] of [
+      ['ttf', 'TrueType', 'Vibepanel Fixture Regular'],
+      ['otf', 'OpenType', 'Vibepanel Fixture Regular'],
+      ['woff', 'WOFF', 'Vibepanel Fixture Regular'],
+      // WOFF2's tables are one Brotli stream: the name is the file's.
+      ['woff2', 'WOFF2', 'fixture.woff2'],
+    ]) {
+      await filesAtRoot(page)
+      v = await openFile(page, `fonts/fixture.${ext}`)
+      const spec = v.locator('[data-testid="viewer-font"]')
+      await spec.waitFor({ timeout: 10000 }).catch(() => note('FAIL', 'font', `fixture.${ext} drew no specimen`))
+      if (!(await spec.count())) {
+        await page.keyboard.press('Escape')
+        continue
+      }
+      const family = await spec.getAttribute('data-family')
+      const got = await spec.evaluate((el, family) => {
+        // Set in the face, a line measures as the face's boxes, not as the
+        // fallback's letters.
+        const line = el.querySelector('[data-specimen="40"]')
+        const probe = document.createElement('span')
+        probe.style.cssText = 'position:absolute;visibility:hidden;font-size:40px;font-family:monospace;white-space:nowrap'
+        probe.textContent = line.textContent
+        document.body.append(probe)
+        const fallback = probe.getBoundingClientRect().width
+        probe.style.fontFamily = `"${family}", monospace`
+        const set = probe.getBoundingClientRect().width
+        probe.remove()
+        return {
+          name: el.querySelector('[data-testid="font-name"]').textContent,
+          loaded: [...document.fonts].some((f) => f.family === family && f.status === 'loaded'),
+          differs: Math.abs(set - fallback) > 5,
+        }
+      }, family)
+      if (got.name !== name) note('FAIL', 'font', `fixture.${ext} is named ${JSON.stringify(got.name)}, want ${JSON.stringify(name)}`)
+      if (!got.loaded || !got.differs) note('FAIL', 'font', `fixture.${ext}: the specimen is not set in the font (loaded ${got.loaded}, measures differently ${got.differs})`)
+      const fmt = await v.locator('[data-testid="viewer-format"]').textContent()
+      if (fmt !== format) note('FAIL', 'font', `fixture.${ext}: the footer says ${JSON.stringify(fmt)}, want ${format}`)
+      if (ext === 'ttf') {
+        await page.screenshot({ path: join(SHOTS, 'font.png') })
+        await page.keyboard.press('s')
+        if (!(await v.locator('[data-testid="viewer-text"]').count())) note('FAIL', 'font', 'Source does not show the bytes')
+      }
+      await page.keyboard.press('Escape')
+      await page.locator(VIEWER).waitFor({ state: 'detached', timeout: 3000 }).catch(() => {})
+      const left = await page.evaluate((family) => [...document.fonts].some((f) => f.family === family), family)
+      if (left) note('FAIL', 'font', `fixture.${ext}: the face stays in the document after the viewer closed`)
+    }
+
+    for (const [f, enc, words] of [['encodings/utf16.txt', 'UTF-16 LE', 'UTF-16 text'], ['encodings/latin1.txt', 'Latin-1', 'café naïve']]) {
+      await filesAtRoot(page)
+      v = await openFile(page, f)
+      const got = await v.locator('[data-testid="viewer-encoding"]').textContent().catch(() => null)
+      const body = await v.locator('[data-testid="viewer-text"]').textContent().catch(() => '')
+      if (got !== enc) note('FAIL', 'encoding', `${f}: the footer says ${JSON.stringify(got)}, want ${enc}`)
+      if (!body.includes(words) || body.includes('\uFFFD')) note('FAIL', 'encoding', `${f}: the body reads ${JSON.stringify(body.slice(0, 60))}`)
+      await page.keyboard.press('Escape')
+    }
+    if (errors.length) note('FAIL', 'more kinds', `thrown: ${errors[0].slice(0, 200)}`)
+    note('PASS', 'more kinds', 'a notebook drawn cell by cell with its outputs, its HTML as text; four font formats set in themselves and taken out on close; UTF-16 and Latin-1 decoded and named')
     await ctx.close()
   }
 
