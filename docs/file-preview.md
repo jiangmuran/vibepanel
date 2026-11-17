@@ -118,7 +118,10 @@ walks the table.
 
 - Images: fit to the window on open, with the real size in the footer
   (`1920 × 1080 · 2.4M`). `+` `-` `0` and Ctrl+wheel zoom about the cursor;
-  drag pans; pinch zooms on a touch screen. A transparent image sits on a
+  drag pans; pinch zooms on a touch screen. The zoom is also on screen --
+  `-`, the percentage, `+`, and fit or 100% -- and a double click toggles
+  fit and 100%: a viewer whose zoom lives only in keys and a modifier looks
+  like one that cannot zoom, which is what its owner reported. A transparent image sits on a
   checkerboard. An image that does not fit starts at its top-left, which is
   the bug 「图片预览有bug 没法看到开头」 already fixed once, kept by a test.
 - Code colours are theme tokens (`--vp-tok-keyword` and friends), redefined
@@ -158,6 +161,9 @@ In the viewer, when the focus is not in the find box:
 | `+` `-` `0` | zoom an image |
 | `d` | download |
 | `c` | copy the path |
+| Ctrl/⌘ A | select the body and only the body: the text, the code, the bytes, the tree or the table, never the header or the footer, and never past the dialog |
+| `e` | edit, for a text file |
+| Ctrl/⌘ S | save, while editing |
 
 They are listed in the ⌥/ dialog under a *Viewer* heading, and nothing here
 takes a key from a text field or from the terminal: the viewer is a dialog
@@ -174,6 +180,26 @@ In the Files tab, which this touches because the viewer opens from it:
 
 Rows are focusable, the current one is `aria-current`, and icon sizes in the
 tab are one size (an audit finding).
+
+## Editing
+
+A text file can be changed where it is read. `e` (or the header's Edit)
+replaces the body with an editor -- CodeMirror 6, its own lazy chunk, with
+grammars for the ten commonest languages and plain text for the rest -- and
+the header shows a dot after the name while there are unsaved changes.
+Ctrl/⌘ S saves; closing the viewer or moving to another file with unsaved
+changes asks first.
+
+The save is `PUT /api/projects/{id}/file?path=` with the new content and an
+`If-Match` carrying the `ETag` the preview route sent when the file was
+read: the SHA-256 of the bytes. A file changed since then -- by an agent in
+the session, most likely -- answers 412 with a sentence, and the viewer
+offers to reload rather than overwrite. The server writes only a text file
+that already exists (binary and media answer 415, a missing file 404), at
+most 2 MB, through a temporary file in the same directory renamed over the
+original with its mode kept, and records `files.write` in the audit log with
+who, the project, the path and the size. Nothing here creates, renames or
+deletes a file.
 
 ## What stays
 
