@@ -915,6 +915,145 @@ try {
     await ctx.close()
   }
 
+  // ── zoom on screen, and select-all ───────────────────────────────────────
+  // 「图片要能缩放」: the zoom as buttons in the footer, and a double click
+  // between fitted and 100% about the point clicked. A wheel without Ctrl is
+  // the page's on a fitted picture and scrolls a zoomed one. Ctrl/⌘+A selects
+  // the body and nothing around it, and is the find box's own in the box.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    await filesAtRoot(page)
+    let v = await openFile(page, 'img/huge.png')
+    const box = v.locator('[data-testid="viewer-image"]')
+    await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="viewer-image-size"]`), VIEWER, { timeout: 10000 }).catch(() => {})
+    const zoomOf = () => box.getAttribute('data-zoom')
+    const label = () => v.locator('[data-testid="viewer-zoom"]').textContent()
+    // A wheel on a fitted picture: nothing taken, nothing moved.
+    const r = await box.boundingBox()
+    const taken = await box.evaluate((b) => {
+      const e = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true })
+      b.dispatchEvent(e)
+      return e.defaultPrevented
+    })
+    if (taken) note('FAIL', 'zoom', 'a wheel without Ctrl on a fitted picture was taken')
+    await v.locator('[data-testid="viewer-zoom-in"]').click()
+    const z1 = await zoomOf()
+    if (z1 === 'fit') note('FAIL', 'zoom', 'the + button did not zoom')
+    const l1 = await label()
+    if (!/^\d+%$/.test(l1 ?? '')) note('FAIL', 'zoom', `zoomed, the footer says ${JSON.stringify(l1)}`)
+    await v.locator('[data-testid="viewer-zoom-out"]').click()
+    if (Number(await zoomOf()) >= Number(z1)) note('FAIL', 'zoom', 'the − button did not zoom out')
+    await v.locator('[data-testid="viewer-zoom-toggle"]').click()
+    if ((await zoomOf()) !== 'fit') note('FAIL', 'zoom', 'the toggle did not fit a zoomed picture')
+    await v.locator('[data-testid="viewer-zoom-toggle"]').click()
+    if ((await zoomOf()) !== '1.000') note('FAIL', 'zoom', `the toggle from fitted went to ${await zoomOf()}, want 1.000`)
+    // A wheel on a zoomed picture scrolls it.
+    await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2)
+    const top0 = await box.evaluate((b) => b.scrollTop)
+    await page.mouse.wheel(0, 300)
+    await sleep(300)
+    const top1 = await box.evaluate((b) => b.scrollTop)
+    if (!(top1 > top0)) note('FAIL', 'zoom', `a wheel on a zoomed picture did not scroll it: ${top0} -> ${top1}`)
+    if ((await zoomOf()) !== '1.000') note('FAIL', 'zoom', 'a wheel without Ctrl zoomed')
+    // Back to fitted, then a double click: 100%, with the pixel that was under
+    // the pointer still under it.
+    await page.keyboard.press('0')
+    const at = { x: r.x + r.width * 0.3, y: r.y + r.height * 0.4 }
+    const pixel = () => box.evaluate((b, p) => {
+      const i = b.querySelector('img').getBoundingClientRect()
+      const img = b.querySelector('img')
+      return [(p.x - i.left) * img.naturalWidth / i.width, (p.y - i.top) * img.naturalHeight / i.height]
+    }, at)
+    const before = await pixel()
+    await page.mouse.dblclick(at.x, at.y)
+    await sleep(200)
+    if ((await zoomOf()) !== '1.000') note('FAIL', 'zoom', `a double click on a fitted picture went to ${await zoomOf()}`)
+    const after = await pixel()
+    const drift = Math.hypot(after[0] - before[0], after[1] - before[1])
+    if (drift > 3) note('FAIL', 'zoom', `a double click moved the pixel under the pointer by ${drift.toFixed(1)} px (${before.map(Math.round)} -> ${after.map(Math.round)})`)
+    await page.mouse.dblclick(at.x, at.y)
+    await sleep(200)
+    if ((await zoomOf()) !== 'fit') note('FAIL', 'zoom', 'a double click on a zoomed picture did not fit it')
+    // The buttons zoom about the middle of the view.
+    const middle = { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    const mid = () => box.evaluate((b, p) => {
+      const i = b.querySelector('img').getBoundingClientRect()
+      const img = b.querySelector('img')
+      return [(p.x - i.left) * img.naturalWidth / i.width, (p.y - i.top) * img.naturalHeight / i.height]
+    }, middle)
+    const m0 = await mid()
+    await v.locator('[data-testid="viewer-zoom-toggle"]').click()
+    await sleep(200)
+    const m1 = await mid()
+    const mdrift = Math.hypot(m1[0] - m0[0], m1[1] - m0[1])
+    if (mdrift > 3) note('FAIL', 'zoom', `the toggle moved the middle of the view by ${mdrift.toFixed(1)} px of the picture`)
+    await page.screenshot({ path: join(SHOTS, 'zoom-controls.png') })
+    // Select-all on a picture selects nothing, and nothing behind the dialog.
+    await page.keyboard.press('Control+a')
+    const picSel = await page.evaluate(() => getSelection().toString())
+    if (picSel !== '') note('FAIL', 'select-all', `select-all on a picture selected ${JSON.stringify(picSel.slice(0, 60))}`)
+    await page.keyboard.press('Escape')
+    note('PASS', 'zoom', `buttons in, out and between fitted and 100%; a double click about the pointer (${drift.toFixed(1)} px); the toggle about the middle (${mdrift.toFixed(1)} px); the wheel left alone fitted and scrolling zoomed`)
+
+    // The PDF's footer has the same buttons.
+    await filesAtRoot(page)
+    v = await openFile(page, 'docs/manual.pdf')
+    const pdf = v.locator('[data-testid="viewer-pdf"]')
+    await v.locator('[data-testid="viewer-zoom-in"]').click()
+    if ((await pdf.getAttribute('data-zoom')) === 'fit') note('FAIL', 'zoom', 'the + button did not zoom a PDF')
+    await v.locator('[data-testid="viewer-zoom-toggle"]').click()
+    if ((await pdf.getAttribute('data-zoom')) !== 'fit') note('FAIL', 'zoom', 'the toggle did not fit a PDF')
+    await page.keyboard.press('Escape')
+
+    // Select-all, kind by kind: what is selected is inside the body, and
+    // holds the first and the last of what the body shows.
+    const selection = () => page.evaluate((sel) => {
+      const s = getSelection()
+      const body = document.querySelector(`${sel} [data-testid="viewer-body"]`)
+      if (!s || s.rangeCount === 0) return { text: '', inside: false }
+      const r = s.getRangeAt(0)
+      return { text: s.toString(), inside: !!body && body.contains(r.startContainer) && body.contains(r.endContainer) }
+    }, VIEWER)
+    for (const [f, first, last] of [
+      ['large/fifty-thousand.log', 'line 1 of', 'line 50000 of'],
+      ['src/app.ts', null, null],
+      ['data/config.json', null, null],
+      ['data/table.csv', null, null],
+      ['bin/random.bin', null, null],
+    ]) {
+      await filesAtRoot(page)
+      v = await openFile(page, f).catch(() => null)
+      if (!v) { note('FAIL', 'select-all', `${f} did not open`); continue }
+      await v.locator('[data-testid="viewer-content"]').click({ position: { x: 40, y: 40 } }).catch(() => {})
+      await page.keyboard.press('Control+a')
+      const got = await selection()
+      if (!got.inside || got.text.length === 0) note('FAIL', 'select-all', `${f}: the selection is ${got.inside ? 'empty' : 'outside the body'}`)
+      if (first && !got.text.includes(first)) note('FAIL', 'select-all', `${f}: the selection does not hold ${JSON.stringify(first)}`)
+      if (last && !got.text.includes(last)) note('FAIL', 'select-all', `${f}: the selection does not hold ${JSON.stringify(last)} -- a block not yet drawn was left out`)
+      if (/^\s*\d+\s/m.test(got.text) && f === 'src/app.ts') note('FAIL', 'select-all', `${f}: the selection holds line numbers`)
+      // The footer's own words are not in it.
+      const footer = (await v.locator('[data-testid="viewer-footer"]').textContent().catch(() => '')).trim()
+      if (footer && got.text.includes(footer)) note('FAIL', 'select-all', `${f}: the footer is selected`)
+      await page.keyboard.press('Escape')
+    }
+    // In the find box, the box's own.
+    await filesAtRoot(page)
+    v = await openFile(page, 'src/app.ts')
+    await page.keyboard.press('Control+f')
+    await page.keyboard.type('import')
+    await page.keyboard.press('Control+a')
+    const field = await page.evaluate(() => {
+      const el = document.activeElement
+      return el instanceof HTMLInputElement ? [el.selectionStart, el.selectionEnd, el.value.length] : null
+    })
+    if (!field || field[0] !== 0 || field[1] !== field[2]) note('FAIL', 'select-all', `in the find box, select-all did not select the box: ${JSON.stringify(field)}`)
+    const leaked = await selection()
+    if (leaked.inside && leaked.text) note('FAIL', 'select-all', 'in the find box, select-all selected the body')
+    note('PASS', 'select-all', 'the body and nothing around it, for text, code, a tree, a table and hex, the last line of 50,000 included; a picture selects nothing; the find box keeps its own')
+    await ctx.close()
+  }
+
   // ── PDF ──────────────────────────────────────────────────────────────────
   // 7a: pdf.js draws the pages, each when it comes near the view; the text is
   // a layer over them that find searches and marks; PgUp, PgDn, g and G turn
