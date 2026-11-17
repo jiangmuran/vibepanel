@@ -219,11 +219,66 @@ later one draws inside what the earlier one built:
 5. **Media**: image zoom and pan, SVG as an image, the inline route with
    ranges, video and audio, the kinds table pinned against `wire.ts`.
 6. **The Files tab**: keyboard, filter, breadcrumb root, icon sizes.
-7. Later, each its own decision: archives, notebooks, "next 2 MB", and a
-   relative link in a document (`[x](other.md)`) opening that file in the
-   viewer -- today it shows where it points and does nothing, because
-   followed as a URL it would take the whole panel to a path it does not
-   serve.
+7. **More kinds**, below, in four parts: 7a PDF, 7b notebooks, fonts and
+   encodings, 7c archives and SQLite, 7d office files.
+8. Later, each its own decision: "next 2 MB", and a relative link in a
+   document (`[x](other.md)`) opening that file in the viewer -- today it
+   shows where it points and does nothing, because followed as a URL it
+   would take the whole panel to a path it does not serve.
+
+## More kinds
+
+The six batches gave every file a bounded answer. What is left is the files
+whose answer is "download it and open it somewhere else": a PDF on a phone,
+a notebook, a spreadsheet, a zip. Each of these has a drawing that is worth
+having, and each is its own batch because each brings its own parser.
+
+| kind | how it is found | drawn as |
+|---|---|---|
+| `pdf` | `%PDF-` | pdf.js in the browser: pages drawn to canvases, one at a time as they come into view, with a page strip, zoom, and find over the text layer. The `<object>` is gone: on a phone it was most of the time a grey box, and on a desktop it was somebody else's viewer with its own keys. |
+| notebook | `.ipynb` that parses as one | cells in order: markdown cells through the document renderer, code cells through the code body with the kernel's language, and each cell's outputs under it -- text as text, images as pictures, HTML as text and never rendered, errors with their traceback. Execution counts in the gutter. |
+| font | TTF, OTF, WOFF, WOFF2 by magic | a specimen: the name from the file, the alphabet in both cases, digits, a pangram, and a line of the file's own name, at three sizes, loaded through `FontFace` from the bytes and unloaded with the viewer |
+| text in another encoding | `IsText` fails, but the bytes decode as UTF-16 with a byte-order mark, or as Latin-1 with the control-character rule of `Readable` | text, with the encoding named in the footer (`UTF-16 LE`, `Latin-1`) and decoded on the server so the browser sees UTF-8 like any other text |
+| `archive` | ZIP (`PK`), tar (ustar at 257), gzip, tgz | its table of contents from the server: path, size, modified, with directories folded, bounded at 10,000 entries and the footer saying so. Entries are not opened in this batch. |
+| `sqlite` | `SQLite format 3\0` | its tables from the server, opened read-only and immutable: each table's name, row count and columns, and the first 200 rows of the one chosen, drawn by the table body; the schema under Source |
+| spreadsheet | XLSX, XLS, ODS by magic and name | each sheet as a table, the sheet names as a strip, cells as their formatted text; the table body from batch 4 |
+| document | DOCX by magic and name | the text with its headings, lists, tables and pictures, through a conversion in the browser into a sandboxed frame with no scripts and no network: an opaque origin, the same line the project's own HTML is drawn on. Word's styling is not kept; the words and the pictures are. |
+| slides | PPTX | later; not in these four |
+
+What a server reads for these is bounded like everything else it reads: an
+archive's central directory and tar headers, never an entry's bytes; a
+database with `?mode=ro&immutable=1` and a statement timeout, never a write;
+and both on the request goroutine only because each is a few milliseconds on
+a file the panel already opened, measured in the batch's test.
+
+### Keys, added
+
+| key | does |
+|---|---|
+| PgUp PgDn, `g` `G` | previous and next page, first and last, in a PDF |
+| ← → | previous and next sheet in a spreadsheet, previous and next table in a database |
+
+### Dependencies, added
+
+`pdfjs-dist` (the worker as its own chunk), `xlsx` (SheetJS, the community
+build), `mammoth` for DOCX. Each is a lazy chunk fetched by the first file of
+its kind, with its own line in `bundle.test.ts`. Fonts, notebooks, archives,
+SQLite and encodings need nothing new: `FontFace`, the renderers already
+built, and Go's standard library (`archive/zip`, `archive/tar`,
+`compress/gzip`) plus the SQLite driver the store already uses.
+
+### The four parts
+
+- **7a PDF**: pdf.js, pages, find, zoom, the keys; `preview-check` reads a
+  three-page fixture, finds a word on page two, and measures first paint.
+- **7b notebooks, fonts, encodings**: client side except the server's
+  decoding of UTF-16 and Latin-1, which `X-Preview-Encoding` names.
+- **7c archives and SQLite**: the server's two listings
+  (`GET /api/projects/{id}/archive?path=` and `/sqlite?path=&table=`) with
+  their bounds pinned by tests against crafted files -- a zip whose central
+  directory claims a gigabyte, a tar with a path that climbs, a database
+  with a trigger -- and the viewer's two tables.
+- **7d office**: spreadsheets and documents.
 
 The old `FilePreview.tsx`, `Rendered.tsx`, `highlight.ts` and `markdown.ts`
 go when the batch that replaces each lands; nothing is kept beside its
