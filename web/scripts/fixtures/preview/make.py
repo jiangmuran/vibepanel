@@ -9,8 +9,10 @@ binary. The two large files (a 50,000 line log, a 2 MB+ one) are made by
 preview-check at run time instead: committing megabytes of generated text
 buys nothing.
 """
+import base64
 import gzip
 import io
+import json
 import os
 import random
 import shutil
@@ -320,6 +322,108 @@ def pdf():
     put('docs/broken.pdf', b'%PDF-1.7\n' + bytes(own.getrandbits(8) for _ in range(2048)))
 
 
+def notebook():
+    # Every kind of cell and output the viewer draws: markdown, code with an
+    # execution count and one without, stdout and stderr, a picture, a table
+    # with both plain text and HTML, HTML alone with a script in it (drawn as
+    # its source), and an error whose traceback carries terminal colours.
+    png = io.BytesIO()
+    Image.new('RGB', (48, 32), (37, 99, 235)).save(png, format='PNG')
+    b64 = base64.b64encode(png.getvalue()).decode()
+    cells = [
+        {'cell_type': 'markdown', 'metadata': {}, 'source': ['# Notebook fixture\n', '\n', 'A *markdown* cell.']},
+        {'cell_type': 'code', 'execution_count': 1, 'metadata': {}, 'source': ['def greet(name):\n', '    return f"hi {name}"\n', 'print(greet("nb"))'],
+         'outputs': [{'output_type': 'stream', 'name': 'stdout', 'text': ['hi nb\n']},
+                     {'output_type': 'stream', 'name': 'stderr', 'text': 'a warning on stderr\n'}]},
+        {'cell_type': 'code', 'execution_count': 2, 'metadata': {}, 'source': 'plot()',
+         'outputs': [{'output_type': 'display_data', 'metadata': {}, 'data': {'image/png': b64 + '\n', 'text/plain': ['<Figure 48x32>']}}]},
+        {'cell_type': 'code', 'execution_count': 3, 'metadata': {}, 'source': 'df',
+         'outputs': [{'output_type': 'execute_result', 'execution_count': 3, 'metadata': {},
+                      'data': {'text/plain': ['   a  b\n', '0  1  2'], 'text/html': ['<table><tr><td>1</td></tr></table>']}}]},
+        {'cell_type': 'code', 'execution_count': 4, 'metadata': {}, 'source': 'HTML(x)',
+         'outputs': [{'output_type': 'display_data', 'metadata': {},
+                      'data': {'text/html': '<b id="nb-html-rendered">bold</b><script>document.title="ran"</script>'}}]},
+        {'cell_type': 'code', 'execution_count': 5, 'metadata': {}, 'source': '1/0',
+         'outputs': [{'output_type': 'error', 'ename': 'ZeroDivisionError', 'evalue': 'division by zero',
+                      'traceback': ['\x1b[0;31mZeroDivisionError\x1b[0m  Traceback (most recent call last)', 'Cell In[5], line 1']}]},
+        {'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'source': 'not_run_yet()', 'outputs': []},
+    ]
+    doc = {'nbformat': 4, 'nbformat_minor': 5, 'cells': cells,
+           'metadata': {'kernelspec': {'name': 'python3', 'language': 'python', 'display_name': 'Python 3'},
+                        'language_info': {'name': 'python'}}}
+    put('notebooks/analysis.ipynb', json.dumps(doc, indent=1) + '\n')
+
+
+def fonts():
+    # One small face, "Vibepanel Fixture", in the four formats the viewer
+    # draws a specimen of: every letter and digit a box of its own width, so
+    # text set in it measures differently from any fallback, which is how the
+    # check knows the face loaded. Generated rather than copied from the
+    # system, so no font's licence comes into the repository with it.
+    from fontTools.fontBuilder import FontBuilder
+    from fontTools.pens.t2CharStringPen import T2CharStringPen
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.ttLib import TTFont
+    chars = [chr(c) for c in range(0x20, 0x7F)]
+    names = ['.notdef'] + ['g%02x' % ord(c) for c in chars]
+
+    def build(ttf):
+        fb = FontBuilder(1000, isTTF=ttf)
+        fb.setupGlyphOrder(names)
+        fb.setupCharacterMap({ord(c): 'g%02x' % ord(c) for c in chars})
+        glyphs, metrics = {}, {}
+        for name in names:
+            code = 0 if name == '.notdef' else int(name[1:], 16)
+            width = 300 + (code * 37) % 700
+            pen = TTGlyphPen(None) if ttf else T2CharStringPen(width, None)
+            if code != 0x20:
+                pen.moveTo((50, 0))
+                pen.lineTo((50, 700))
+                pen.lineTo((width - 50, 700))
+                pen.lineTo((width - 50, 0))
+                pen.closePath()
+            glyphs[name] = pen.glyph() if ttf else pen.getCharString()
+            metrics[name] = (width, 50)
+        if ttf:
+            fb.setupGlyf(glyphs)
+        else:
+            fb.setupCFF('VibepanelFixture-Regular', {'FullName': 'Vibepanel Fixture Regular'}, glyphs, {})
+        fb.setupHorizontalMetrics(metrics)
+        fb.setupHorizontalHeader(ascent=800, descent=-200)
+        fb.setupNameTable({'familyName': 'Vibepanel Fixture', 'styleName': 'Regular',
+                           'fullName': 'Vibepanel Fixture Regular', 'psName': 'VibepanelFixture-Regular'})
+        fb.setupOS2(sTypoAscender=800, usWinAscent=800, usWinDescent=200)
+        fb.setupPost()
+        out = io.BytesIO()
+        fb.save(out)
+        return out.getvalue()
+
+    ttf = io.BytesIO(build(True))
+    put('fonts/fixture.ttf', ttf.getvalue())
+    put('fonts/fixture.otf', build(False))
+    # The same face again as WOFF (zlib) and WOFF2 (Brotli). fontTools needs
+    # the brotli module for WOFF2; where it is missing, Node's zlib has
+    # Brotli, so a stand-in module hands the work to it.
+    try:
+        import brotli  # noqa: F401
+    except ImportError:
+        import sys
+        import types
+        shim = types.ModuleType('brotli')
+        node = ('const z=require("zlib");const b=require("fs").readFileSync(0);'
+                'process.stdout.write(process.argv[1]==="c"?z.brotliCompressSync(b,{params:{[z.constants.BROTLI_PARAM_QUALITY]:11}}):z.brotliDecompressSync(b))')
+        shim.compress = lambda data, **kw: subprocess.run(['node', '-e', node, 'c'], input=data, capture_output=True, check=True).stdout
+        shim.decompress = lambda data: subprocess.run(['node', '-e', node, 'd'], input=data, capture_output=True, check=True).stdout
+        shim.MODE_GENERIC, shim.MODE_TEXT, shim.MODE_FONT = 0, 1, 2
+        sys.modules['brotli'] = shim
+    for flavor in ('woff', 'woff2'):
+        f = TTFont(io.BytesIO(ttf.getvalue()))
+        f.flavor = flavor
+        out = io.BytesIO()
+        f.save(out)
+        put('fonts/fixture.' + flavor, out.getvalue())
+
+
 def media():
     os.makedirs(os.path.join(OUT, 'media'), exist_ok=True)
     rate = 8000
@@ -373,6 +477,8 @@ if __name__ == '__main__':
     text()
     images()
     pdf()
+    notebook()
+    fonts()
     media()
     archives()
     binary()
