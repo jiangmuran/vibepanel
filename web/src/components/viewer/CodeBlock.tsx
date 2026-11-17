@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { safeBody } from '../text'
-import { grammarFor } from './grammars'
+import { grammarForLanguage } from './grammars'
 import { loadGrammar, tokenLines, type TokKind } from './tokens'
 
 /**
@@ -55,7 +55,7 @@ function tone(k: TokKind): string {
  * the code does not bring them along.
  */
 export function Code({ code, lang }: { code: string; lang?: string }) {
-  const grammar = lang ? grammarFor(`x.${lang.toLowerCase()}`) ?? grammarFor(lang) : null
+  const grammar = lang ? grammarForLanguage(lang) : null
   const [loaded, setLoaded] = useState<string | null>(null)
   useEffect(() => {
     if (!grammar) return
