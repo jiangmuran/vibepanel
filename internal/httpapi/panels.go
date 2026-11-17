@@ -470,6 +470,26 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		buf = buf[:previewTextBytes]
 	}
 	text, truncated := browse.ClipText(buf, more, previewTextLines)
+	// Text in another encoding -- UTF-16 with its mark, Latin-1 -- is decoded
+	// here so the browser sees UTF-8 like any other text, and the header names
+	// what it was. Decoded from the bytes as read and cut afterwards: the line
+	// cap counts 0x0A bytes, and in UTF-16 that byte is inside characters as
+	// well as newlines (U+010A, all of Gurmukhi), so counted before decoding a
+	// file of them was cut thousands of lines early.
+	encoding := ""
+	if !browse.Readable(text) {
+		if dec, enc, ok := browse.Decode(buf, more); ok {
+			// As UTF-8, Latin-1 grows by up to double and UTF-16 by up to half
+			// again; the budget is the same either way, so a file under it can
+			// come out over it.
+			decMore := more
+			if len(dec) > previewTextBytes {
+				dec, decMore = dec[:previewTextBytes], true
+			}
+			text, truncated = browse.ClipText(dec, decMore, previewTextLines)
+			encoding = enc
+		}
+	}
 	if !browse.Readable(text) {
 		// Not text and none of the kinds above: the viewer shows its bytes,
 		// offset and hex and ASCII, so a binary is something to look at
@@ -494,6 +514,9 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	setAttachmentHeaders(w, name)
 	w.Header().Set("X-Preview-Kind", string(browse.KindText))
+	if encoding != "" {
+		w.Header().Set("X-Preview-Encoding", encoding)
+	}
 	// Still text, still an attachment, still nothing a browser will render --
 	// this header only says that a *second* endpoint would draw this file, so
 	// the panel can offer the choice. The bytes in this response are unchanged

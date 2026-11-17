@@ -313,6 +313,12 @@ Three limits, and each answers differently:
   comes first, cut back to the last whole line. `X-Preview-Truncated: true` says
   it bit, and the panel says so on screen. A two-gigabyte log is worth clicking;
   only the top of it is ever read.
+- Text in another encoding is decoded to UTF-8 here, and
+  `X-Preview-Encoding` names what it was: `UTF-16 LE` or `UTF-16 BE` for a
+  file that starts with a byte-order mark, `Latin-1` for one with no NUL that
+  is not UTF-8 and has hardly a control character in it (`browse.Decode`). It
+  is decoded first and cut afterwards, to the same budget, because in UTF-16 a
+  newline is two bytes. UTF-8 carries no header.
 - Anything else — a NUL byte or invalid UTF-8 in what was read — is `binary`:
   a `200` with the first **64 KiB** (`previewHexBytes`), and
   `X-Preview-Truncated: true` when the file is longer. The panel draws them as
