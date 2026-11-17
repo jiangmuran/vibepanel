@@ -31,6 +31,7 @@ import { isDelimited, parseCsv, sniffDelimiter } from './csv'
 import { hexLines } from './hex'
 import { JsonTree } from './JsonTree'
 import { isJson, parseJson } from './json'
+import { isNotebook, parseNotebook } from './notebook'
 import { looksLikeDiff } from './diff'
 import { grammarFor } from './grammars'
 import { loadGrammar } from './tokens'
@@ -57,6 +58,16 @@ const Markdown = lazy(() =>
   import('./Markdown').catch(() => ({
     // A tab older than the panel: an upgrade replaced the chunk it knows the
     // name of. Said in the document's place, as lazy.tsx does for the viewer.
+    default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
+  })),
+)
+
+/**
+ * A notebook's cells, fetched the first time one is opened. Its markdown
+ * cells are the document renderer's, so it shares that chunk.
+ */
+const Notebook = lazy(() =>
+  import('./NotebookView').catch(() => ({
     default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
   })),
 )
@@ -252,6 +263,12 @@ function FileContent({
     () => (view.kind === 'text' && isJson(entry.name) ? parseJson(view.text, entry.name, view.truncated) : null),
     [view, entry.name],
   )
+  // A notebook is JSON that is a notebook: cells, not a tree. One the server
+  // cut is not JSON any more, and is the text it is.
+  const notebook = useMemo(
+    () => (view.kind === 'text' && !view.truncated && isNotebook(entry.name) ? parseNotebook(view.text) : null),
+    [view, entry.name],
+  )
   const table = useMemo(
     () => (view.kind === 'text' && isDelimited(entry.name) ? parseCsv(view.text, sniffDelimiter(view.text, entry.name)) : null),
     [view, entry.name],
@@ -262,7 +279,8 @@ function FileContent({
   // go to line, wrap and copy work on code exactly as on a log. Source is the
   // line body without colour, for every kind.
   const drawn =
-    view.kind === 'text' && (canRender(view.markup) || isMarkdown(entry.name) || json !== null || table !== null)
+    view.kind === 'text' &&
+    (canRender(view.markup) || isMarkdown(entry.name) || json !== null || table !== null || notebook !== null)
   const lang = view.kind === 'text' && !drawn ? (grammarFor(entry.name) ?? (looksLikeDiff(text) ? 'diff' : null)) : null
   const rendered = drawn || lang !== null
   const plain = (view.kind === 'text' && (source || !drawn)) || binary
@@ -462,6 +480,7 @@ function FileContent({
   const drawnLabel = () => {
     if (svg || (view.kind === 'text' && view.markup === 'svg')) return t('viewer.picture')
     if (json !== null) return t('viewer.tree')
+    if (notebook !== null) return t('viewer.notebook')
     if (table !== null) return t('viewer.table')
     if (drawn) return t('preview.rendered.short')
     return t('viewer.highlighted')
@@ -713,6 +732,13 @@ function FileContent({
           />
         }
         plain={plain}
+        drawnBody={
+          notebook !== null && !source ? (
+            <Suspense fallback={null}>
+              <Notebook doc={notebook} projectId={projectId} path={entry.path} />
+            </Suspense>
+          ) : null
+        }
         pdfBody={
           view.kind === 'pdf' ? (
             <Suspense fallback={null}>
@@ -815,6 +841,14 @@ function FileContent({
           data-testid="viewer-footer"
           className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
         >
+          {notebook !== null && !source && (
+            <>
+              <span className="tabular" data-testid="viewer-cells">
+                {t('nb.cells', { n: notebook.cells.length.toLocaleString() })}
+              </span>
+              <span aria-hidden="true">·</span>
+            </>
+          )}
           {table !== null && !source && (
             <>
               <span className="tabular" data-testid="viewer-rows">
@@ -863,6 +897,7 @@ function Body({
   onScripts,
   plainBody,
   plain,
+  drawnBody,
   pdfBody,
   imageBody,
   structured,
@@ -875,6 +910,8 @@ function Body({
   onScripts: (on: boolean) => void
   plainBody: React.ReactNode
   plain: boolean
+  /** A drawing of its own that is neither find's tree nor table: a notebook. */
+  drawnBody: React.ReactNode
   pdfBody: React.ReactNode
   imageBody: React.ReactNode
   structured: React.ReactNode
@@ -931,6 +968,7 @@ function Body({
       return plainBody
     case 'text':
       if (plain) return plainBody
+      if (drawnBody) return drawnBody
       if (structured) return structured
       if (imageBody) return imageBody
       // Not the line body, so a document or a page. The sandboxed page is
