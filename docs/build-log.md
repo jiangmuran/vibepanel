@@ -27812,3 +27812,54 @@ Removed: the deadline path taking its own entry out of the map. Without it
 nothing changed that any test or person could see. The next `Typing` for that
 user ends the finished keepalive, closing its stop and finding its done
 channel already closed.
+
+## 2026-11-16 — The file viewer saves text: the server's half
+
+`PUT /api/projects/{id}/file?path=` replaces a text file's content, for the
+viewer's editor (`docs/file-preview.md`, "Editing"). The file is in somebody's
+project and an agent may be writing it at the same moment, so most of the route
+is about what it refuses.
+
+**A save names what it replaces.** The text preview now sends
+`ETag: "<sha256>"`, and the save must send it back in `If-Match`. Missing, or
+`*`, is `428`: both mean "overwrite whatever is there", which is the agent's
+work since the page loaded. Anything but the hash of what is on disk now is
+`412`, "the file was changed after you opened it". A truncated preview has no
+ETag at all, because saving a cut-short view saves the cut. The bound on new
+content is the text preview's 2 MiB for the same reason: anything shown whole
+can be sent back, and anything bigger was never shown whole.
+
+**Compare and rename are one step.** Two tabs saving one version both read the
+old hash and both match, and without a lock the second rename silently drops
+the first save. `fileWriteMu` covers the compare and the rename for writes
+through the panel. It cannot cover a process outside the panel writing in the
+microseconds between them. The precondition is there for the edit made in the
+minutes somebody was typing, and that edit it catches.
+
+**Only what the viewer shows as text.** The existing file is read again and
+sniffed. A media kind is `415` (a PDF can be all printable ASCII and is still a
+PDF), as are a binary and a file of control characters. Past 2 MiB is `413`.
+The file must exist, since this route does not create files. It must be
+regular, because a FIFO with no writer hangs `os.Open` forever. It must be
+inside the project with links resolved: a link out is `403`, and a link inside
+saves its target and stays a link.
+
+**The write** is a temporary file in the same directory, its mode set to the
+original's (`CreateTemp` makes `0600`, and a script that stops being executable
+after a save is a broken save), synced, then renamed over. A reader sees the old
+file or the new one, never half. Each save is an audit row, `files.write`, with
+who, the project, the path actually written and the byte count.
+
+Mutations, 16 of 16 red, two only after the tests were changed:
+
+- Taking out the directory check stayed **green**: the regular-file check
+  answers a directory with the same `400`. What the directory check adds is its
+  own sentence, so the test now asserts each sentence.
+- Taking out the media-kind check stayed **green**: the PNG fixture has a NUL
+  in its header, so the readable-text check refused it anyway. A PDF made only
+  of printable ASCII is refused only by the sniff, and it is now a fixture.
+- The lock test does not rely on luck. A test hook (`fileWriteChecked`) holds
+  each save for 150 ms between compare and rename, so without the lock both
+  saves are past the compare before either renames, every run.
+- Taking out the regular-file check is red as a 40 s test timeout, the hang
+  that check exists to prevent.

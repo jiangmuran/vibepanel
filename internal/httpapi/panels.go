@@ -33,6 +33,7 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/projects/{id}/download", s.handleDownload)
 	r.Get("/projects/{id}/preview", s.handlePreview)
 	r.Get("/projects/{id}/inline", s.handleInline)
+	r.Put("/projects/{id}/file", s.handleWriteFile)
 	// A second route rather than a mode on the first, and that placement is the
 	// design. See internal/httpapi/preview_render.go: /preview can only ever
 	// answer with an attachment, and exactly one handler in this codebase can
@@ -523,6 +524,12 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	// by it, which is why it can be added to the safe endpoint at all.
 	if markup, _ := browse.SniffMarkup(name, head); markup != browse.MarkupNone {
 		w.Header().Set("X-Preview-Markup", string(markup))
+	}
+	// The validator the editor sends back in If-Match (handleWriteFile), and
+	// only for a file sent whole: an edit of a cut-short view would save the
+	// cut, so a truncated file has none and cannot be saved over.
+	if !truncated {
+		w.Header().Set("ETag", contentETag(text))
 	}
 	if truncated {
 		// The panel says so on screen. A preview that silently stops is the

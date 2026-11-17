@@ -560,6 +560,8 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"project.archived_idle": true,
 		"project.restored":      true,
 		"project.archive_idle":  true,
+		// A text file saved from the viewer's editor.
+		"files.write": true,
 	}
 
 	files, err := filepath.Glob("*.go")

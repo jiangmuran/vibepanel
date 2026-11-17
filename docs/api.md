@@ -259,6 +259,7 @@ counts and timestamps out of those files and nothing else leaves the machine.
 ### `GET /api/projects/{id}/preview?path=`
 ### `GET /api/projects/{id}/preview/render?path=&scripts=`
 ### `GET /api/projects/{id}/inline?path=`
+### `PUT /api/projects/{id}/file?path=`
 ### `POST /api/projects/{id}/upload?path=`
 ### `POST /api/projects`
 ### `PATCH /api/projects/{id}`
@@ -286,7 +287,7 @@ A restored project counts as just active and loses any manual position.
 project and answers `200` rather than `201`: nothing was created.
 `POST /api/sessions` in an archived project is a `409`.
 
-Paths in `files`, `download`, `preview` and `upload` are relative to the project
+Paths in `files`, `download`, `preview`, `file` and `upload` are relative to the project
 root and are resolved through it: a path that leaves the project is refused,
 symlinks included.
 
@@ -319,6 +320,11 @@ Three limits, and each answers differently:
   is not UTF-8 and has hardly a control character in it (`browse.Decode`). It
   is decoded first and cut afterwards, to the same budget, because in UTF-16 a
   newline is two bytes. UTF-8 carries no header.
+- A text file sent **whole and as it is on disk** carries
+  `ETag: "<sha256 of its bytes>"`, the version `PUT …/file` asks for. A
+  truncated one carries none, because a save of a cut-short view would save
+  the cut; nor does a decoded one, whose bytes on disk are not the UTF-8 that
+  was sent, so no save could ever match it.
 - Anything else — a NUL byte or invalid UTF-8 in what was read — is `binary`:
   a `200` with the first **64 KiB** (`previewHexBytes`), and
   `X-Preview-Truncated: true` when the file is longer. The panel draws them as
@@ -339,6 +345,32 @@ panel's. A PDF included: the viewer reads it with pdf.js, which fetches the
 bytes, and a sandbox on a response does nothing to a fetch. The policy keeps
 the panel's `frame-ancestors 'none'`: an `<img>`, `<video>` or `<audio>` is
 not a frame, and nothing else draws these.
+
+`PUT …/file` saves a text file from the viewer's editor. The body is the new
+content, UTF-8, at most **2 MiB** -- the text preview's bound, so anything the
+viewer shows whole can be sent back. `If-Match` is required and is the `ETag`
+the preview sent; the answer is `200` with the new `ETag`, in the header and
+as `{"etag": "\"…\"", "size": n}`.
+
+- No `If-Match`, or `*`, is `428`: a write that does not say what it replaces
+  overwrites whatever an agent wrote since the page loaded.
+- An `If-Match` that is not the sha256 of what is on disk now is `412`, with
+  "the file was changed after you opened it". The file is untouched. Two saves
+  of one version through the panel at once are one `200` and one `412`, never
+  two `200`s.
+- The file must exist (`404` otherwise: this does not create files), be a
+  regular file inside the project with symlinks resolved (`403` for a link
+  that leaves it; a link inside it saves its target and stays a link), and
+  still be what the viewer shows as UTF-8 text: read again here, an image, an
+  archive, a binary, a file of control characters or a UTF-16 or Latin-1
+  file is `415`, and a text file
+  past 2 MiB is `413`, since it was only ever shown cut short. New content
+  past the bound is `413`; content that is not UTF-8, or holds a NUL, is `400`.
+
+The write is a temporary file beside the original and a rename over it, so a
+reader sees the old file or the new one and never half; the file's permission
+bits are kept. Each save is an audit row, `files.write`, with who, the
+project, the path written and the size.
 
 A directory is `400`, and so is a FIFO, a socket or a device node: opening a
 FIFO with no writer never returns, and it would take the request goroutine and
