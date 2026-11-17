@@ -254,23 +254,41 @@ def images():
 
 
 def pdf():
-    # Two pages, hand-written: enough for a viewer to have pages to show, and
-    # no generator dependency.
+    # Three pages, hand-written, so there is no generator dependency: text on
+    # every page, a word that is only on page two for find to land on
+    # ("lighthouse"), and a picture on page three, drawn from an image
+    # XObject, so a page that is not only text is drawn too.
     objs = []
 
     def obj(body):
         objs.append(body)
         return len(objs)
 
+    def stream(data, extra=b''):
+        return obj(b'<< /Length %d %s>>\nstream\n%s\nendstream' % (len(data), extra, data))
+
     font = obj(b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+    w, h = 64, 48
+    pixels = bytes(v for y in range(h) for x in range(w) for v in (x * 4, y * 5, 160))
+    image = stream(zlib.compress(pixels),
+                   b'/Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB '
+                   b'/BitsPerComponent 8 /Filter /FlateDecode ' % (w, h))
+    lines = {
+        1: [b'Fixture PDF, page 1', b'The first of three pages.'],
+        2: [b'Fixture PDF, page 2', b'The word to find is lighthouse, and it is only here.'],
+        3: [b'Fixture PDF, page 3', b'A picture, drawn below.'],
+    }
     contents = []
-    for n in (1, 2):
-        s = b'BT /F1 24 Tf 72 720 Td (Fixture PDF, page %d) Tj ET' % n
-        contents.append(obj(b'<< /Length %d >>\nstream\n%s\nendstream' % (len(s), s)))
-    pages_id = len(objs) + 3
+    for n in (1, 2, 3):
+        ops = b'BT /F1 24 Tf 72 720 Td (%s) Tj /F1 14 Tf 0 -32 Td (%s) Tj ET' % tuple(lines[n])
+        if n == 3:
+            ops += b' q 256 0 0 192 72 400 cm /Im1 Do Q'
+        contents.append(stream(ops))
+    pages_id = len(objs) + 4
     page_ids = [obj(b'<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] /Contents %d 0 R '
-                    b'/Resources << /Font << /F1 %d 0 R >> >> >>' % (pages_id, c, font)) for c in contents]
-    assert obj(b'<< /Type /Pages /Kids [%s] /Count 2 >>' % b' '.join(b'%d 0 R' % p for p in page_ids)) == pages_id
+                    b'/Resources << /Font << /F1 %d 0 R >> /XObject << /Im1 %d 0 R >> >> >>'
+                    % (pages_id, c, font, image)) for c in contents]
+    assert obj(b'<< /Type /Pages /Kids [%s] /Count 3 >>' % b' '.join(b'%d 0 R' % p for p in page_ids)) == pages_id
     root = obj(b'<< /Type /Catalog /Pages %d 0 R >>' % pages_id)
     out = io.BytesIO()
     out.write(b'%PDF-1.4\n')
@@ -284,6 +302,22 @@ def pdf():
         out.write(b'%010d 00000 n \n' % o)
     out.write(b'trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n' % (len(objs) + 1, root, xref))
     put('docs/manual.pdf', out.getvalue())
+
+    # The same document behind a password, which pdf.js cannot open without
+    # one: the viewer says so and offers the download. RC4 so pypdf needs no
+    # crypto library to write it.
+    from pypdf import PdfReader, PdfWriter
+    w = PdfWriter(clone_from=PdfReader(io.BytesIO(out.getvalue())))
+    w.encrypt(user_password='fixture', algorithm='RC4-128')
+    locked = io.BytesIO()
+    w.write(locked)
+    put('docs/locked.pdf', locked.getvalue())
+    # The magic and nothing a PDF is made of: found as a PDF by its first
+    # bytes, and unreadable to pdf.js.
+    # Its own generator, so the shared one draws the same bytes for every
+    # fixture after this one as it did before this one existed.
+    own = random.Random(7)
+    put('docs/broken.pdf', b'%PDF-1.7\n' + bytes(own.getrandbits(8) for _ in range(2048)))
 
 
 def media():

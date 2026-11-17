@@ -719,6 +719,67 @@ body {
   background-size: 16px 16px;
 }
 
+/* A PDF's page: paper, white in both themes, because the document was made
+   to be read on white and its own colours assume it. */
+.vp-pdf-page {
+  background: #fff;
+  color-scheme: only light;
+}
+
+/* pdf.js's text layer, the part of web/pdf_viewer.css this needs: each text
+   run a transparent span over the canvas, placed and sized by pdf.js, so
+   text can be selected and copied and a match marked where it is drawn. */
+.vp-pdf-text {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.vp-pdf-text :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.vp-pdf-text > :not(.markedContent),
+.vp-pdf-text .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.vp-pdf-text .markedContent {
+  display: contents;
+}
+.vp-pdf-text ::selection {
+  background: rgb(0 0 255 / 0.25);
+  color: transparent;
+}
+/* A match, inside its run. The light theme's find colours in both themes: the
+   paper is white in both, and the dark theme's yellow ring is invisible on
+   it. The current one is outlined as well as tinted (red line 4). */
+.vp-pdf-text .vp-pdf-hit {
+  position: static;
+  border-radius: 2px;
+  background: rgb(255 204 0 / 0.35);
+}
+.vp-pdf-text .vp-pdf-hit[data-current] {
+  background: rgb(255 149 0 / 0.55);
+  outline: 2px solid #b25000;
+}
+
 .vp-backdrop {
   animation: vp-backdrop-in 160ms var(--vp-ease) both;
   backdrop-filter: blur(6px) saturate(120%);

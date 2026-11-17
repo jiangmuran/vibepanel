@@ -68,7 +68,7 @@ the rest in the browser. The table is the contract between the two halves and
 |---|---|---|
 | `text` | not any of the below, and `browse.IsText` | by extension, below |
 | `image` | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO magic; SVG by `<svg` or `<?xml` + `.svg` | `<img>` with zoom and pan |
-| `pdf` | `%PDF-` | `<object>` with the fallback |
+| `pdf` | `%PDF-` | pdf.js: pages, find, zoom, the page keys (7a, below) |
 | `video` | MP4/MOV (`ftyp`), WebM/MKV (EBML), Ogg | `<video controls>` from the inline route |
 | `audio` | MP3 (ID3 or frame sync), WAV, FLAC, Ogg with Vorbis/Opus, M4A | `<audio controls>` from the inline route |
 | `archive` | ZIP (`PK`), gzip, tar (ustar at 257), 7z, RAR | the entry list, bounded; later |

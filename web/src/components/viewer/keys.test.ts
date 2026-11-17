@@ -78,4 +78,15 @@ describe('viewerAction', () => {
     // Safari reports the composition only as keyCode 229.
     expect(viewerAction(key('Enter', { keyCode: 229 }), finding)).toBeNull()
   })
+
+  it('pages through a PDF, and leaves PgUp and PgDn to the browser elsewhere', () => {
+    const pdf: KeyContext = { ...body, pages: true }
+    expect(viewerAction(key('PageUp'), pdf)).toBe('prevPage')
+    expect(viewerAction(key('PageDown'), pdf)).toBe('nextPage')
+    expect(viewerAction(key('g'), pdf)).toBe('firstPage')
+    expect(viewerAction(key('G', { shiftKey: true }), pdf)).toBe('lastPage')
+    for (const k of ['PageUp', 'PageDown', 'g', 'G']) expect(viewerAction(key(k), body), k).toBeNull()
+    // Typing a g into the find box is typing.
+    expect(viewerAction(key('g'), { ...finding, pages: true })).toBeNull()
+  })
 })

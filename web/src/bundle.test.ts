@@ -41,8 +41,9 @@ describe('the bundle', () => {
 
   it('stays inside its sizes', () => {
     expect(main!.bytes, `${main!.name}`).toBeLessThanOrEqual(1_400_000)
-    // 48 KB in batch 1; Prism's core joined it in batch 2, about 22 KB.
-    expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(64_000)
+    // 48 KB in batch 1; Prism's core joined it in batch 2, about 22 KB; 7a's
+    // page keys, footer and the PDF view's wiring, about 2 KB.
+    expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(68_000)
   })
 
   it('keeps the Markdown parser in a chunk of its own', () => {
@@ -67,5 +68,37 @@ describe('the bundle', () => {
     const grammars = readdirSync(DIST).filter((f) => /^prism-[a-z0-9-]+-[A-Za-z0-9_-]+\.js$/.test(f))
     expect(grammars.length).toBeGreaterThanOrEqual(38)
     expect(grammars.length).toBeLessThanOrEqual(60)
+  })
+
+  it('keeps pdf.js in a chunk of its own, and its worker in a file of its own', () => {
+    // 7a: pdf.js is most of half a megabyte, fetched the first time a PDF is
+    // opened; its worker is loaded by the browser as a worker, from a file,
+    // and would be dead weight inlined into any chunk.
+    const pdf = chunk('PdfView-')
+    expect(pdf, 'the PDF view is not a separate chunk').not.toBeNull()
+    expect(pdf!.bytes, pdf!.name).toBeLessThanOrEqual(460_000)
+    // A class name only pdf.js's display layer carries.
+    expect(pdf!.text).toContain('RenderingCancelledException')
+    expect(viewer!.text).not.toContain('RenderingCancelledException')
+    expect(main!.text).not.toContain('RenderingCancelledException')
+    const worker = readdirSync(DIST).filter((f) => /^pdf\.worker\.min-[A-Za-z0-9_-]+\.mjs$/.test(f))
+    expect(worker, 'the pdf.js worker is not a file of its own').toHaveLength(1)
+    // The parser, which is the worker's: in its file and in no chunk.
+    expect(readFileSync(join(DIST, worker[0]), 'utf8')).toContain('XRefParseException')
+    const js = readdirSync(DIST).filter((f) => f.endsWith('.js'))
+    for (const f of js) expect(readFileSync(join(DIST, f), 'utf8'), f).not.toContain('XRefParseException')
+  })
+
+  it('carries none of the native canvas pdf.js uses under Node', () => {
+    // pdfjs-dist depends, optionally, on @napi-rs/canvas, which it loads
+    // only when it runs under Node. It is in node_modules and must never be
+    // in what a browser loads. Its name does appear once, as a string in
+    // pdf.js's Node-only branch (`createRequire(...)('@napi-rs/canvas')`),
+    // which a browser never takes; what must not appear is the package's
+    // own code, whose loader names its native binaries `skia.<platform>.node`.
+    for (const f of readdirSync(DIST)) {
+      if (!/\.(m?js)$/.test(f)) continue
+      expect(readFileSync(join(DIST, f), 'utf8'), f).not.toMatch(/skia\.[a-z0-9-]+\.node/)
+    }
   })
 })

@@ -45,6 +45,7 @@ import {
 import { findMatches, firstMatchFrom, lineEndings, parseGoTo, splitLines, stepMatch } from './text'
 import { TextBody, type ScrollRequest } from './TextBody'
 import { ImageView } from './ImageView'
+import type { PdfFailure } from './PdfView'
 import { zoomAbout, percent, type Zoom } from './zoom'
 
 /**
@@ -56,6 +57,16 @@ const Markdown = lazy(() =>
   import('./Markdown').catch(() => ({
     // A tab older than the panel: an upgrade replaced the chunk it knows the
     // name of. Said in the document's place, as lazy.tsx does for the viewer.
+    default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
+  })),
+)
+
+/**
+ * pdf.js, fetched the first time a PDF is opened: a few hundred kilobytes,
+ * and its worker another file again (bundle.test.ts).
+ */
+const PdfView = lazy(() =>
+  import('./PdfView').catch(() => ({
     default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
   })),
 )
@@ -92,9 +103,9 @@ type View =
  * The shell is batch 1 of the rebuild -- header, breadcrumb, previous and
  * next, find, go to line, wrap and line numbers, the text body, the footer,
  * the keyboard -- and batch 2 coloured the text body: code and diffs are the
- * same line body as a log, with a grammar (grammars.ts, tokens.ts). Markdown,
- * a project's HTML, images and PDFs are still drawn by what drew them before,
- * inside this shell, until the batch that replaces each.
+ * same line body as a log, with a grammar (grammars.ts, tokens.ts). Later
+ * batches drew the rest (docs/file-preview.md, "Batches"); a PDF is pdf.js
+ * (PdfView.tsx) since 7a.
  */
 interface ViewerProps {
   projectId: string
@@ -211,6 +222,23 @@ function FileContent({
   const [zoom, setZoom] = useState<Zoom>('fit')
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null)
   const imageScale = useRef<() => number>(() => 1)
+  // A PDF's pages: how many, the one at the top of the view, and a page to go
+  // to. The zoom and its keys are the image's.
+  const pdf = view.kind === 'pdf'
+  const [pageCount, setPageCount] = useState(0)
+  const [pageNow, setPageNow] = useState(0)
+  const [pageGoTo, setPageGoTo] = useState<{ page: number; seq: number } | null>(null)
+  const pageSeq = useRef(0)
+  const toPage = (n: number) => {
+    if (pageCount === 0) return
+    setPageGoTo({ page: Math.max(0, Math.min(pageCount - 1, n)), seq: ++pageSeq.current })
+  }
+  const onPdfFail = useCallback((f: PdfFailure) => {
+    setView({
+      kind: 'error',
+      message: f.kind === 'password' ? t('viewer.pdfPassword') : t('viewer.pdfUnreadable', { reason: f.reason }),
+    })
+  }, [])
 
   const text = view.kind === 'text' ? view.text : ''
   const binary = view.kind === 'binary'
@@ -291,14 +319,14 @@ function FileContent({
     })
   }
   const openFind = () => {
-    if (!plain && !structured) return
+    if (!plain && !structured && !pdf) return
     setGotoOpen(false)
     setFindOpen(true)
     // Selected, so a second Ctrl+F replaces the query instead of appending.
     requestAnimationFrame(() => findRef.current?.select())
   }
   const focusBody = () =>
-    (boxRef.current?.querySelector<HTMLElement>('[data-testid="viewer-text"]') ?? boxRef.current)?.focus()
+    (boxRef.current?.querySelector<HTMLElement>('[data-testid="viewer-text"], [data-testid="viewer-pdf"]') ?? boxRef.current)?.focus()
   const closeFind = () => {
     setFindOpen(false)
     setGotoOpen(false)
@@ -309,7 +337,8 @@ function FileContent({
     const n = matchCount
     if (n === 0) return
     if (!plain) {
-      // The tree and the table bring the current match into view themselves.
+      // The tree, the table and a PDF bring the current match into view
+      // themselves.
       setCurrent(stepMatch(current, n, dir))
       return
     }
@@ -348,7 +377,7 @@ function FileContent({
         openFind()
         return
       case 'goToLine':
-        if (!plain) return
+        if (!plain && !(pdf && pageCount > 0)) return
         setFindOpen(false)
         setGotoOpen(true)
         requestAnimationFrame(() => gotoRef.current?.select())
@@ -377,10 +406,22 @@ function FileContent({
       // An image's, and only while one is drawn.
       case 'zoomIn':
       case 'zoomOut':
-        if (showsImage) setZoom(zoomAbout(imageScale.current(), a === 'zoomIn' ? 1 : -1))
+        if (showsImage || pdf) setZoom(zoomAbout(imageScale.current(), a === 'zoomIn' ? 1 : -1))
         return
       case 'zoomReset':
-        if (showsImage) setZoom('fit')
+        if (showsImage || pdf) setZoom('fit')
+        return
+      case 'prevPage':
+        toPage(pageNow - 1)
+        return
+      case 'nextPage':
+        toPage(pageNow + 1)
+        return
+      case 'firstPage':
+        toPage(0)
+        return
+      case 'lastPage':
+        toPage(pageCount - 1)
         return
     }
   }
@@ -388,7 +429,7 @@ function FileContent({
   const onKeyDown = (e: React.KeyboardEvent) => {
     const target = e.target as HTMLElement
     const inField = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
-    const a = viewerAction(e.nativeEvent, { inField, findOpen: findOpen || gotoOpen, mac: isMac() })
+    const a = viewerAction(e.nativeEvent, { inField, findOpen: findOpen || gotoOpen, mac: isMac(), pages: pdf && pageCount > 0 })
     if (!a) return
     // Enter on a focused button is that button's; the match keys need the
     // find bar open, which viewerAction already checked.
@@ -407,9 +448,10 @@ function FileContent({
   }, [])
 
   const goto = () => {
-    const line = parseGoTo(gotoValue, lines.length)
+    const line = parseGoTo(gotoValue, pdf ? pageCount : lines.length)
     if (line === null) return
-    setScrollTo({ line, seq: ++scrollSeq.current })
+    if (pdf) toPage(line)
+    else setScrollTo({ line, seq: ++scrollSeq.current })
     setGotoOpen(false)
     // The input that had the focus is about to go; without this it falls to
     // the page and the next key reaches nothing in the viewer.
@@ -528,7 +570,7 @@ function FileContent({
             </div>
           )}
           <span className="flex-1" />
-          {(plain || structured) && (
+          {(plain || structured || pdf) && (
             <button
               type="button"
               onClick={() => (findOpen ? closeFind() : openFind())}
@@ -633,8 +675,12 @@ function FileContent({
               autoFocus
               inputMode="numeric"
               data-testid="viewer-goto"
-              aria-label={t('viewer.goto')}
-              placeholder={t('viewer.gotoPlaceholder', { n: lines.length.toLocaleString() })}
+              aria-label={pdf ? t('viewer.gotoPage') : t('viewer.goto')}
+              placeholder={
+                pdf
+                  ? t('viewer.gotoPagePlaceholder', { n: pageCount.toLocaleString() })
+                  : t('viewer.gotoPlaceholder', { n: lines.length.toLocaleString() })
+              }
               className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink outline-none focus:border-accent"
             />
             <button type="submit" className="vp-control text-vp-xs">
@@ -667,6 +713,25 @@ function FileContent({
           />
         }
         plain={plain}
+        pdfBody={
+          view.kind === 'pdf' ? (
+            <Suspense fallback={null}>
+              <PdfView
+                url={view.url}
+                zoom={zoom}
+                onZoom={setZoom}
+                scaleRef={imageScale}
+                query={findOpen ? query : ''}
+                current={current}
+                onCount={onCount}
+                onPages={setPageCount}
+                onPage={setPageNow}
+                goTo={pageGoTo}
+                onFail={onPdfFail}
+              />
+            </Suspense>
+          ) : null
+        }
         imageBody={
           showsImage ? (
             <ImageView
@@ -698,6 +763,27 @@ function FileContent({
             <>
               <span className="tabular" data-testid="viewer-image-size">
                 {imageSize.w.toLocaleString()} × {imageSize.h.toLocaleString()}
+              </span>
+              <span aria-hidden="true">·</span>
+            </>
+          )}
+          <span className="tabular">{formatBytes(entry.size)}</span>
+          <span aria-hidden="true">·</span>
+          <span className="tabular" data-testid="viewer-zoom">
+            {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
+          </span>
+          {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
+        </footer>
+      )}
+      {pdf && (
+        <footer
+          data-testid="viewer-footer"
+          className="flex shrink-0 flex-wrap items-center gap-x-2 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
+        >
+          {pageCount > 0 && (
+            <>
+              <span className="tabular" data-testid="viewer-page" data-page={pageNow + 1} aria-live="polite">
+                {t('viewer.pageOf', { i: (pageNow + 1).toLocaleString(), n: pageCount.toLocaleString() })}
               </span>
               <span aria-hidden="true">·</span>
             </>
@@ -777,6 +863,7 @@ function Body({
   onScripts,
   plainBody,
   plain,
+  pdfBody,
   imageBody,
   structured,
   download,
@@ -788,6 +875,7 @@ function Body({
   onScripts: (on: boolean) => void
   plainBody: React.ReactNode
   plain: boolean
+  pdfBody: React.ReactNode
   imageBody: React.ReactNode
   structured: React.ReactNode
   download: () => void
@@ -820,11 +908,7 @@ function Body({
     case 'image':
       return imageBody
     case 'pdf':
-      return (
-        <object data={view.url} type="application/pdf" data-testid="preview-pdf" className="min-h-0 flex-1 bg-surface-2">
-          {cannotShow(t('preview.pdfFallback'))}
-        </object>
-      )
+      return pdfBody
     case 'video':
       return (
         <div className="flex min-h-0 flex-1 bg-surface-2 p-3">
