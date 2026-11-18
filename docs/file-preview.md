@@ -281,6 +281,30 @@ database with `?mode=ro&immutable=1` and a statement timeout, never a write;
 and both on the request goroutine only because each is a few milliseconds on
 a file the panel already opened, measured in the batch's test.
 
+An archive opens with the directories it is wrapped in already open --
+`pkg-1.0/` holding everything says nothing until it is -- down to the first
+directory with more than one thing in it, and everything below that folded.
+A directory's row counts what is under it; a file's gives its size and time
+-- in the reader's zone, except a zip's DOS time (`wall` in the listing),
+which has no zone and is shown as it was written.
+A name an extractor could be led outside its directory by is never filed
+into the tree, where `../../etc/passwd` would read as a directory called
+`..`: it is a row of its own at the top, under the name the archive gives
+it, marked with a sign and a word. Find searches the names and opens the
+directories of the match it is on. The footer gives the format, the files
+and directories, the unpacked total where every size is known, and what the
+listing left out -- in the panel's language, from the listing's fields; the
+server's English `note` is the tooltip.
+
+A database opens on its first table by name, with every table and view in a
+strip above it and each one's row count (a view is not counted: counting
+runs it). Choosing one asks the server for its rows; the strip stays while
+it does, and stays when it fails, so one table that times out does not take
+the others with it. NULL and a BLOB are drawn apart from text that reads the
+same -- italic, in the quieter ink, and marked in the DOM -- since `NULL` is
+also a string somebody stored. Source is the tables' and views' statements,
+in the line body, so find and go to line work on the schema.
+
 ### Keys, added
 
 | key | does |

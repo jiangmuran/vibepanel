@@ -89,4 +89,17 @@ describe('viewerAction', () => {
     // Typing a g into the find box is typing.
     expect(viewerAction(key('g'), { ...finding, pages: true })).toBeNull()
   })
+
+  it('steps through the tables of a database with the arrows, and leaves them alone elsewhere', () => {
+    const db: KeyContext = { ...body, tables: true }
+    expect(viewerAction(key('ArrowLeft'), db)).toBe('prevTable')
+    expect(viewerAction(key('ArrowRight'), db)).toBe('nextTable')
+    for (const k of ['ArrowLeft', 'ArrowRight']) {
+      expect(viewerAction(key(k), body), k).toBeNull()
+      // Shift with an arrow extends a selection; in the find box it moves the caret.
+      expect(viewerAction(key(k, { shiftKey: true }), db), k).toBeNull()
+      expect(viewerAction(key(k), { ...finding, tables: true }), k).toBeNull()
+      expect(viewerAction(key(k, { altKey: true }), db), k).toBeNull()
+    }
+  })
 })

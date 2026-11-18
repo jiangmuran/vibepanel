@@ -1,4 +1,5 @@
 import { t, tKey } from '../i18n'
+import { readArchiveListing, readDBListing, type ArchiveListing, type DBListing } from './listings'
 import type {
   ApiToken,
   AuditEntry,
@@ -147,6 +148,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
  * session sent you to the sign-in screen or left a permission error inside a
  * panel you could no longer use, depending on which button you had pressed.
  */
+/** A listing's GET, with a fetch that never reached the panel in our words. */
+async function listing(url: string): Promise<Response> {
+  try {
+    return await fetch(url)
+  } catch {
+    throw new NetworkError()
+  }
+}
+
+/** The sentence in a refusal's `{"error": ...}`, or its status. */
+async function reasonOf(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown }
+    if (typeof body.error === 'string' && body.error !== '') return body.error
+  } catch {
+    /* not JSON */
+  }
+  return `${res.status}`
+}
+
 async function failure(res: Response): Promise<Error> {
   // The server always sends {"error": "..."} on failure, but a proxy or a
   // crash can produce something else; fall back to the status rather than
@@ -184,6 +205,8 @@ export type FilePreview =
   | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
   /** A medium: streamed from the inline route, so only its type comes back here. */
   | { kind: 'image' | 'pdf' | 'video' | 'audio'; mime: string }
+  /** Read from its own listing route, so only its kind comes back here. */
+  | { kind: 'archive' | 'sqlite' }
   | { kind: 'tooBig' }
   | { kind: 'none' }
 
@@ -1457,11 +1480,48 @@ export const api = {
       await res.arrayBuffer()
       return { kind, mime: res.headers.get('X-Preview-Type') ?? '' }
     }
+    if (kind === 'archive' || kind === 'sqlite') {
+      await res.arrayBuffer()
+      return { kind }
+    }
     // A kind this build does not know is the shape of an older tab against a
     // newer server. "No preview, here is the download" is true in that case
     // too, and is better than a blank frame.
     await res.arrayBuffer()
     return { kind: 'none' }
+  },
+
+  /**
+   * An archive's table of contents. Nothing in the archive is served or
+   * opened by this route; a damaged one throws the server's sentence inside
+   * one of ours, since the sentence is English and names what broke.
+   */
+  archiveEntries: async (projectId: string, path: string): Promise<ArchiveListing> => {
+    const res = await listing(`/api/projects/${projectId}/archive-entries?path=${encodeURIComponent(path)}`)
+    if (res.status === 422) throw new Error(t('packed.unreadable', { reason: await reasonOf(res) }))
+    if (!res.ok) throw await failure(res)
+    const l = readArchiveListing(await res.json().catch(() => null))
+    if (!l) throw new Error(t('listing.bad'))
+    return l
+  },
+
+  /**
+   * A database's tables and the first rows of one, `table` or the first.
+   * Opened read-only and immutable on the server, every statement under a
+   * deadline; a statement past it is a 422 like a damaged file.
+   */
+  sqlite: async (projectId: string, path: string, table?: string): Promise<DBListing> => {
+    const q = table === undefined ? '' : `&table=${encodeURIComponent(table)}`
+    const res = await listing(`/api/projects/${projectId}/sqlite?path=${encodeURIComponent(path)}${q}`)
+    if (res.status === 422) throw new Error(t('db.unreadable', { reason: await reasonOf(res) }))
+    if (res.status === 400 && table !== undefined) {
+      await res.arrayBuffer()
+      throw new Error(t('db.noTable', { name: table }))
+    }
+    if (!res.ok) throw await failure(res)
+    const l = readDBListing(await res.json().catch(() => null))
+    if (!l) throw new Error(t('listing.bad'))
+    return l
   },
 
   /** One directory inside a project. `path` is where, `name` is what.

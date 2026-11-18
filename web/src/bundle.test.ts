@@ -117,4 +117,22 @@ describe('the bundle', () => {
     expect(font!.text).toContain('quick brown fox')
     expect(viewer!.text).not.toContain('quick brown fox')
   })
+
+  it('keeps the archive and the database views in chunks of their own', () => {
+    // 7c: only an archive or a database needs either. The listings are read
+    // and checked in the main chunk (protocol/listings.ts), with the rest of
+    // the API; what draws them, footers included, is not. The viewer's chunk
+    // took the wiring and stayed under its 72 KB line (71.8 KB).
+    const arc = chunk('ArchiveView-')
+    const db = chunk('SqliteView-')
+    expect(arc, 'the archive view is not a separate chunk').not.toBeNull()
+    expect(db, 'the database view is not a separate chunk').not.toBeNull()
+    expect(arc!.bytes, arc!.name).toBeLessThanOrEqual(8_000)
+    expect(db!.bytes, db!.name).toBeLessThanOrEqual(5_000)
+    // The tree's builder is in its chunk and not the viewer's.
+    expect(arc!.text).toContain('archive-toggle')
+    expect(viewer!.text).not.toContain('archive-toggle')
+    expect(db!.text).toContain('sqlite-tables')
+    expect(viewer!.text).not.toContain('sqlite-tables')
+  })
 })
