@@ -1554,6 +1554,144 @@ try {
     if (!cut || !/2(\.0)?M/.test(cut)) note('FAIL', 'large', `a file past 2 MB says ${JSON.stringify(cut)} about being cut`)
     await ctx.close()
   }
+
+  // ── editing ──────────────────────────────────────────────────────────────
+  // docs/file-preview.md, "Editing": `e` opens the editor on a text file the
+  // server sent whole; Ctrl+S saves against the version it was read at and
+  // the file on disk is what was typed, its line endings and byte order mark
+  // kept; a file changed on disk since is refused and offered a reload, and
+  // the disk keeps the other writer's bytes; unsaved edits are asked about
+  // before they are dropped, in a question that is on top. Last, and in a
+  // directory of its own, because it writes files.
+  {
+    mkdirSync(join(PROJ, 'edit'), { recursive: true })
+    const disk = (f) => readFileSync(join(PROJ, 'edit', f))
+    writeFileSync(join(PROJ, 'edit/note.ts'), 'export const a = 1\n')
+    writeFileSync(join(PROJ, 'edit/crlf.txt'), 'one\r\ntwo\r\n')
+    writeFileSync(join(PROJ, 'edit/bom.txt'), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('hello\n')]))
+    writeFileSync(join(PROJ, 'edit/mixed.txt'), 'a\r\nb\n')
+    for (const scheme of ['light', 'dark']) {
+      const ctx = await contextFor({ width: 1280, height: 800, scheme })
+      const page = await ctx.newPage()
+      const status = (v) => v.locator('[data-testid="edit-status"]').getAttribute('data-status').catch(() => null)
+      const waitStatus = (v, want) =>
+        page.waitForFunction(([sel, w]) => document.querySelector(`${sel} [data-testid="edit-status"]`)?.dataset.status === w, [VIEWER, want], { timeout: 8000 })
+          .then(() => true, () => false)
+      await filesAtRoot(page)
+      let v = await openFile(page, 'edit/note.ts')
+      const button = v.locator('[data-testid="viewer-edit"]')
+      if (!(await button.isEnabled().catch(() => false))) note('FAIL', 'edit', `${scheme}: the Edit button is not there or not enabled on a small text file`)
+      await page.keyboard.press('e')
+      const editor = v.locator('[data-testid="editor-content"]')
+      if (!(await editor.waitFor({ timeout: 10000 }).then(() => true, () => false))) {
+        note('FAIL', 'edit', `${scheme}: \`e\` did not open the editor`)
+        await ctx.close()
+        continue
+      }
+      const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
+      if (focused !== 'editor-content') note('FAIL', 'edit', `${scheme}: the editor opened without the focus (${focused})`)
+      // The viewer's letters are the editor's now.
+      await page.keyboard.press('Control+End')
+      await page.keyboard.type('export const wne = 2\n')
+      if (await v.locator('[data-testid="viewer-findbar"]').count()) note('FAIL', 'edit', `${scheme}: typing opened the find bar`)
+      if (!(await v.locator('[data-testid="viewer-dirty"]').count())) note('FAIL', 'edit', `${scheme}: no dot after the name with unsaved changes`)
+      // The grammar coloured it, in the theme's token colour.
+      await page.waitForFunction((sel) => [...document.querySelectorAll(`${sel} .cm-line span`)].some((s) => getComputedStyle(s).color !== getComputedStyle(s.closest('.cm-content')).color), VIEWER, { timeout: 8000 })
+        .catch(() => note('FAIL', 'edit', `${scheme}: the TypeScript in the editor has no colour`))
+      await page.screenshot({ path: join(SHOTS, `edit-${scheme}.png`) })
+      await page.keyboard.press('Control+s')
+      if (!(await waitStatus(v, 'saved'))) note('FAIL', 'edit', `${scheme}: Ctrl+S did not save (${await status(v)})`)
+      const saved = disk('note.ts').toString()
+      if (saved !== 'export const a = 1\nexport const wne = 2\n') note('FAIL', 'edit', `${scheme}: the disk holds ${JSON.stringify(saved)}`)
+      if (await v.locator('[data-testid="viewer-dirty"]').count()) note('FAIL', 'edit', `${scheme}: the dot stayed after a save`)
+      // Esc leaves the editor, and the view is the saved text.
+      await page.keyboard.press('Escape')
+      await v.locator('[data-testid="viewer-body"]').waitFor({ timeout: 5000 }).catch(() => {})
+      const shown = await v.locator('[data-testid="viewer-body"]').textContent().catch(() => '')
+      if (!shown.includes('wne')) note('FAIL', 'edit', `${scheme}: after the save the view does not show it`)
+
+      // Somebody else writes the file; the save is refused and the disk keeps theirs.
+      await page.keyboard.press('e')
+      await editor.waitFor({ timeout: 10000 })
+      await page.keyboard.press('Control+End')
+      await page.keyboard.type('// mine\n')
+      writeFileSync(join(PROJ, 'edit/note.ts'), 'export const theirs = 3\n')
+      await page.keyboard.press('Control+s')
+      if (!(await waitStatus(v, 'changed'))) note('FAIL', 'edit', `${scheme}: a save over a file changed on disk was not refused (${await status(v)})`)
+      if (disk('note.ts').toString() !== 'export const theirs = 3\n') note('FAIL', 'edit', `${scheme}: the refused save changed the disk: ${JSON.stringify(disk('note.ts').toString())}`)
+      await v.locator('[data-testid="edit-reload"]').click()
+      const reloaded = await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="editor-content"]`)?.textContent.includes('theirs'), VIEWER, { timeout: 8000 }).then(() => true, () => false)
+      if (!reloaded) note('FAIL', 'edit', `${scheme}: Reload did not bring in the file as it is on disk`)
+      if (await v.locator('[data-testid="viewer-dirty"]').count()) note('FAIL', 'edit', `${scheme}: dirty after a reload`)
+      // And the reloaded version saves.
+      await page.keyboard.press('Control+End')
+      await page.keyboard.type('// after\n')
+      await page.keyboard.press('Control+s')
+      if (!(await waitStatus(v, 'saved')) || disk('note.ts').toString() !== 'export const theirs = 3\n// after\n') note('FAIL', 'edit', `${scheme}: a save after the reload did not land: ${JSON.stringify(disk('note.ts').toString())}`)
+
+      // Unsaved edits: Esc asks, and Cancel keeps them; closing asks, and
+      // the question is on top of the viewer.
+      await page.keyboard.type('// unsaved')
+      await page.keyboard.press('Escape')
+      const ask = page.locator('[data-testid="confirm-backdrop"]')
+      if (!(await ask.waitFor({ timeout: 3000 }).then(() => true, () => false))) {
+        note('FAIL', 'edit', `${scheme}: Esc with unsaved edits asked nothing`)
+      } else {
+        const onTop = await page.evaluate(() => {
+          const panel = document.querySelector('[data-testid="confirm-dialog"]')
+          const r = panel.getBoundingClientRect()
+          return panel.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
+        })
+        if (!onTop) note('FAIL', 'edit', `${scheme}: the question is under the viewer`)
+        await page.keyboard.press('Escape')
+        await sleep(200)
+        if (!(await editor.count())) note('FAIL', 'edit', `${scheme}: answering no to the question left the editor`)
+      }
+      await v.locator('[data-testid="preview-close"]').click()
+      if (!(await ask.waitFor({ timeout: 3000 }).then(() => true, () => false))) note('FAIL', 'edit', `${scheme}: closing with unsaved edits asked nothing`)
+      else {
+        await page.locator('[data-testid="confirm-yes"]').click()
+        await v.waitFor({ state: 'detached', timeout: 5000 }).catch(() => note('FAIL', 'edit', `${scheme}: dropping the edits did not close the viewer`))
+      }
+      if (disk('note.ts').toString().includes('unsaved')) note('FAIL', 'edit', `${scheme}: dropped edits reached the disk`)
+      writeFileSync(join(PROJ, 'edit/note.ts'), 'export const a = 1\n')
+      await ctx.close()
+    }
+
+    // Line endings and a byte order mark survive a save.
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    for (const [f, want] of [
+      ['crlf.txt', Buffer.from('one\r\ntwo\r\nthree\r\n')],
+      ['bom.txt', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('hello\nthree\n')])],
+    ]) {
+      await filesAtRoot(page)
+      const v = await openFile(page, `edit/${f}`)
+      await page.keyboard.press('e')
+      await v.locator('[data-testid="editor-content"]').waitFor({ timeout: 10000 })
+      await page.keyboard.press('Control+End')
+      await page.keyboard.type('three\n')
+      await page.keyboard.press('Control+s')
+      await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="edit-status"]`)?.dataset.status === 'saved', VIEWER, { timeout: 8000 }).catch(() => {})
+      const got = disk(f)
+      if (!got.equals(want)) note('FAIL', 'edit', `${f}: saved as ${JSON.stringify(got.toString('latin1'))}, want ${JSON.stringify(want.toString('latin1'))}`)
+      await page.keyboard.press('Escape')
+      await page.keyboard.press('Escape')
+    }
+    // What cannot be edited says why, on a button that does nothing.
+    for (const [f, why] of [['large/three-megabytes.log', 'cut'], ['encodings/utf16.txt', 'encoding'], ['edit/mixed.txt', 'mixed']]) {
+      await filesAtRoot(page)
+      const v = await openFile(page, f)
+      const b = v.locator('[data-testid="viewer-edit"]')
+      const state = await b.evaluate((el) => ({ disabled: el.disabled, title: el.title })).catch(() => null)
+      if (!state || !state.disabled || !state.title) note('FAIL', 'edit', `${f} (${why}): the Edit button is ${JSON.stringify(state)}, want disabled with a reason`)
+      await page.keyboard.press('e')
+      if (await v.locator('[data-testid="editor-content"]').count()) note('FAIL', 'edit', `${f} (${why}): \`e\` opened the editor`)
+      await page.keyboard.press('Escape')
+    }
+    await ctx.close()
+    note('PASS', 'edit', 'in both themes: `e`, typing that is the editor\'s, a coloured grammar, Ctrl+S to disk, Esc back to the saved view; a file changed on disk refused, kept, reloaded and saved over; unsaved edits asked about, on top, and never written; CRLF and a byte order mark kept; a cut, a UTF-16 and a mixed-endings file not editable, with the reason')
+  }
 } catch (e) {
   note('FAIL', 'harness', String(e?.stack ?? e))
   for (const ctx of browser?.contexts() ?? []) {
