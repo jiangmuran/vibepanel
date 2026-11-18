@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertTriangle, HelpCircle } from 'lucide-react'
 
 import { answerAsk, currentAsk, subscribeAsk, type AskRequest } from './ask'
@@ -17,7 +18,13 @@ export function ConfirmDialog() {
   if (!pending) return null
   // Keyed by the request, so the field starts from the value that question
   // asked for rather than from whatever the previous one was left holding.
-  return <AskPanel key={pending.id} request={pending.request} />
+  //
+  // In a portal on <body>, mounted when the question is asked, so it is the
+  // last thing there and over every dialog already open. In the tree it was
+  // over the settings, but the file viewer is a portal on <body> at the same
+  // z-index, after the app's root, and a question asked from it would have
+  // opened underneath it.
+  return createPortal(<AskPanel key={pending.id} request={pending.request} />, document.body)
 }
 
 function AskPanel({ request }: { request: AskRequest }) {

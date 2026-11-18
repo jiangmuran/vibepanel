@@ -2200,8 +2200,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
 
-      {/* Last in the tree and z-50, so it is over the settings dialog that two
-          of its questions are asked from. */}
+      {/* A portal on <body> when a question is asked, so it is over whatever
+          dialog asked it: the settings, the file viewer. */}
       <ConfirmDialog />
     </div>
   )
