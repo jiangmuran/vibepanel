@@ -27765,3 +27765,50 @@ prefix includes the comma it was compared without.
 notebook parser and the wiring; the notebook view and the specimen are each
 held under 6 KB, and the pangram is in the specimen's chunk and not the
 viewer's.
+## 2026-11-17 — weixin: the typing indicator outlived the reply
+
+The third way `TestTypingFetchesTheTicketOnceAndKeepsItAlive` failed, on main at
+89d2f94: "the keepalive did not stop". A `sendtyping` arrived after
+`Typing(false)`. Unlike the first two, this one is the adapter's, and a person
+can see it. If a keepalive tick had fired when the reply went out, its
+"typing" reached WeChat after the "stopped", and the phone showed 对方正在输入
+under the answer until WeChat timed it out.
+
+There were two ways in, and holding a tick between firing and sending
+(`Adapter.ticked`, a test hook) made the failure certain. On the old code the
+sends went `[1 2 1 1]` in five runs of five:
+
+- **The tick that had fired.** The stop closed a channel and returned. The
+  keepalive goroutine, already past its `select`, sent anyway.
+- **The tick still pending.** A `select` with the closed stop and a ready
+  tick both pending picks either one at random, so a stopped keepalive could
+  take one more tick. That is the second `1` after the `2`.
+
+The stop now waits for the keepalive to end, and the keepalive checks the
+stop again after taking a tick. A send already on the wire is **waited for,
+not cancelled**. The first fix cancelled it, and its own mutation run showed
+why that is wrong: cancelling ends the client's side of a request the server
+may already have and may act on after the "stopped". The wait is at most one
+send, bounded by `quickTimeout`. `Typing(false)` runs deferred, after the
+reply has been sent, so the wait never holds the answer back.
+
+Five tests, each red with its guard taken out:
+
+- `TestNoKeepaliveIsSentAfterTypingStops`: a tick held before its send sends
+  nothing once stopped (the second look at the stop).
+- `TestTheStopWaitsForAKeepaliveInFlight`: the fake records requests in the
+  order it *finished* them, which is what the phone shows, and "stopped" is
+  last (the wait).
+- `TestTypingTwiceLeavesOneKeepalive`: a second `Typing(true)` ends the first
+  keepalive instead of leaving it running beside the new one.
+- `TestStoppingTheAdapterStopsItsKeepalives`: when `Run` returns, nothing
+  more is sent.
+- `TestTheStopDoesNotWaitForTheNextTick`: with the real five-second interval,
+  `Typing(false)` returns at once. Taking out the outer stop case left every
+  other test green, because their keepalive is 10 ms, and a stop that waited
+  for the next tick would have held each reply's goroutine up to five seconds.
+
+Removed: the deadline path taking its own entry out of the map. Without it
+nothing changed that any test or person could see. The next `Typing` for that
+user ends the finished keepalive, closing its stop and finding its done
+channel already closed.

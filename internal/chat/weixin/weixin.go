@@ -115,7 +115,10 @@ type Adapter struct {
 	logins  map[string]*login
 
 	typingMu sync.Mutex
-	typers   map[string]chan struct{}
+	typers   map[string]*typer
+	// ticked runs between a keepalive tick and its send; a test holds one
+	// there to land it on top of Typing(false).
+	ticked func()
 }
 
 // New builds the adapter from its configuration. With no bot_token it can
@@ -157,7 +160,7 @@ func New(raw json.RawMessage, env chat.Env) (chat.Adapter, error) {
 		logins:       map[string]*login{},
 		backoffShort: defaultBackoffShort, backoffLong: defaultBackoffLong,
 		keepalive: defaultKeepalive, typingMax: defaultTypingMax,
-		typers: map[string]chan struct{}{},
+		typers: map[string]*typer{},
 	}
 	if len(env.State) > 0 {
 		// A state that does not parse is a state from before the schema
@@ -493,29 +496,65 @@ func (a *Adapter) Typing(ctx context.Context, to chat.Peer, on bool) error {
 	if err := a.c.sendTyping(ctx, to.ID, ticket, typingOn); err != nil {
 		return err
 	}
-	stop := make(chan struct{})
+	ty := &typer{stop: make(chan struct{}), done: make(chan struct{})}
 	a.typingMu.Lock()
-	if old, ok := a.typers[to.ID]; ok {
-		close(old)
-	}
-	a.typers[to.ID] = stop
+	old := a.typers[to.ID]
+	a.typers[to.ID] = ty
 	a.typingMu.Unlock()
-	go a.keepTyping(to.ID, ticket, stop)
+	old.end()
+	go a.keepTyping(to.ID, ticket, ty)
 	return nil
 }
 
-func (a *Adapter) keepTyping(user, ticket string, stop chan struct{}) {
+// typer is one keepalive: stop asks it to end, done says it has, including
+// any send it had started.
+type typer struct {
+	stop, done chan struct{}
+}
+
+// end stops the keepalive and waits for it. Waiting is the point: the
+// "stopped" Typing(false) sends next has to be the last thing the phone
+// hears, and a keepalive whose tick had fired when the reply went out used to
+// send its "typing" after it -- 对方正在输入 under the answer until WeChat
+// timed it out. A send already on the wire is waited for rather than
+// cancelled: cancelling ends the client's side of a request the server may
+// already have, and may still act on after the "stopped". At most one send,
+// bounded by quickTimeout.
+func (ty *typer) end() {
+	if ty == nil {
+		return
+	}
+	close(ty.stop)
+	<-ty.done
+}
+
+func (a *Adapter) keepTyping(user, ticket string, ty *typer) {
+	defer close(ty.done)
 	deadline := time.After(a.typingMax)
 	tick := time.NewTicker(a.keepalive)
 	defer tick.Stop()
 	for {
 		select {
-		case <-stop:
+		case <-ty.stop:
 			return
 		case <-deadline:
-			a.stopTyping(user)
+			// Its entry stays until the next Typing for this user ends it,
+			// which closes stop and finds done already closed. Taking it
+			// out here was a lock and a comparison that changed nothing
+			// anybody could see.
 			return
 		case <-tick.C:
+			if a.ticked != nil {
+				a.ticked()
+			}
+			// A select with stop and a tick both ready picks either, so a
+			// tick can be taken after the stop. Looked at again here, or it
+			// is one more "typing" the stop has to wait for.
+			select {
+			case <-ty.stop:
+				return
+			default:
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), quickTimeout)
 			_ = a.c.sendTyping(ctx, user, ticket, typingOn)
 			cancel()
@@ -525,19 +564,19 @@ func (a *Adapter) keepTyping(user, ticket string, stop chan struct{}) {
 
 func (a *Adapter) stopTyping(user string) {
 	a.typingMu.Lock()
-	defer a.typingMu.Unlock()
-	if stop, ok := a.typers[user]; ok {
-		close(stop)
-		delete(a.typers, user)
-	}
+	ty := a.typers[user]
+	delete(a.typers, user)
+	a.typingMu.Unlock()
+	ty.end()
 }
 
 func (a *Adapter) stopAllTyping() {
 	a.typingMu.Lock()
-	defer a.typingMu.Unlock()
-	for user, stop := range a.typers {
-		close(stop)
-		delete(a.typers, user)
+	all := a.typers
+	a.typers = map[string]*typer{}
+	a.typingMu.Unlock()
+	for _, ty := range all {
+		ty.end()
 	}
 }
 
