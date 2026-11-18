@@ -27703,3 +27703,65 @@ and were written again as returns behind a condition. One survived: the check
 for the password message looked for "password", and without the branch the
 message is pdf.js's own reason, "No password given". It looks for the
 viewer's sentence now.
+
+## 2026-11-17 — The file viewer, 7b: notebooks, fonts, other encodings
+
+The second part of the seventh batch: three kinds that opened as something
+other than what they are.
+
+**Other encodings.** A UTF-16 file and a Latin-1 one were hex.
+`browse.Decode` turns both into UTF-8 before the text is cut, so the 2 MB
+budget and the line cap apply to what the viewer draws, and the answer names
+what it decoded from in `X-Preview-Encoding`, which the footer shows in place
+of UTF-8. UTF-16 is known by its byte order mark. Latin-1 is a guess, so it
+is a narrow one: no NUL, not UTF-8, and at most one C0 or C1 control in fifty
+bytes -- with no limit, three random files in ten passed as accented text.
+A character the read cut in half at the 2 MB line was taken for Latin-1 until
+a test cut one; it is trimmed before the UTF-8 question is asked. The client
+takes only the three names `Decode` gives from that header, because it is a
+string anything on the way could have set and the footer draws it.
+
+**Notebooks.** An `.ipynb` was a JSON tree. nbformat 4 is drawn cell by cell:
+markdown through the document renderer, code coloured in the kernel's
+language with its execution count, and the outputs under it -- text, stderr,
+pictures, and errors with the traceback's terminal colours stripped. A
+picture is a data URL whose type this side picks from a fixed list, a raster
+one only when its body is base64; HTML output is shown as its source and
+never rendered, which the check proves with a `<script>` in the fixture. A
+notebook the server cut is not JSON any more and is the text it is. The
+parser is in the viewer's chunk, since it decides whether a file is a
+notebook before anything is drawn; the view is its own chunk.
+
+Naming the kernel's language found an older bug: a fence's info string was
+looked up as an extension only, so ```` ```py ```` had colour and
+```` ```python ````, the commoner spelling, had none. `grammarForLanguage`
+tries Prism's name first. The tables were plain objects, so a file called
+`a.constructor` handed Object's constructor to the tokeniser as a grammar;
+both lookups read own keys only.
+
+**Fonts.** TTF, OTF, WOFF and WOFF2, known by their first bytes, were hex.
+They are a specimen: the font's own name from its name table (a WOFF's
+through `DecompressionStream`; a WOFF2's needs Brotli, so it is the file's
+name), the alphabet, digits, a pangram and the file's name, at three sizes.
+The face is added under a family name of the viewer's own and deleted when
+the specimen goes, so a font in a project cannot restyle the panel by
+naming a family the panel uses; the check looks in `document.fonts` after
+closing. A collection (`ttcf`) is not one font and stays hex; the specimen
+loads the whole file, so it stops at 32 MB.
+
+**Fixtures.** `make.py` writes the notebook and the font in four formats with
+fontTools; the check opens each at three widths in both themes.
+
+**What the full check found.** Six failures, two of them real. A phone shows
+one directory in the trail, and the flat 30% cap cut `encodings` and
+`notebooks` -- longer than any earlier fixture's directory -- to a few
+letters when that one directory had the row to itself. The cap now follows
+how many are shown: 60% alone, 45% for two, 30% for three, so the name keeps
+a tenth of the row. The other two were the check's own: a rendered heading
+carries its `#` anchor after the words, and the picture's 22-character
+prefix includes the comma it was compared without.
+
+**The budget.** The viewer's chunk line moved from 68 KB to 72 KB for the
+notebook parser and the wiring; the notebook view and the specimen are each
+held under 6 KB, and the pangram is in the specimen's chunk and not the
+viewer's.
