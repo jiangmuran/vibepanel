@@ -513,9 +513,11 @@ function FileContent({
               <span
                 key={c.path}
                 // They do not shrink: a long name is what gets cut, not the
-                // directories beside it. At most three, each at most 30%, so
-                // the name always has a tenth of the row.
-                className={`min-w-0 max-w-[30%] shrink-0 items-center gap-0.5 ${
+                // directories beside it. Each is capped by how many are shown
+                // -- 60% alone, 45% for two, 30% for three -- so the name
+                // always has a tenth of the row. A flat 30% cut a phone's one
+                // directory to `encod…` when it had the row to itself.
+                className={`min-w-0 max-w-[60%] shrink-0 items-center gap-0.5 @md:max-w-[45%] @2xl:max-w-[30%] ${
                   i < trail.length - 3
                     ? 'hidden'
                     : i < trail.length - 2

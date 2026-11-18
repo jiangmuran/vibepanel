@@ -1167,7 +1167,12 @@ try {
     if (await nb.count()) {
       const got = await nb.evaluate((el) => ({
         counts: [...el.querySelectorAll('[data-testid="nb-count"]')].map((c) => c.textContent),
-        heading: el.querySelector('[data-cell="markdown"] h1')?.textContent ?? null,
+        // The heading's own words, without the # anchor that every rendered
+        // heading carries after them.
+        heading: (() => {
+          const h = el.querySelector('[data-cell="markdown"] h1')
+          return h ? [...h.childNodes].filter((n) => n.nodeName !== 'A').map((n) => n.textContent).join('') : null
+        })(),
         coloured: !!el.querySelector('[data-cell="code"] [data-testid="preview-code"] span[class*="--vp-tok-keyword"]'),
         outputs: [...el.querySelectorAll('[data-testid="nb-output"]')].map((o) => o.dataset.output),
         picture: (() => {
@@ -1184,7 +1189,7 @@ try {
       if (!got.coloured) note('FAIL', 'notebook', 'the code cells are not coloured as Python')
       const outs = ['text', 'stderr', 'image', 'text', 'html', 'error']
       if (JSON.stringify(got.outputs) !== JSON.stringify(outs)) note('FAIL', 'notebook', `outputs ${JSON.stringify(got.outputs)}, want ${JSON.stringify(outs)}`)
-      if (!got.picture || got.picture.w !== 48 || got.picture.src !== 'data:image/png;base64') note('FAIL', 'notebook', `the picture output is ${JSON.stringify(got.picture)}`)
+      if (!got.picture || got.picture.w !== 48 || got.picture.src !== 'data:image/png;base64,') note('FAIL', 'notebook', `the picture output is ${JSON.stringify(got.picture)}`)
       if (!got.htmlAsText || got.rendered) note('FAIL', 'notebook', 'an HTML output was rendered rather than shown as its source')
       if ((await page.title()) === 'ran') note('FAIL', 'notebook', "an HTML output's script ran")
       if (!got.traceback.includes('ZeroDivisionError') || /\x1b|\[0;31m/.test(got.traceback)) note('FAIL', 'notebook', `the traceback reads ${JSON.stringify(got.traceback.slice(0, 80))}`)
