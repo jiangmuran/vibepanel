@@ -391,7 +391,10 @@ tar in it, listed as one entry named after the stream (or the file without
 `.gz`), with `size` `-1` and a `note` saying why: gzip keeps the size only
 modulo 4 GiB. `modified` is Unix seconds, `0` when the archive does not say; a
 zip with no extended timestamp records local time with no zone, and it is read
-as UTC. A name is listed as the archive holds it, and `unsafe` marks one an
+as UTC and marked `"wall": true`. Show such a time in UTC, which is the time as
+it was written; shown in the reader's zone it moves by that zone's offset, for
+a time that was never UTC. `wall` is absent from every other entry: a tar's
+times and a zip's extended timestamps are instants. A name is listed as the archive holds it, and `unsafe` marks one an
 extractor could be led outside its directory by: absolute, a drive letter, a
 `..` element, a backslash.
 

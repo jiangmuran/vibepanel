@@ -44,9 +44,16 @@ type ArchiveEntry struct {
 	// Size is the entry's uncompressed size, -1 when the format does not say.
 	Size int64 `json:"size"`
 	// Modified is Unix seconds, 0 when the format does not say. A zip with no
-	// extended timestamp records local time with no zone; it is read as UTC.
+	// extended timestamp records local time with no zone; it is read as UTC
+	// and Wall says so.
 	Modified int64 `json:"modified"`
-	IsDir    bool  `json:"isDir"`
+	// Wall marks a Modified that is a wall-clock reading rather than an
+	// instant: a zip's DOS time, written in whatever zone the zipping machine
+	// was in. Shown in UTC it is the time as written; shown in the viewer's
+	// zone it moves by that zone's offset, eight hours on a machine in
+	// California, for a time that was never UTC to begin with.
+	Wall  bool `json:"wall,omitempty"`
+	IsDir bool `json:"isDir"`
 	// Unsafe is a name that would not stay inside the directory it was
 	// extracted into, or that means different things on different systems:
 	// absolute, a drive letter, a ".." element, a backslash. The name is shown
@@ -334,6 +341,7 @@ func listZip(r io.ReaderAt, size int64) (*ArchiveListing, error) {
 			Unsafe: unsafeName(raw),
 		}
 		e.Modified = dosTime(binary.LittleEndian.Uint16(fixed[14:]), binary.LittleEndian.Uint16(fixed[12:]))
+		e.Wall = e.Modified != 0
 		zipExtra(nameExtra[nameLen:], &e, binary.LittleEndian.Uint32(fixed[24:]) == 0xffffffff)
 		l.Entries = append(l.Entries, e)
 	}
@@ -372,7 +380,7 @@ func zipExtra(b []byte, e *ArchiveEntry, size64 bool) {
 				e.Size = int64(s)
 			}
 		case id == 0x5455 && len(body) >= 5 && body[0]&1 != 0:
-			e.Modified = int64(binary.LittleEndian.Uint32(body[1:]))
+			e.Modified, e.Wall = int64(binary.LittleEndian.Uint32(body[1:])), false
 		}
 		b = b[4+n:]
 	}

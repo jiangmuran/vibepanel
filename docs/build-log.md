@@ -27957,3 +27957,14 @@ The listing was `GET /api/projects/{id}/archive` in the design, and `POST` on
 that path archives the project: chi tells them apart by method, but a path
 that means "list this file" or "put this project away" depending on the verb
 reads two ways to everyone who is not a router. It is `archive-entries`.
+
+**`wall`, after the viewer's half was started.** A zip's DOS time has no zone.
+The server read it as UTC and the browser showed it in local time, so on this
+machine every such entry was eight hours early. The browser cannot tell which
+times to treat that way, so the server says: an entry whose time is a DOS time
+carries `"wall": true`, and the viewer shows it in UTC, which is the time as
+written. An extended timestamp clears the mark, because it is an instant, and
+a tar entry never has it. `TestADOSTimeIsMarkedAsWallClock` checks both kinds
+of zip entry and a tar entry, and checks that `wall` is absent from the JSON
+rather than `false`. Taking out either the line that sets the mark or the line
+that clears it turns the test red.

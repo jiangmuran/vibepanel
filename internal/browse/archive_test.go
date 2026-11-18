@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -452,5 +453,50 @@ func TestATarsHeadersAreReadOnlyToTheirBound(t *testing.T) {
 	}
 	if bound := int64(512 + tarSpecialMaxBytes + 64<<10); read > bound {
 		t.Errorf("read %d bytes; the bound is %d", read, bound)
+	}
+}
+
+// A zip's own DOS time is a wall-clock reading with no zone: it is read as
+// UTC and marked `wall`, so the viewer shows it as written instead of moving
+// it by the viewer's own offset. A zip entry with the extended timestamp, and
+// a tar entry, are real instants and carry no mark.
+func TestADOSTimeIsMarkedAsWallClock(t *testing.T) {
+	var buf bytes.Buffer
+	z := zip.NewWriter(&buf)
+	// 2023-11-14 22:13:20 as DOS date and time, and no extended timestamp:
+	// the writer adds one only for FileHeader.Modified.
+	dos := &zip.FileHeader{Name: "dos.txt", Method: zip.Store,
+		ModifiedDate: uint16(2023-1980)<<9 | 11<<5 | 14, ModifiedTime: 22<<11 | 13<<5 | 20/2}
+	ext := &zip.FileHeader{Name: "unix.txt", Method: zip.Store, Modified: time.Unix(1700000000, 0)}
+	for _, h := range []*zip.FileHeader{dos, ext} {
+		if _, err := z.CreateHeader(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	l, err := ListArchive(bytes.NewReader(buf.Bytes()), int64(buf.Len()), "times.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := l.Entries[0]; !e.Wall || e.Modified != time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC).Unix() {
+		t.Errorf("the DOS-time entry is %+v, want wall and 2023-11-14 22:13:20 read as UTC", e)
+	}
+	if e := l.Entries[1]; e.Wall || e.Modified != 1700000000 {
+		t.Errorf("the extended-timestamp entry is %+v, want no wall and its instant", e)
+	}
+	b, _ := json.Marshal(l.Entries[1])
+	if bytes.Contains(b, []byte(`"wall"`)) {
+		t.Errorf("the extended-timestamp entry sends %s", b)
+	}
+
+	tb := tarOf(t, &tar.Header{Name: "a.txt", Typeflag: tar.TypeReg, ModTime: time.Unix(1700000000, 0)})
+	tl, err := ListArchive(bytes.NewReader(tb), int64(len(tb)), "a.tar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tl.Entries[0].Wall {
+		t.Error("a tar entry is marked wall")
 	}
 }
