@@ -164,6 +164,8 @@ In the viewer, when the focus is not in the find box:
 | `d` | download |
 | `c` | copy the path |
 | Ctrl/⌘ A | select the body: the text, code, hex, tree or table, not the header or the footer; in the find box, the box's text |
+| `e` | edit a text file (Editing, below) |
+| Ctrl/⌘ S, Esc | while editing: save, and stop editing; every other key is the editor's |
 
 They are listed in the ⌥/ dialog under a *Viewer* heading, and nothing here
 takes a key from a text field or from the terminal: the viewer is a dialog

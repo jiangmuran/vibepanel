@@ -32,6 +32,9 @@ export type ViewerAction =
   | 'firstPage'
   | 'lastPage'
   | 'selectAll'
+  | 'edit'
+  | 'save'
+  | 'stopEditing'
 
 export interface KeyLike {
   key: string
@@ -58,6 +61,12 @@ export interface KeyContext {
    * and taking them would leave a log with no way to page through it.
    */
   pages?: boolean
+  /**
+   * The body is the editor. Every key is then the editor's -- letters, the
+   * command-key shortcuts, select-all, its own find -- except saving and
+   * Escape, which leaves it.
+   */
+  editing?: boolean
 }
 
 /**
@@ -72,6 +81,11 @@ export interface KeyContext {
 export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
   if (e.isComposing || e.keyCode === 229) return null
   const command = ctx.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+  if (ctx.editing) {
+    if (command && !e.altKey && e.key.toLowerCase() === 's') return 'save'
+    if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) return 'stopEditing'
+    return null
+  }
   if (command && !e.altKey) {
     const k = e.key.toLowerCase()
     if (k === 'f') return 'find'
@@ -124,6 +138,8 @@ export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
       return 'download'
     case 'c':
       return 'copyPath'
+    case 'e':
+      return 'edit'
   }
   return null
 }

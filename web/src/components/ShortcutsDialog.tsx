@@ -61,6 +61,8 @@ export function shortcutLines(mac: boolean, side: 'terminal' | 'panel'): { title
     { combo: ['D'], what: 'keys.viewerDownload' },
     { combo: ['C'], what: 'keys.viewerCopyPath' },
     { combo: [`${k.cmd}A`], what: 'keys.viewerSelectAll' },
+    { combo: ['E'], what: 'keys.viewerEdit' },
+    { combo: [`${k.cmd}S`], what: 'keys.viewerSave' },
   ]
   // The Files tab's, while a row has the focus (panels/treeKeys.ts).
   const files: Line[] = [

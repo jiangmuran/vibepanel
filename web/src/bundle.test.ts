@@ -45,8 +45,11 @@ describe('the bundle', () => {
     // page keys, footer and the PDF view's wiring, about 2 KB; 7b's notebook
     // parser -- needed here, to know a notebook is one before drawing it --
     // and the wiring for notebooks, fonts and encodings, about 4 KB. The
-    // font's name parser is in the specimen's chunk, not this one.
-    expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(72_000)
+    // font's name parser is in the specimen's chunk, not this one. The zoom
+    // buttons and select-all, about 2 KB; editing's header, keys and the
+    // question before edits are dropped, about 3 KB -- the editor itself is
+    // its own chunk, below.
+    expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(76_000)
   })
 
   it('keeps the Markdown parser in a chunk of its own', () => {
@@ -116,5 +119,31 @@ describe('the bundle', () => {
     // The specimen's pangram is in its chunk and not the viewer's.
     expect(font!.text).toContain('quick brown fox')
     expect(viewer!.text).not.toContain('quick brown fox')
+  })
+
+  it('keeps the editor and its grammars in chunks of their own', () => {
+    // CodeMirror is a third of a megabyte, and only somebody who edits a
+    // file ever needs it. A string only its view draws.
+    const editor = chunk('FileEditor-')
+    expect(editor, 'the editor is not a separate chunk').not.toBeNull()
+    expect(editor!.text).toContain('cm-scroller')
+    expect(main!.text).not.toContain('cm-scroller')
+    expect(viewer!.text).not.toContain('cm-scroller')
+    expect(editor!.bytes, editor!.name).toBeLessThanOrEqual(340_000)
+    // A grammar per language, fetched with the first file in it. C++ is the
+    // largest, its parse tables about 100 KB. HTML, CSS and JavaScript are
+    // stubs: Markdown brings all three, so they are chunks they share.
+    for (const lang of ['javascript', 'python', 'go', 'rust', 'json', 'markdown', 'yaml', 'html', 'css', 'cpp']) {
+      const c = chunk(`lang-${lang}-`)
+      expect(c, `no chunk for ${lang}`).not.toBeNull()
+      expect(c!.bytes, c!.name).toBeLessThanOrEqual(110_000)
+    }
+    // What the grammars share -- the HTML, CSS and JavaScript parsers, the LR
+    // runtime -- is in chunks named for the packages' dist/index.js. Nothing
+    // else in the bundle is named that today; something that is, is
+    // something to look at.
+    for (const f of readdirSync(DIST).filter((n) => n.startsWith('dist-') && n.endsWith('.js'))) {
+      expect(statSync(join(DIST, f)).size, f).toBeLessThanOrEqual(110_000)
+    }
   })
 })
