@@ -526,9 +526,11 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Preview-Markup", string(markup))
 	}
 	// The validator the editor sends back in If-Match (handleWriteFile), and
-	// only for a file sent whole: an edit of a cut-short view would save the
-	// cut, so a truncated file has none and cannot be saved over.
-	if !truncated {
+	// only for a file sent whole and as it is on disk. An edit of a cut-short
+	// view would save the cut; a decoded file was sent as UTF-8 its bytes on
+	// disk are not, so the hash of what was sent could never match, and the
+	// save refuses it anyway rather than change its encoding.
+	if !truncated && encoding == "" {
 		w.Header().Set("ETag", contentETag(text))
 	}
 	if truncated {

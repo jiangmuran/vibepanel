@@ -27863,3 +27863,13 @@ Mutations, 16 of 16 red, two only after the tests were changed:
   saves are past the compare before either renames, every run.
 - Taking out the regular-file check is red as a 40 s test timeout, the hang
   that check exists to prevent.
+
+**A decoded file has no ETag.** Batch 7b, merged in between, decodes UTF-16
+and Latin-1 for the preview, so the bytes sent are UTF-8 and the bytes on disk
+are not. A hash of what was sent could never match the file, and a save that
+somehow did would change the file's encoding to fix a typo. So the ETag goes
+only with an undecoded file, and the save already refused these files: it
+re-reads the bytes on disk, where UTF-16 has NULs and Latin-1 is not UTF-8.
+`TestADecodedFileCannotBeSavedOver` checks both halves, for a UTF-16 file and
+a Latin-1 one. Before the condition it was red on the ETag half and green on
+the save half, and the condition taken out again turns it red.

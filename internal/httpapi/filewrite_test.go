@@ -308,3 +308,43 @@ func TestASaveIsOnlyOverARegularFile(t *testing.T) {
 		}
 	}
 }
+
+// A file the preview decoded -- UTF-16 with its mark, Latin-1 -- is shown as
+// UTF-8 that is not what is on disk. It has no ETag, since the hash of what
+// was sent could never match the file, and a save over it is refused whatever
+// it names: writing the editor's UTF-8 back would change the file's encoding
+// as a side effect of fixing a typo.
+func TestADecodedFileCannotBeSavedOver(t *testing.T) {
+	ts, _, root, at := writeFixture(t)
+	files := map[string]struct {
+		raw, shown []byte
+	}{
+		"utf16.txt":  {[]byte("\xff\xfeh\x00i\x00\n\x00"), []byte("hi\n")},
+		"latin1.txt": {[]byte("caf\xe9 cr\xe8me\n"), []byte("café crème\n")},
+	}
+	for name, f := range files {
+		if err := os.WriteFile(filepath.Join(root, name), f.raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		res, err := ts.Client().Get(strings.Replace(at(name), "/file?", "/preview?", 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.Header.Get("X-Preview-Kind") != "text" || res.Header.Get("X-Preview-Encoding") == "" || string(body) != string(f.shown) {
+			t.Fatalf("%s: previewed as %q in %q: %q", name, res.Header.Get("X-Preview-Kind"), res.Header.Get("X-Preview-Encoding"), body)
+		}
+		if etag := res.Header.Get("ETag"); etag != "" {
+			t.Errorf("%s: a decoded preview sent ETag %s", name, etag)
+		}
+		for _, etag := range []string{contentETag(f.raw), contentETag(f.shown)} {
+			if code, body, _ := putFile(t, ts, at(name), etag, []byte("x\n")); code != http.StatusUnsupportedMediaType {
+				t.Errorf("%s: saving over it: %d %s, want 415", name, code, body)
+			}
+		}
+		if got := readFile(t, filepath.Join(root, name)); got != string(f.raw) {
+			t.Errorf("%s now holds %q", name, got)
+		}
+	}
+}
