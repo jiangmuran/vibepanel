@@ -995,7 +995,11 @@ try {
     // Back to fitted, then a double click: 100%, with the pixel that was under
     // the pointer still under it.
     await page.keyboard.press('0')
-    const at = { x: r.x + r.width * 0.3, y: r.y + r.height * 0.4 }
+    // Whole pixels: the browser reports a click's clientX and clientY as
+    // integers, so a click dispatched at a fraction is anchored at the
+    // integer below it, and measuring from the fraction read as a drift of
+    // 3.7 px that the viewer never made.
+    const at = { x: Math.round(r.x + r.width * 0.3), y: Math.round(r.y + r.height * 0.4) }
     const pixel = () => box.evaluate((b, p) => {
       const i = b.querySelector('img').getBoundingClientRect()
       const img = b.querySelector('img')
@@ -1365,7 +1369,6 @@ try {
       if (!got.coloured) note('FAIL', 'notebook', 'the code cells are not coloured as Python')
       const outs = ['text', 'stderr', 'image', 'text', 'html', 'error']
       if (JSON.stringify(got.outputs) !== JSON.stringify(outs)) note('FAIL', 'notebook', `outputs ${JSON.stringify(got.outputs)}, want ${JSON.stringify(outs)}`)
-      if (!got.picture || got.picture.w !== 48 || got.picture.src !== 'data:image/png;base64') note('FAIL', 'notebook', `the picture output is ${JSON.stringify(got.picture)}`)
       if (!got.picture || got.picture.w !== 48 || got.picture.src !== 'data:image/png;base64,') note('FAIL', 'notebook', `the picture output is ${JSON.stringify(got.picture)}`)
       if (!got.htmlAsText || got.rendered) note('FAIL', 'notebook', 'an HTML output was rendered rather than shown as its source')
       if ((await page.title()) === 'ran') note('FAIL', 'notebook', "an HTML output's script ran")

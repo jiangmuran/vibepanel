@@ -76,13 +76,16 @@ export default function FileEditor({ projectId, path, name, text, bom, etag, sep
     const doc = view.state.doc
     // Joined with the file's own line ending (the lineSeparator facet), and
     // the byte order mark the read dropped put back in front.
-    const body = (bom ? '﻿' : '') + doc.sliceString(0)
+    // The separator is given, because sliceString joins with "\n" by default
+    // whatever the state's lineSeparator is: a CRLF file saved through the
+    // default came back LF, every line ending rewritten.
+    const body = (bom ? '﻿' : '') + doc.sliceString(0, doc.length, separator)
     try {
       const r = await api.saveFile(projectId, path, body, base.current.etag)
       base.current = { doc, etag: r.etag }
       setStatus({ kind: 'saved', size: r.size })
       props.current.onDirty(!view.state.doc.eq(doc))
-      props.current.onSaved(doc.sliceString(0), r.etag)
+      props.current.onSaved(doc.sliceString(0, doc.length, separator), r.etag)
     } catch (e) {
       setStatus(e instanceof FileChangedError ? { kind: 'changed' } : { kind: 'error', message: e instanceof Error ? e.message : String(e) })
     } finally {
