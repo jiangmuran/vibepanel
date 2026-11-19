@@ -28060,3 +28060,30 @@ selected row lifted off the sidebar, the red ring round a terminal that is
 waiting, serif titles and figures, and the new state glyphs. None of those is a
 token today, so a theme cannot carry them. The meters' warning tier reads
 `--vp-state-waiting`, so in these themes it is red as well.
+
+## 2026-11-19 — Depth for the two new themes
+
+The first of the things a token-only theme could not carry. Four custom
+properties, zero in light and dark:
+
+- `--depth-panel` and `--depth-raised`, two shadows. `.vp-well` (both
+  terminals) wears the first; `.vp-row-selected` (the session on screen) wears
+  the second over `--depth-selected`, which is `--vp-surface-2` in the flat
+  themes and the lightest surface in porcelain and wujin, so the row lifts.
+- `--depth-waiting-ring`, a width. The terminal of a session that is waiting
+  for the person gets a ring of the waiting colour, thinned, that wide.
+  `data-waiting` on the terminal area is what the rule reads, and it is false
+  once the process has exited.
+
+Two things about how:
+
+- **A zero shadow, not `none`.** `.vp-well` lists the panel shadow and the
+  ring in one `box-shadow`, and `none` is not valid inside a list: the browser
+  drops the declaration whole.
+- **Not `--vp-*`.** That prefix is what a plugin theme may set, pinned by
+  `BaseTokens` and `contract-v1.txt`, and a name added there is kept for
+  strangers. These are new and may still change shape, so a plugin theme
+  cannot have depth yet. That is the cost, taken on purpose.
+
+Still not done from the mock-ups: serif titles and figures, the new state
+glyphs, the round-topped bars and the rearranged right panel.
