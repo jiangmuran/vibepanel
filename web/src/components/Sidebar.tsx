@@ -536,7 +536,7 @@ export function Sidebar(props: SidebarProps) {
                   // a check can both read rather than only as a background.
                   aria-current={isSelected ? 'true' : undefined}
                   className={`group flex cursor-pointer items-center gap-2 rounded-vp ${pack.row} transition-colors duration-200 ease-vp ${
-                    isSelected ? 'bg-surface-2' : 'hover:bg-surface-2'
+                    isSelected ? 'vp-row-selected' : 'hover:bg-surface-2'
                   }`}
                   onClick={() => props.onSelect(s.id)}
                   // Reachable and usable from the keyboard: it was a div with a

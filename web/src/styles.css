@@ -158,6 +158,22 @@
   --vp-control-h: 1.75rem;
   --vp-radius-control: 8px;
   --vp-chrome-h: 2.5rem;
+
+  /* Depth, for the themes that have any. Light and dark are flat: the zero
+     shadows here are what they get, so `.vp-well` and `.vp-row-selected`
+     below paint exactly what the classes they replaced did.
+
+     A zero shadow and not `none`, because `.vp-well` puts two of these in one
+     `box-shadow` list and `none` is not valid as an item of a list: the whole
+     declaration is dropped, ring and all.
+
+     Not `--vp-*` on purpose. That prefix is the plugin contract
+     (internal/plugins BaseTokens, contract-v1.txt): a name there is a name a
+     stranger's theme may set for good. These are one release old. */
+  --depth-raised: 0 0 0 0 transparent;
+  --depth-panel: 0 0 0 0 transparent;
+  --depth-selected: var(--vp-surface-2);
+  --depth-waiting-ring: 0px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -368,6 +384,11 @@
   --vp-radius: 14px;
   --vp-radius-lg: 20px;
   --vp-radius-control: 10px;
+
+  --depth-raised: 0 1px 2px rgb(32 30 28 / 0.08), 0 3px 8px rgb(32 30 28 / 0.06);
+  --depth-panel: 0 1px 2px rgb(32 30 28 / 0.06), 0 10px 28px rgb(32 30 28 / 0.08);
+  --depth-selected: #ffffff;
+  --depth-waiting-ring: 4px;
 }
 
 :root[data-theme='wujin'] {
@@ -434,6 +455,11 @@
   --vp-radius: 14px;
   --vp-radius-lg: 20px;
   --vp-radius-control: 10px;
+
+  --depth-raised: 0 3px 8px rgb(0 0 0 / 0.30);
+  --depth-panel: 0 10px 28px rgb(0 0 0 / 0.32);
+  --depth-selected: #272523;
+  --depth-waiting-ring: 4px;
 }
 
 /* Expose the tokens to Tailwind as utilities (bg-surface, text-ink-2, ...).
@@ -604,6 +630,26 @@ body {
 /* Numbers that sit above one another must not jitter as they change. */
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* A terminal set into the chrome, and the session row that is on screen.
+
+   Both read the depth tokens, so a flat theme draws them flat. The ring is
+   the waiting colour thinned, around the terminal of a session that is
+   waiting for the person; its width is a token and is zero in light and dark,
+   where the triangle in the header already says so and a ring was never drawn. */
+.vp-well {
+  background: var(--vp-terminal-bg);
+  box-shadow: var(--depth-panel);
+}
+.vp-well[data-waiting='true'] {
+  box-shadow:
+    var(--depth-panel),
+    0 0 0 var(--depth-waiting-ring) color-mix(in srgb, var(--vp-state-waiting) 16%, transparent);
+}
+.vp-row-selected {
+  background: var(--depth-selected);
+  box-shadow: var(--depth-raised);
 }
 
 /* Frosted chrome, the way the platform does it.

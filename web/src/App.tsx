@@ -1850,11 +1850,13 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           // keys give way instead (useViewportFit). It used to be the terminal
           // that gave way, to 0px, under the keyboard.
           data-testid="terminal-area"
-          className={`relative m-2 flex-1 overflow-hidden rounded-vp border border-hairline ${narrow ? 'min-h-22' : 'min-h-0'} ${
+          className={`vp-well relative m-2 flex-1 overflow-hidden rounded-vp border border-hairline ${narrow ? 'min-h-22' : 'min-h-0'} ${
             disconnected ? 'vp-disconnected' : ''
           }`}
           data-disconnected={disconnected}
-          style={{ background: 'var(--vp-terminal-bg)' }}
+          // Read by .vp-well, which rings the terminal in the themes that
+          // have a ring. Not while the process is gone: nothing is waiting.
+          data-waiting={current?.state === 'waiting' && !current.exited}
           onDragOver={(e) => {
             // Both handlers, and both preventDefault: without dragover the
             // drop never fires, and the browser navigates to the file instead.
