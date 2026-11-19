@@ -1413,7 +1413,10 @@ try {
       const wait = (name) =>
         page.waitForFunction(([sel, name]) => {
           const t = document.querySelector(`${sel} [data-testid="sqlite-table"][aria-selected="true"]`)
-          return t?.dataset.name === name && !document.querySelector(`${sel} [aria-busy="true"]`)
+          // The strip flips on the click; the rows arrive a fetch later and say
+          // which table they are. Both, or the cells read are the last table's.
+          const body = document.querySelector(`${sel} [data-testid="sqlite-body"]`)
+          return t?.dataset.name === name && body?.dataset.table === name && !document.querySelector(`${sel} [aria-busy="true"]`)
         }, [VIEWER, name], { timeout: 5000 }).catch(() => note('FAIL', 'sqlite', `${name} did not become the table shown`))
       await v.locator('[data-testid="sqlite-table"][data-name="people"]').click()
       await wait('people')

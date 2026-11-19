@@ -70,7 +70,11 @@ export default function SqliteView({
           {safeText(failed)}
         </p>
       ) : (
-        <div className={`flex min-h-0 flex-1 flex-col ${pending ? 'opacity-60' : ''}`} aria-busy={pending}>
+        // `data-table` names the table these rows belong to, which is not
+        // always the one selected in the strip: the strip flips on the click
+        // and the rows arrive a fetch later. A check that read the body as
+        // soon as the strip had flipped read the previous table's rows.
+        <div className={`flex min-h-0 flex-1 flex-col ${pending ? 'opacity-60' : ''}`} aria-busy={pending} data-testid="sqlite-body" data-table={db.table}>
           {pending && (
             <p className="flex shrink-0 items-center gap-1.5 px-3 py-1 text-vp-xs text-ink-2">
               <Loader2 size={11} className="animate-spin" />
