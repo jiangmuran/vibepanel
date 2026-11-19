@@ -27968,3 +27968,38 @@ a tar entry never has it. `TestADOSTimeIsMarkedAsWallClock` checks both kinds
 of zip entry and a tar entry, and checks that `wall` is absent from the JSON
 rather than `false`. Taking out either the line that sets the mark or the line
 that clears it turns the test red.
+
+## 2026-11-19 — The file viewer, 7c: archives and databases, the browser's half
+
+A zip, tar, tgz or gzip opens as its table of contents, and a SQLite
+database as its tables, both drawn from the server's two listings
+(`archive-entries`, `sqlite`; the server's half is the entry above).
+
+An archive is a tree. A wrapping directory -- `pkg-1.0/` with everything
+under it -- is opened through to the first directory with more than one
+child, the rest folded; find opens the directories a match sits in. An
+entry whose name climbs out (`../`, an absolute path, a drive letter) is
+not placed in the tree at all: it is listed at the top, whole, with an icon
+and the words, because the tree is a drawing of where an extractor would
+put things and that entry has no honest place in it. The footer names the
+format, counts files and directories, gives the unpacked size, and says
+when the listing was cut or the file was damaged; the server's English note
+is the tooltip. A zip entry with a DOS time carries `wall: true` from the
+server and is shown as the wall-clock time it was written with, not shifted
+into this browser's zone: the DOS time has no zone, and shifting it was
+eight hours wrong on this machine.
+
+A database is a strip of its tables (each with its row count; views are
+not counted, because counting a view runs it) and the chosen table's first
+two hundred rows through the table body from batch 4, NULL and BLOB told
+apart from text. ← → move between tables. Source shows the schema. A table
+that fails to read leaves the strip in place.
+
+The server's `KindArchive` and `KindSQLite` are in `wire.ts`'s
+`PreviewKind`, so the viewer no longer answers "none" for them; the
+fixtures under `archives/` and `db/` expect those kinds now, and a
+header-only `bin/sqlite.db` expects an error. `ArchiveView` (6.5 KB) and
+`SqliteView` (3.5 KB) are chunks of their own with their own lines in
+`bundle.test.ts`. Twenty-five vitest mutants and the browser mutants in
+`preview-check`'s new section all go red; the first run of the section
+found nothing the code had wrong.
