@@ -28014,3 +28014,49 @@ errors section now accepts for a file the table expects to open as an
 error and for nothing else. The database body also names the table its
 rows belong to (`data-table`), because the strip flips on the click and
 the rows arrive a fetch later, and the check waits for both.
+
+## 2026-11-19 — Two more themes in the binary: 白瓷 and 乌金
+
+The complaint was that the panel looks industrial: a cold blue-grey with the
+platform's blue doing three jobs at once (the "working" dot, every primary
+button, every chart). Several directions were drawn as mock-ups first; the one
+chosen is white porcelain with ink as the only accent, and it ships as two
+themes somebody picks, `porcelain` (light) and `wujin` (dark), beside light and
+dark rather than instead of them.
+
+What they are: two more `:root[data-theme=…]` blocks in `styles.css`. Tokens
+only, as red line 5 requires, so nothing in a component changed.
+
+- **The accent is the ink.** `--vp-accent` is the text colour (near-black in
+  porcelain, near-white in wujin). Blue and green are left to session state.
+- **Red means "waiting for you".** `--vp-state-waiting` is the red, so
+  `--vp-state-crashed` is the ink: a crashed session is a black x. The shape
+  carries it (red line 4). `--vp-danger-ink` is still red, for words and
+  destructive buttons.
+- **Rounder.** `--vp-radius` 14, `--vp-radius-lg` 20, `--vp-radius-control` 10.
+
+What went wrong, before it shipped:
+
+- **A named light theme on a dark device is under the dark media query.**
+  `@media (prefers-color-scheme: dark) :root:not([data-theme='light'])` matches
+  `data-theme='porcelain'`, so any colour porcelain did not declare would have
+  arrived from the dark palette. Each new block declares every token the dark
+  block does, and `styles.test.ts` fails on one left out (removed
+  `--vp-term-fg` and watched it go red). The screenshots were taken with the
+  browser's colour scheme forced dark for that reason. The splash in
+  `index.html` had the same trap and has its own two rules, after the media
+  block.
+- **The pre-paint script has its own copy of the list.** It runs before any
+  module, so `index.html` names the themes itself. `theme.test.ts` now checks
+  every entry of `BUILT_IN_THEMES` is compared for there (removed `wujin` and
+  watched it go red); without it the theme is stored, shown as chosen, and
+  gone after a reload.
+- **Two browser checks counted clicks.** `render-check` and `plugins-check`
+  walk the toggle at most four times, which was one more than the cycle was
+  long. With two more stops the plugin theme is the fifth click.
+
+Not done, and it is most of what the mock-ups showed: the soft shadows, the
+selected row lifted off the sidebar, the red ring round a terminal that is
+waiting, serif titles and figures, and the new state glyphs. None of those is a
+token today, so a theme cannot carry them. The meters' warning tier reads
+`--vp-state-waiting`, so in these themes it is red as well.
