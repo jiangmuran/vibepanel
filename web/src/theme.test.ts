@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { STORAGE_KEY } from './components/theme'
+import { BUILT_IN_THEMES, STORAGE_KEY } from './components/theme'
 
 /**
  * The theme is written to the DOM in two places and they have to agree.
@@ -31,8 +31,12 @@ describe('the pre-paint theme script', () => {
     // "follow prefers-color-scheme" — so the script must not write it. A
     // plugin theme's `ext-<id>` is the third form, and the shape the script
     // tests is the one theme.ts's isPluginTheme accepts.
-    expect(html).toMatch(/'light'|"light"/)
-    expect(html).toMatch(/'dark'|"dark"/)
+    // Every built-in, compared for by name. A theme theme.ts can store and
+    // this script does not name is chosen, remembered, and gone on reload.
+    const script = html.slice(html.indexOf('localStorage.getItem'), html.indexOf('</script>', html.indexOf('localStorage.getItem')))
+    for (const name of BUILT_IN_THEMES) {
+      expect(script, `the pre-paint script never applies '${name}'`).toContain(`t === '${name}'`)
+    }
     expect(html).toMatch(/\^ext-\[a-z0-9-\]\+\$/)
     expect(html).not.toMatch(/dataset\.theme\s*=\s*['"]system['"]/)
   })

@@ -58,12 +58,16 @@ const mediaAt = css.indexOf('@media (prefers-color-scheme: dark)')
 const media = body(mediaAt)
 const forced = body(css.indexOf(":root[data-theme='dark']"))
 
-// The dark theme exists three times: the media query (system), the explicit
-// attribute, and nothing else. The light theme is the bare :root.
+// The dark theme exists twice: the media query (system) and the explicit
+// attribute. The light theme is the bare :root.
 const themes: Record<string, string> = {
   light: base,
   'dark (prefers-color-scheme)': media,
   "dark ([data-theme='dark'])": forced,
+  // The two built-in extras. Each declares every colour token itself (the
+  // comment beside them in styles.css says why), so each is measured alone.
+  porcelain: body(css.indexOf(":root[data-theme='porcelain']")),
+  wujin: body(css.indexOf(":root[data-theme='wujin']")),
 }
 
 function token(block: string, name: string): { rgb: RGB; a: number } {

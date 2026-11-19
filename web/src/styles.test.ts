@@ -220,6 +220,31 @@ describe('theme tokens', () => {
   })
 })
 
+describe('the built-in themes beside light and dark', () => {
+  /*
+   * A theme chosen by name is still under the system's media query: on a dark
+   * device `:root:not([data-theme='light'])` matches porcelain, so a colour
+   * porcelain does not declare arrives from the dark palette. Each of these
+   * blocks therefore has to declare everything the forced dark block does.
+   */
+  const dark = (() => {
+    const at = stripped.indexOf(":root[data-theme='dark']")
+    return new Set(declaredProperties(blockAt(stripped, at).body).filter((p) => p.startsWith('--')))
+  })()
+
+  for (const name of ['porcelain', 'wujin']) {
+    it(`${name} declares every token the dark theme declares`, () => {
+      const at = stripped.indexOf(`:root[data-theme='${name}']`)
+      expect(at, `no block for ${name}`).toBeGreaterThan(-1)
+      const own = new Set(declaredProperties(blockAt(stripped, at).body))
+      expect(dark.size).toBeGreaterThan(40)
+      for (const prop of dark) {
+        expect(own.has(prop), `${name} leaves ${prop} to whichever of light and dark the system picks`).toBe(true)
+      }
+    })
+  }
+})
+
 describe('forced colours', () => {
   /*
    * Under forced colours every background is replaced with the user's Canvas,

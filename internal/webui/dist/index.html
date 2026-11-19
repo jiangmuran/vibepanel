@@ -55,6 +55,18 @@
         border-color: rgb(255 255 255 / 0.14);
         border-top-color: #0a84ff;
       }
+      /* After the media block on purpose: on a dark system that block matches
+         porcelain too, and the splash would be black before a white panel. */
+      :root[data-theme='porcelain'] .vp-boot { background: #ecebe8; }
+      :root[data-theme='porcelain'] .vp-boot-dot {
+        border-color: rgb(32 30 28 / 0.12);
+        border-top-color: #201e1c;
+      }
+      :root[data-theme='wujin'] .vp-boot { background: #131211; }
+      :root[data-theme='wujin'] .vp-boot-dot {
+        border-color: rgb(240 238 234 / 0.14);
+        border-top-color: #f0eeea;
+      }
       /* Somebody who asked for no motion gets a dot rather than nothing: the
          point is "something is happening", and a still ring says that too. */
       @media (prefers-reduced-motion: reduce) {
@@ -81,17 +93,17 @@
       // brief, but on a dark-room phone it is genuinely unpleasant.
       try {
         var t = localStorage.getItem('vibepanel.theme')
-        // 'light', 'dark', or a plugin theme's 'ext-<id>' (theme.ts owns the
-        // shape); 'system' sets nothing.
+        // One of the panel's own, or a plugin theme's 'ext-<id>' (theme.ts
+        // owns both lists); 'system' sets nothing.
         // ?safe=1 is the way back from a plugin that broke the page
         // (docs/plugins.md §7): no plugin theme and no module for this tab.
         var safe = /[?&]safe=1(&|$)/.test(location.search)
-        if (t === 'light' || t === 'dark' || (!safe && /^ext-[a-z0-9-]+$/.test(t))) document.documentElement.dataset.theme = t
+        if (t === 'light' || t === 'dark' || t === 'porcelain' || t === 'wujin' || (!safe && /^ext-[a-z0-9-]+$/.test(t))) document.documentElement.dataset.theme = t
       } catch (e) { /* private mode: fall through to the system preference */ }
     </script>
-    <script type="module" crossorigin src="/assets/index-8HJJSa-W.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/jsx-runtime-DFYscgf3.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-D2L1HoYb.css">
+    <script type="module" crossorigin src="/assets/index-CZVhZyX5.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/jsx-runtime-DEX8Ufvj.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-D7GxEz8-.css">
   </head>
   <body>
     <!-- What is on screen before any of this has loaded.

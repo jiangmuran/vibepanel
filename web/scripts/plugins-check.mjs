@@ -368,7 +368,8 @@ try {
   // once per page), and the page recolours.
   await page.reload()
   const bgBefore = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--vp-bg').trim())
-  for (let i = 0; i < 4; i++) {
+  // The plugin theme comes after the panel's own four.
+  for (let i = 0; i < 6; i++) {
     await page.getByTestId('theme-toggle').click()
     await sleep(80)
     if ((await page.evaluate(() => document.documentElement.dataset.theme)) === 'ext-paper') break

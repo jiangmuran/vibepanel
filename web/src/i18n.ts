@@ -113,6 +113,8 @@ const DICT = {
   'theme.system': { zh: '跟随系统', en: 'System' },
   'theme.light': { zh: '浅色', en: 'Light' },
   'theme.dark': { zh: '深色', en: 'Dark' },
+  'theme.porcelain': { zh: '白瓷', en: 'Porcelain' },
+  'theme.wujin': { zh: '乌金', en: 'Black glaze' },
   'app.signedInAs': { zh: '当前登录 {user} —— 点一下退出', en: 'Signed in as {user} — click to sign out' },
   'app.connection': { zh: '连接：{status}', en: 'Connection: {status}' },
   'conn.open': { zh: '已连接', en: 'open' },

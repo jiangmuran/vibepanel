@@ -37,12 +37,29 @@ export function terminalTheme(): ITheme {
 }
 
 /**
- * `system`, the panel's two, or a theme a plugin installed: `ext-<id>`, the
- * `data-theme` value its stylesheet redefines the tokens under
+ * The themes styles.css carries a block for, in the order the toggle walks
+ * them. `light` and `dark` are the pair `system` chooses between; `porcelain`
+ * and `wujin` are a second pair somebody picks by name.
+ *
+ * index.html's pre-paint script repeats this list, because it runs before any
+ * module does. theme.test.ts fails when the two disagree: a theme missing
+ * there is a theme that is stored, shown as chosen by the toggle, and never
+ * applied after a reload.
+ */
+export const BUILT_IN_THEMES = ['light', 'dark', 'porcelain', 'wujin'] as const
+export type BuiltInTheme = (typeof BUILT_IN_THEMES)[number]
+
+function isBuiltInTheme(v: string): v is BuiltInTheme {
+  return (BUILT_IN_THEMES as readonly string[]).includes(v)
+}
+
+/**
+ * `system`, one of the panel's own, or a theme a plugin installed: `ext-<id>`,
+ * the `data-theme` value its stylesheet redefines the tokens under
  * (docs/plugins.md §5). The shape is pinned here and read by index.html's
  * pre-paint script, which honours the same three forms.
  */
-export type ThemeChoice = 'system' | 'light' | 'dark' | `ext-${string}`
+export type ThemeChoice = 'system' | BuiltInTheme | `ext-${string}`
 
 /** Whether a string is a plugin theme's data-theme value. */
 export function isPluginTheme(v: string): v is `ext-${string}` {
@@ -65,7 +82,7 @@ export const STORAGE_KEY = 'vibepanel.theme'
 export function loadTheme(): ThemeChoice {
   try {
     const v = localStorage.getItem(STORAGE_KEY)
-    if (v === 'light' || v === 'dark' || v === 'system') return v
+    if (v === 'system' || (v && isBuiltInTheme(v))) return v
     if (v && isPluginTheme(v)) return v
   } catch {
     /* private mode */

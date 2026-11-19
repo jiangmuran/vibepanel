@@ -845,7 +845,8 @@ browser = await chromium.launch({ headless: true })
   // palette and the check silently measures a combination no user can produce.
   const themeButton = page.locator('[data-testid="theme-toggle"]')
   const setTheme = async (want) => {
-    for (let i = 0; i < 4; i++) {
+    // One more look than the longest walk: system, four built-ins, and back.
+    for (let i = 0; i < 6; i++) {
       const cur = await page.evaluate(() => document.documentElement.dataset.theme ?? 'system')
       if (cur === want) return true
       await themeButton.click()
