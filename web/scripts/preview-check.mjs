@@ -373,7 +373,13 @@ try {
         if (!geo.phoneCrumbs) note('FAIL', 'layout', `${shape.name} ${f}: more than the file's directory in the trail on a phone`)
         if (!geo.centred) note('FAIL', 'layout', `${shape.name} ${f}: the viewer is not centred in the window`)
         if (!geo.gutterFits) note('FAIL', 'layout', `${shape.name} ${f}: a line number runs into its line`)
-        if (errors.length) note('FAIL', 'errors', `${shape.name} ${f}: ${errors[0].slice(0, 200)}`)
+        // A file the table expects to open as an error -- a database that is
+        // only a header -- is answered 422 by the server, and the browser logs
+        // every 4xx it fetches as a console error. That one is the answer the
+        // viewer shows, not noise; any other 4xx, or any 4xx on a file that
+        // should open, still fails.
+        const unexpected = errors.filter((e) => !(want === 'error' && /status of 422/.test(e)))
+        if (unexpected.length) note('FAIL', 'errors', `${shape.name} ${f}: ${unexpected[0].slice(0, 200)}`)
         if (shape.name === '1280-light' || SAMPLE.includes(f)) {
           await page.screenshot({ path: join(SHOTS, `${shape.name}--${f.replace(/[/ ]/g, '_')}.png`) })
         }
