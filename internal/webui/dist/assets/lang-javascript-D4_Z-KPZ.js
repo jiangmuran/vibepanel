@@ -1,1 +1,0 @@
-import{t as e}from"./dist-Bl-ipP3s.js";export{e as javascript};

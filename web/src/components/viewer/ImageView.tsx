@@ -79,9 +79,13 @@ export function ImageView({
     const box = boxRef.current
     const img = imgRef.current
     if (!box || !img) return
-    const from = scaleNow()
     const r = img.getBoundingClientRect()
     const b = box.getBoundingClientRect()
+    // The scale the picture is drawn at, from its box rather than from the
+    // zoom state: a fitted picture's scale is a ratio the layout rounded,
+    // and the anchor read through the state landed a few pixels off after
+    // a double click.
+    const from = img.naturalWidth > 0 ? r.width / img.naturalWidth : scaleNow()
     anchor.current = { px: (clientX - r.left) / from, py: (clientY - r.top) / from, x: clientX - b.left, y: clientY - b.top }
     onZoom(clampZoom(next))
   }

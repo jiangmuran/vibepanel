@@ -178,7 +178,6 @@ const KIND = [
   [/\.pdf$/, 'pdf'],
   // Nine megabytes of 0x07: mostly control characters, so its bytes (batch 5).
   [/^large\/nine-megabytes\.bin$/, 'binary'],
-  [/^(media|archives|bin)\//, 'binary'],
   // Listed by the server (7c). The header of a database and nothing after
   // it is a database SQLite says it cannot read.
   [/^archives\//, 'archive'],

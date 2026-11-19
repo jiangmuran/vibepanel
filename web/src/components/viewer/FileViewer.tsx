@@ -1149,27 +1149,6 @@ function FileContent({
           {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
         </footer>
       )}
-      {pdf && (
-        <footer
-          data-testid="viewer-footer"
-          className="flex shrink-0 flex-wrap items-center gap-x-2 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
-        >
-          {pageCount > 0 && (
-            <>
-              <span className="tabular" data-testid="viewer-page" data-page={pageNow + 1} aria-live="polite">
-                {t('viewer.pageOf', { i: (pageNow + 1).toLocaleString(), n: pageCount.toLocaleString() })}
-              </span>
-              <span aria-hidden="true">·</span>
-            </>
-          )}
-          <span className="tabular">{formatBytes(entry.size)}</span>
-          <span aria-hidden="true">·</span>
-          <span className="tabular" data-testid="viewer-zoom">
-            {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
-          </span>
-          {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
-        </footer>
-      )}
       {view.kind === 'archive' && (
         <Suspense fallback={null}>
           <ArchiveFooter listing={view.listing} copied={copied} />
