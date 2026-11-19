@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, type ComponentProps, type ComponentType, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ChevronLeft,
@@ -21,6 +21,9 @@ import {
 
 import { api } from '../../protocol/api'
 import type { Markup } from '../../protocol/api'
+import type { ArchiveListing, DBListing } from '../../protocol/listings'
+import type { ArchiveFooter as ArchiveFooterT } from './ArchiveView'
+import type { SqliteFooter as SqliteFooterT } from './SqliteView'
 import type { FileEntry } from '../../protocol/wire'
 import { copyTextInGesture } from '../../clipboard'
 import { safeText } from '../text'
@@ -37,6 +40,7 @@ import { hexLines } from './hex'
 import { JsonTree } from './JsonTree'
 import { isJson, parseJson } from './json'
 import { isNotebook, parseNotebook } from './notebook'
+import { schema, stepTable } from './sqlite'
 import { FONT_MAX_BYTES, fontFormat } from './fontkind'
 import { looksLikeDiff } from './diff'
 import { grammarFor } from './grammars'
@@ -107,6 +111,29 @@ const PdfView = lazy(() =>
   })),
 )
 
+/** An archive's table of contents: only an archive needs it. */
+const ArchiveView = lazy(() =>
+  import('./ArchiveView').catch(() => ({
+    default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
+  })),
+)
+
+/** A database's tables and rows: only a database needs it. */
+const SqliteView = lazy(() =>
+  import('./SqliteView').catch(() => ({
+    default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
+  })),
+)
+
+/** Their footers, from the same chunks: nothing else needs them either. */
+// A footer that did not arrive is no footer: the body says the tab is stale.
+const ArchiveFooter = lazy<ComponentType<ComponentProps<typeof ArchiveFooterT>>>(() =>
+  import('./ArchiveView').then((m) => ({ default: m.ArchiveFooter }), () => ({ default: () => null })),
+)
+const SqliteFooter = lazy<ComponentType<ComponentProps<typeof SqliteFooterT>>>(() =>
+  import('./SqliteView').then((m) => ({ default: m.SqliteFooter }), () => ({ default: () => null })),
+)
+
 /** What is on screen: a file, the reason there is not one, or the wait. */
 type View =
   | { kind: 'loading' }
@@ -123,6 +150,14 @@ type View =
   | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
   /** A medium, streamed from the inline route by the element that draws it. */
   | { kind: 'image' | 'pdf' | 'video' | 'audio'; url: string }
+  /** Listed by the server: names and numbers, never an entry's bytes. */
+  | { kind: 'archive'; listing: ArchiveListing }
+  /**
+   * The last listing that arrived, and the table chosen since: `pending`
+   * while its rows are asked for, `failed` when they could not be read --
+   * the strip stays, so another table is still one key away.
+   */
+  | { kind: 'sqlite'; db: DBListing; shown: string; pending: boolean; failed: string | null }
   | { kind: 'tooBig' }
   | { kind: 'none' }
 
@@ -281,8 +316,15 @@ function FileContent({
   // reload after a refused save is a new editor and a save is not.
   const [reads, setReads] = useState(0)
   const [reload, setReload] = useState(0)
+  // The file the listings below were asked for, so an answer for the one
+  // before is not drawn as this one's.
+  const pathNow = useRef(entry.path)
   useEffect(() => {
+    pathNow.current = entry.path
     let cancelled = false
+    const failed = (e: unknown) => {
+      if (!cancelled) setView({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
+    }
     api.preview(projectId, entry.path).then(
       (p) => {
         if (cancelled) return
@@ -291,13 +333,22 @@ function FileContent({
           setReads((n) => n + 1)
           return
         }
+        // Read on the server, by the route of its own kind.
+        if (p.kind === 'archive') {
+          api.archiveEntries(projectId, entry.path).then((listing) => !cancelled && setView({ kind: 'archive', listing }), failed)
+          return
+        }
+        if (p.kind === 'sqlite') {
+          api
+            .sqlite(projectId, entry.path)
+            .then((db) => !cancelled && setView({ kind: 'sqlite', db, shown: db.table, pending: false, failed: null }), failed)
+          return
+        }
         // A medium: streamed by the element that draws it, from the inline
         // route -- no copy in memory, no cap, ranges for a video to seek with.
         setView({ kind: p.kind, url: api.inlineURL(projectId, entry.path) })
       },
-      (e: unknown) => {
-        if (!cancelled) setView({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
-      },
+      failed,
     )
     return () => {
       cancelled = true
@@ -378,7 +429,26 @@ function FileContent({
     })
   }, [])
 
-  const text = view.kind === 'text' ? view.text : ''
+  const archive = view.kind === 'archive'
+  const sqlite = view.kind === 'sqlite'
+  const dbSchema = useMemo(() => (view.kind === 'sqlite' ? schema(view.db) : ''), [view])
+  const chooseTable = (name: string) => {
+    if (view.kind !== 'sqlite') return
+    const path = entry.path
+    setCurrent(-1)
+    setView({ ...view, shown: name, pending: true, failed: null })
+    // Only the answer for the table still chosen, in the file still open,
+    // is drawn: stepping through five tables quickly asks five times.
+    const still = (v: View): v is Extract<View, { kind: 'sqlite' }> => pathNow.current === path && v.kind === 'sqlite' && v.shown === name
+    api.sqlite(projectId, path, name).then(
+      (db) => setView((v) => (still(v) ? { kind: 'sqlite', db, shown: name, pending: false, failed: null } : v)),
+      (e: unknown) =>
+        setView((v) => (still(v) ? { ...v, pending: false, failed: e instanceof Error ? e.message : String(e) } : v)),
+    )
+  }
+  // Source for a database is its schema, as the database holds it: the line
+  // body, so find and go to line work on it as on any other text.
+  const text = view.kind === 'text' ? view.text : sqlite && source ? dbSchema : ''
   const binary = view.kind === 'binary'
   // A binary is drawn as hexdump -C lines in the same body, so find and go to
   // line work on its bytes as they do on a log (hex.ts).
@@ -412,10 +482,11 @@ function FileContent({
   // A font is a binary drawn as a specimen; Source is its bytes. One past the
   // cap is only its bytes: a specimen loads the whole file.
   const font = view.kind === 'binary' && entry.size <= FONT_MAX_BYTES ? fontFormat(view.bytes) : null
-  const rendered = drawn || lang !== null || font !== null
-  const plain = (view.kind === 'text' && (source || !drawn)) || (binary && (source || font === null))
-  // The tree and the table take find as well; they count their own matches.
-  const structured = view.kind === 'text' && !source && (json !== null || table !== null)
+  const rendered = drawn || lang !== null || font !== null || sqlite
+  const plain = (view.kind === 'text' && (source || !drawn)) || (binary && (source || font === null)) || (sqlite && source)
+  // The tree and the table take find as well; they count their own matches,
+  // and so do an archive's entries and a database's rows.
+  const structured = (view.kind === 'text' && !source && (json !== null || table !== null)) || archive || (sqlite && !source)
   const [ext, setExt] = useState({ n: 0, capped: false })
   const onCount = useCallback((n: number, capped: boolean) => setExt({ n, capped }), [])
   // An SVG is a picture: drawn as one through <img>, which runs nothing, and
@@ -595,6 +666,13 @@ function FileContent({
       case 'lastPage':
         toPage(pageCount - 1)
         return
+      case 'prevTable':
+      case 'nextTable': {
+        if (view.kind !== 'sqlite') return
+        const to = stepTable(view.db.tables, view.shown, a === 'nextTable' ? 1 : -1)
+        if (to !== null) chooseTable(to)
+        return
+      }
     }
   }
 
@@ -609,6 +687,7 @@ function FileContent({
       mac: isMac(),
       pages: pdf && pageCount > 0,
       editing,
+      tables: view.kind === 'sqlite' && !source && view.db.tables.length > 1,
     })
     if (!a) return
     // Enter on a focused button is that button's; the match keys need the
@@ -645,6 +724,7 @@ function FileContent({
     if (notebook !== null) return t('viewer.notebook')
     if (font !== null) return t('viewer.specimen')
     if (table !== null) return t('viewer.table')
+    if (sqlite) return t('db.tables')
     if (drawn) return t('preview.rendered.short')
     return t('viewer.highlighted')
   }
@@ -664,9 +744,11 @@ function FileContent({
               <span
                 key={c.path}
                 // They do not shrink: a long name is what gets cut, not the
-                // directories beside it. At most three, each at most 30%, so
-                // the name always has a tenth of the row.
-                className={`min-w-0 max-w-[30%] shrink-0 items-center gap-0.5 ${
+                // directories beside it. Each is capped by how many are shown
+                // -- 60% alone, 45% for two, 30% for three -- so the name
+                // always has a tenth of the row. A flat 30% cut a phone's one
+                // directory to `encod…` when it had the row to itself.
+                className={`min-w-0 max-w-[60%] shrink-0 items-center gap-0.5 @md:max-w-[45%] @2xl:max-w-[30%] ${
                   i < trail.length - 3
                     ? 'hidden'
                     : i < trail.length - 2
@@ -1001,7 +1083,24 @@ function FileContent({
               ) : null
             }
             structured={
-              !structured ? null : json !== null ? (
+              !structured ? null : view.kind === 'archive' ? (
+                <Suspense fallback={null}>
+                  <ArchiveView listing={view.listing} query={findOpen ? query : ''} current={current} onCount={onCount} />
+                </Suspense>
+              ) : view.kind === 'sqlite' ? (
+                <Suspense fallback={null}>
+                  <SqliteView
+                    db={view.db}
+                    shown={view.shown}
+                    pending={view.pending}
+                    failed={view.failed}
+                    onChoose={chooseTable}
+                    query={findOpen ? query : ''}
+                    current={current}
+                    onCount={onCount}
+                  />
+                </Suspense>
+              ) : json !== null ? (
                 <JsonTree value={json.value} query={findOpen ? query : ''} current={current} onCount={onCount} />
               ) : (
                 <CsvTable rows={table!.rows} more={table!.more} query={findOpen ? query : ''} current={current} onCount={onCount} />
@@ -1049,6 +1148,37 @@ function FileContent({
           <ZoomControls zoom={zoom} onStep={zoomStep} onTo={zoomTo} />
           {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
         </footer>
+      )}
+      {pdf && (
+        <footer
+          data-testid="viewer-footer"
+          className="flex shrink-0 flex-wrap items-center gap-x-2 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
+        >
+          {pageCount > 0 && (
+            <>
+              <span className="tabular" data-testid="viewer-page" data-page={pageNow + 1} aria-live="polite">
+                {t('viewer.pageOf', { i: (pageNow + 1).toLocaleString(), n: pageCount.toLocaleString() })}
+              </span>
+              <span aria-hidden="true">·</span>
+            </>
+          )}
+          <span className="tabular">{formatBytes(entry.size)}</span>
+          <span aria-hidden="true">·</span>
+          <span className="tabular" data-testid="viewer-zoom">
+            {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
+          </span>
+          {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
+        </footer>
+      )}
+      {view.kind === 'archive' && (
+        <Suspense fallback={null}>
+          <ArchiveFooter listing={view.listing} copied={copied} />
+        </Suspense>
+      )}
+      {view.kind === 'sqlite' && (
+        <Suspense fallback={null}>
+          <SqliteFooter db={view.db} copied={copied} source={source} lines={lines.length} />
+        </Suspense>
       )}
       {view.kind === 'binary' && (
         <footer
@@ -1242,6 +1372,10 @@ function Body({
       )
     case 'binary':
       return plain ? plainBody : drawnBody
+    case 'archive':
+      return structured
+    case 'sqlite':
+      return plain ? plainBody : structured
     case 'text':
       if (plain) return plainBody
       if (drawnBody) return drawnBody

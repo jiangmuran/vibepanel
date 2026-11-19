@@ -460,6 +460,64 @@ def archives():
     put('archives/bundle.tar', buf.getvalue())
     put('archives/bundle.tar.gz', gzip.compress(buf.getvalue(), mtime=0))
     put('archives/log.gz', gzip.compress(b'a compressed log\n' * 50, mtime=0))
+    # A release as it is usually packed: everything inside one directory,
+    # which the viewer opens on its own (7c), with a directory below that.
+    stamp = (2024, 3, 1, 12, 30, 0)
+    with zipfile.ZipFile(os.path.join(OUT, 'archives/project.zip'), 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, body in [
+            ('pkg-1.0/README.md', '# pkg\n'),
+            ('pkg-1.0/src/main.go', 'package main\n'),
+            ('pkg-1.0/src/util/strings.go', 'package util\n'),
+            ('pkg-1.0/docs/guide.md', '# guide\n' * 40),
+            ('pkg-1.0/needle-in-docs.txt', 'x\n'),
+        ]:
+            z.writestr(zipfile.ZipInfo(name, stamp), body)
+    # Names an extractor would be led outside its directory by, beside one
+    # that is fine: the viewer lists them whole and marks them.
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode='w', format=tarfile.USTAR_FORMAT) as t:
+        for name in ['fine.txt', '../escape.txt', '/etc/absolute.txt']:
+            info = tarfile.TarInfo(name)
+            info.size = 2
+            info.mtime = 1700000000
+            t.addfile(info, io.BytesIO(b'x\n'))
+    put('archives/climbs.tar', buf.getvalue())
+
+
+def database():
+    """A SQLite database with every kind of cell the listing sends, more rows
+    than it sends, a view, a trigger and an empty table (7c)."""
+    import sqlite3
+    path = os.path.join(OUT, 'db/app.sqlite')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path):
+        os.remove(path)
+    db = sqlite3.connect(path)
+    db.executescript('''
+        CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, photo BLOB, note TEXT, big INTEGER, score REAL);
+        CREATE TABLE orders (id INTEGER PRIMARY KEY, person INTEGER REFERENCES people(id), total REAL);
+        CREATE TABLE empty (id INTEGER);
+        CREATE VIEW adults AS SELECT id, name FROM people WHERE age >= 18;
+        CREATE TRIGGER stamp AFTER INSERT ON orders BEGIN UPDATE people SET note = 'ordered' WHERE id = new.person; END;
+    ''')
+    for i in range(1, 251):
+        db.execute('INSERT INTO people VALUES (?, ?, ?, ?, ?, ?, ?)', (
+            i,
+            None if i == 2 else f'person {i}',
+            i % 60,
+            bytes(4096) if i == 1 else None,
+            'NULL' if i == 3 else ('long ' * 300 if i == 4 else None),
+            2 ** 60 if i == 5 else i,
+            float('inf') if i == 6 else i / 4,
+        ))
+    # Persons 11 to 20, not 1 to 10: the trigger above rewrites the note of
+    # whoever orders, and the notes the check reads -- the literal 'NULL' on
+    # person 3, the long text on person 4 -- are on the first ten.
+    db.executemany('INSERT INTO orders (person, total) VALUES (?, ?)', [(i, i * 1.5) for i in range(11, 21)])
+    db.commit()
+    # One file, nothing beside it: the default journal is gone after commit.
+    db.execute('PRAGMA journal_mode=DELETE')
+    db.close()
 
 
 def binary():
@@ -481,4 +539,5 @@ if __name__ == '__main__':
     fonts()
     media()
     archives()
+    database()
     binary()

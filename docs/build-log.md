@@ -27703,3 +27703,314 @@ and were written again as returns behind a condition. One survived: the check
 for the password message looked for "password", and without the branch the
 message is pdf.js's own reason, "No password given". It looks for the
 viewer's sentence now.
+
+## 2026-11-17 — The file viewer, 7b: notebooks, fonts, other encodings
+
+The second part of the seventh batch: three kinds that opened as something
+other than what they are.
+
+**Other encodings.** A UTF-16 file and a Latin-1 one were hex.
+`browse.Decode` turns both into UTF-8 before the text is cut, so the 2 MB
+budget and the line cap apply to what the viewer draws, and the answer names
+what it decoded from in `X-Preview-Encoding`, which the footer shows in place
+of UTF-8. UTF-16 is known by its byte order mark. Latin-1 is a guess, so it
+is a narrow one: no NUL, not UTF-8, and at most one C0 or C1 control in fifty
+bytes -- with no limit, three random files in ten passed as accented text.
+A character the read cut in half at the 2 MB line was taken for Latin-1 until
+a test cut one; it is trimmed before the UTF-8 question is asked. The client
+takes only the three names `Decode` gives from that header, because it is a
+string anything on the way could have set and the footer draws it.
+
+**Notebooks.** An `.ipynb` was a JSON tree. nbformat 4 is drawn cell by cell:
+markdown through the document renderer, code coloured in the kernel's
+language with its execution count, and the outputs under it -- text, stderr,
+pictures, and errors with the traceback's terminal colours stripped. A
+picture is a data URL whose type this side picks from a fixed list, a raster
+one only when its body is base64; HTML output is shown as its source and
+never rendered, which the check proves with a `<script>` in the fixture. A
+notebook the server cut is not JSON any more and is the text it is. The
+parser is in the viewer's chunk, since it decides whether a file is a
+notebook before anything is drawn; the view is its own chunk.
+
+Naming the kernel's language found an older bug: a fence's info string was
+looked up as an extension only, so ```` ```py ```` had colour and
+```` ```python ````, the commoner spelling, had none. `grammarForLanguage`
+tries Prism's name first. The tables were plain objects, so a file called
+`a.constructor` handed Object's constructor to the tokeniser as a grammar;
+both lookups read own keys only.
+
+**Fonts.** TTF, OTF, WOFF and WOFF2, known by their first bytes, were hex.
+They are a specimen: the font's own name from its name table (a WOFF's
+through `DecompressionStream`; a WOFF2's needs Brotli, so it is the file's
+name), the alphabet, digits, a pangram and the file's name, at three sizes.
+The face is added under a family name of the viewer's own and deleted when
+the specimen goes, so a font in a project cannot restyle the panel by
+naming a family the panel uses; the check looks in `document.fonts` after
+closing. A collection (`ttcf`) is not one font and stays hex; the specimen
+loads the whole file, so it stops at 32 MB.
+
+**Fixtures.** `make.py` writes the notebook and the font in four formats with
+fontTools; the check opens each at three widths in both themes.
+
+**What the full check found.** Six failures, two of them real. A phone shows
+one directory in the trail, and the flat 30% cap cut `encodings` and
+`notebooks` -- longer than any earlier fixture's directory -- to a few
+letters when that one directory had the row to itself. The cap now follows
+how many are shown: 60% alone, 45% for two, 30% for three, so the name keeps
+a tenth of the row. The other two were the check's own: a rendered heading
+carries its `#` anchor after the words, and the picture's 22-character
+prefix includes the comma it was compared without.
+
+**The budget.** The viewer's chunk line moved from 68 KB to 72 KB for the
+notebook parser and the wiring; the notebook view and the specimen are each
+held under 6 KB, and the pangram is in the specimen's chunk and not the
+viewer's.
+## 2026-11-17 — weixin: the typing indicator outlived the reply
+
+The third way `TestTypingFetchesTheTicketOnceAndKeepsItAlive` failed, on main at
+89d2f94: "the keepalive did not stop". A `sendtyping` arrived after
+`Typing(false)`. Unlike the first two, this one is the adapter's, and a person
+can see it. If a keepalive tick had fired when the reply went out, its
+"typing" reached WeChat after the "stopped", and the phone showed 对方正在输入
+under the answer until WeChat timed it out.
+
+There were two ways in, and holding a tick between firing and sending
+(`Adapter.ticked`, a test hook) made the failure certain. On the old code the
+sends went `[1 2 1 1]` in five runs of five:
+
+- **The tick that had fired.** The stop closed a channel and returned. The
+  keepalive goroutine, already past its `select`, sent anyway.
+- **The tick still pending.** A `select` with the closed stop and a ready
+  tick both pending picks either one at random, so a stopped keepalive could
+  take one more tick. That is the second `1` after the `2`.
+
+The stop now waits for the keepalive to end, and the keepalive checks the
+stop again after taking a tick. A send already on the wire is **waited for,
+not cancelled**. The first fix cancelled it, and its own mutation run showed
+why that is wrong: cancelling ends the client's side of a request the server
+may already have and may act on after the "stopped". The wait is at most one
+send, bounded by `quickTimeout`. `Typing(false)` runs deferred, after the
+reply has been sent, so the wait never holds the answer back.
+
+Five tests, each red with its guard taken out:
+
+- `TestNoKeepaliveIsSentAfterTypingStops`: a tick held before its send sends
+  nothing once stopped (the second look at the stop).
+- `TestTheStopWaitsForAKeepaliveInFlight`: the fake records requests in the
+  order it *finished* them, which is what the phone shows, and "stopped" is
+  last (the wait).
+- `TestTypingTwiceLeavesOneKeepalive`: a second `Typing(true)` ends the first
+  keepalive instead of leaving it running beside the new one.
+- `TestStoppingTheAdapterStopsItsKeepalives`: when `Run` returns, nothing
+  more is sent.
+- `TestTheStopDoesNotWaitForTheNextTick`: with the real five-second interval,
+  `Typing(false)` returns at once. Taking out the outer stop case left every
+  other test green, because their keepalive is 10 ms, and a stop that waited
+  for the next tick would have held each reply's goroutine up to five seconds.
+
+Removed: the deadline path taking its own entry out of the map. Without it
+nothing changed that any test or person could see. The next `Typing` for that
+user ends the finished keepalive, closing its stop and finding its done
+channel already closed.
+
+## 2026-11-16 — The file viewer saves text: the server's half
+
+`PUT /api/projects/{id}/file?path=` replaces a text file's content, for the
+viewer's editor (`docs/file-preview.md`, "Editing"). The file is in somebody's
+project and an agent may be writing it at the same moment, so most of the route
+is about what it refuses.
+
+**A save names what it replaces.** The text preview now sends
+`ETag: "<sha256>"`, and the save must send it back in `If-Match`. Missing, or
+`*`, is `428`: both mean "overwrite whatever is there", which is the agent's
+work since the page loaded. Anything but the hash of what is on disk now is
+`412`, "the file was changed after you opened it". A truncated preview has no
+ETag at all, because saving a cut-short view saves the cut. The bound on new
+content is the text preview's 2 MiB for the same reason: anything shown whole
+can be sent back, and anything bigger was never shown whole.
+
+**Compare and rename are one step.** Two tabs saving one version both read the
+old hash and both match, and without a lock the second rename silently drops
+the first save. `fileWriteMu` covers the compare and the rename for writes
+through the panel. It cannot cover a process outside the panel writing in the
+microseconds between them. The precondition is there for the edit made in the
+minutes somebody was typing, and that edit it catches.
+
+**Only what the viewer shows as text.** The existing file is read again and
+sniffed. A media kind is `415` (a PDF can be all printable ASCII and is still a
+PDF), as are a binary and a file of control characters. Past 2 MiB is `413`.
+The file must exist, since this route does not create files. It must be
+regular, because a FIFO with no writer hangs `os.Open` forever. It must be
+inside the project with links resolved: a link out is `403`, and a link inside
+saves its target and stays a link.
+
+**The write** is a temporary file in the same directory, its mode set to the
+original's (`CreateTemp` makes `0600`, and a script that stops being executable
+after a save is a broken save), synced, then renamed over. A reader sees the old
+file or the new one, never half. Each save is an audit row, `files.write`, with
+who, the project, the path actually written and the byte count.
+
+Mutations, 16 of 16 red, two only after the tests were changed:
+
+- Taking out the directory check stayed **green**: the regular-file check
+  answers a directory with the same `400`. What the directory check adds is its
+  own sentence, so the test now asserts each sentence.
+- Taking out the media-kind check stayed **green**: the PNG fixture has a NUL
+  in its header, so the readable-text check refused it anyway. A PDF made only
+  of printable ASCII is refused only by the sniff, and it is now a fixture.
+- The lock test does not rely on luck. A test hook (`fileWriteChecked`) holds
+  each save for 150 ms between compare and rename, so without the lock both
+  saves are past the compare before either renames, every run.
+- Taking out the regular-file check is red as a 40 s test timeout, the hang
+  that check exists to prevent.
+
+**A decoded file has no ETag.** Batch 7b, merged in between, decodes UTF-16
+and Latin-1 for the preview, so the bytes sent are UTF-8 and the bytes on disk
+are not. A hash of what was sent could never match the file, and a save that
+somehow did would change the file's encoding to fix a typo. So the ETag goes
+only with an undecoded file, and the save already refused these files: it
+re-reads the bytes on disk, where UTF-16 has NULs and Latin-1 is not UTF-8.
+`TestADecodedFileCannotBeSavedOver` checks both halves, for a UTF-16 file and
+a Latin-1 one. Before the condition it was red on the ETag half and green on
+the save half, and the condition taken out again turns it red.
+## 2026-11-16 — agy leaves the launch picker
+
+「很奇怪」: a fresh panel offered Antigravity CLI in the launch picker beside a
+shell, Claude Code, Codex and opencode, to everybody, whether or not they had
+ever installed it. `builtin:agy` is out of the catalogue. Nothing else about
+agy changes: its hook, its usage reader, its detection in a pane and its place
+in the chat bridge all stay, because those answer "this session is agy" and
+the picker answered "you probably want to start agy", which nobody had said.
+
+A built-in is a Go constant rather than a row, so leaving the catalogue needs
+no migration. What a panel might hold that names it, and what becomes of each:
+
+- **A row at `builtin:agy`**, written when somebody edited the built-in. That
+  edit is the owner's work, so it lists as one of their own profiles under the
+  name they gave it, no longer marked `overridden`, editable and deletable as
+  a row, and untouched by *Restore built-ins*, which only removes override rows
+  of built-ins that exist.
+- **`builtin:agy` in the arrangement's hidden list or its order.** Left alone.
+  Both are read only by matching ids in the list, so an id that matches nothing
+  does nothing, and pruning it would un-hide agy for whoever hid it if a later
+  release puts it back.
+- **A session started with it.** Its row keeps the id; restore after a reboot
+  already treats a profile that resolves to nothing as gone and restores the
+  session without it, and agy's built-in had no variables, so nothing is lost.
+
+`TestTheDefaultListDoesNotOfferAgy` and `TestAnEditedAgyIsKeptAsTheOwnersProfile`
+were both red with the entry in the catalogue -- the second because the row
+came back as an override -- and green without it. The feature pages said five
+built-ins and now say four.
+
+## 2026-11-16 — The file viewer, batch 7c: archives and SQLite, the server's half
+
+Two listing routes beside `preview` and `inline`: `archive-entries` answers a zip's,
+a tar's or a `tar.gz`'s table of contents, and `sqlite` a database's tables
+and the first 200 rows of one. `SniffMedia` names the two kinds, `archive`
+and `sqlite`, and `preview` answers them with headers and no body; `SniffMagic`
+answers exactly what it did, and its guard now holds a zip, a gzip, a tar and
+a database as well. `wire.ts` has the two kinds; drawing them is the viewer's
+half.
+
+The zip is not read with `archive/zip`. That package reads the whole central
+directory into memory before it hands back the first entry, and the directory
+is whatever the archive says it is; so `browse/archive.go` reads the end
+record, refuses a directory the file is too small to hold -- the crafted zip
+claiming a gigabyte in a few hundred bytes -- and then walks the records one
+at a time, stopping at 10,000 entries or 32 MB of directory. A plain tar is
+listed by its headers: `archive/tar` seeks over an entry's bytes when its
+reader can seek, so the budget reader passes seeks through and counts only
+what is read, which is the PAX records and long names, bounded at 16 MB. A
+`tar.gz` cannot be seeked, so reaching the next header means inflating the
+entry, and that is bounded at 64 MB; a hundred megabytes of zeros in 98 KB
+stops there and says so. A gzip that is not a tar -- decided by a tar header's
+checksum in the first 512 bytes inflated -- is one entry with no size,
+because gzip keeps one only modulo 4 GiB. Names are listed as the archive has
+them and marked `unsafe` when they climb, are absolute, or carry a backslash
+or a drive letter: somebody looking at a suspicious archive wants to see the
+name, and the viewer wants to know not to trust it.
+
+The database is opened `?mode=ro&immutable=1`, with `_query_only`,
+`_defensive` and `trusted_schema` off on top. Immutable is the one with a test
+of its own: without it a read-only connection to a WAL database made its
+`-shm` in the project directory, and the route test watches the directory
+stay as it was. The one name a request supplies is matched against the
+database's own list before anything runs, and quoted as well -- two guards,
+because a table can be called `we"ird; x` and the list check alone would pass
+it to a statement it breaks. Every statement has a two-second deadline; a view
+that recurses forever and never yields a row is stopped at it. Views are
+listed and not counted, since counting one runs it. What a row carries is
+bounded in the statement rather than after it: a blob becomes its length and
+text is cut at 1,000 characters by `substr`, so the driver never hands over a
+gigabyte cell.
+
+Measured on this machine: a 10,000-entry zip (1.7 MB) lists in 1.5 ms, and a
+database of three tables and 100,000 rows answers in 3.7 ms, which is why both
+run on the request goroutine. Every guard was removed in turn and watched go
+red, thirty of them. The four write protections on the connection have no test
+each: the code issues no write, so taking any one of them away changes
+nothing a test can see, and they are there for the statement somebody adds
+later.
+
+The listing was `GET /api/projects/{id}/archive` in the design, and `POST` on
+that path archives the project: chi tells them apart by method, but a path
+that means "list this file" or "put this project away" depending on the verb
+reads two ways to everyone who is not a router. It is `archive-entries`.
+
+**`wall`, after the viewer's half was started.** A zip's DOS time has no zone.
+The server read it as UTC and the browser showed it in local time, so on this
+machine every such entry was eight hours early. The browser cannot tell which
+times to treat that way, so the server says: an entry whose time is a DOS time
+carries `"wall": true`, and the viewer shows it in UTC, which is the time as
+written. An extended timestamp clears the mark, because it is an instant, and
+a tar entry never has it. `TestADOSTimeIsMarkedAsWallClock` checks both kinds
+of zip entry and a tar entry, and checks that `wall` is absent from the JSON
+rather than `false`. Taking out either the line that sets the mark or the line
+that clears it turns the test red.
+
+## 2026-11-19 — The file viewer, 7c: archives and databases, the browser's half
+
+A zip, tar, tgz or gzip opens as its table of contents, and a SQLite
+database as its tables, both drawn from the server's two listings
+(`archive-entries`, `sqlite`; the server's half is the entry above).
+
+An archive is a tree. A wrapping directory -- `pkg-1.0/` with everything
+under it -- is opened through to the first directory with more than one
+child, the rest folded; find opens the directories a match sits in. An
+entry whose name climbs out (`../`, an absolute path, a drive letter) is
+not placed in the tree at all: it is listed at the top, whole, with an icon
+and the words, because the tree is a drawing of where an extractor would
+put things and that entry has no honest place in it. The footer names the
+format, counts files and directories, gives the unpacked size, and says
+when the listing was cut or the file was damaged; the server's English note
+is the tooltip. A zip entry with a DOS time carries `wall: true` from the
+server and is shown as the wall-clock time it was written with, not shifted
+into this browser's zone: the DOS time has no zone, and shifting it was
+eight hours wrong on this machine.
+
+A database is a strip of its tables (each with its row count; views are
+not counted, because counting a view runs it) and the chosen table's first
+two hundred rows through the table body from batch 4, NULL and BLOB told
+apart from text. ← → move between tables. Source shows the schema. A table
+that fails to read leaves the strip in place.
+
+The server's `KindArchive` and `KindSQLite` are in `wire.ts`'s
+`PreviewKind`, so the viewer no longer answers "none" for them; the
+fixtures under `archives/` and `db/` expect those kinds now, and a
+header-only `bin/sqlite.db` expects an error. `ArchiveView` (6.5 KB) and
+`SqliteView` (3.5 KB) are chunks of their own with their own lines in
+`bundle.test.ts`. Twenty-five vitest mutants and the browser mutants in
+`preview-check`'s new section all go red. The section's first full run --
+its author never had a browser for it -- found three things, none in the
+viewer: the fixture's trigger rewrote the notes of the people who ordered,
+and the orders were persons 1 to 10, so the literal `NULL` on person 3 and
+the long text on person 4 read `ordered` by the time the check looked (the
+orders are persons 11 to 20 now); `bin/sqlite.db`, the header-only database
+the check opens expecting an error, was generated by `make.py` and never
+committed, because `*.db` is ignored at the root (added with `-f`); and the
+browser logs the server's 422 for that file as a console error, which the
+errors section now accepts for a file the table expects to open as an
+error and for nothing else. The database body also names the table its
+rows belong to (`data-table`), because the strip flips on the click and
+the rows arrive a fetch later, and the check waits for both.

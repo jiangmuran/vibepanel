@@ -40,12 +40,13 @@ func TestTheInlineRouteNamesOnlyMediaTypes(t *testing.T) {
 		"img/icon.svg":      "image/svg+xml",
 		"docs/manual.pdf":   "application/pdf",
 		// Everything below is a download.
-		"page.html":           "",
-		"README.md":           "",
-		"src/app.ts":          "",
-		"bin/program":         "",
-		"archives/bundle.zip": "",
-		"data/config.json":    "",
+		"page.html":              "",
+		"README.md":              "",
+		"src/app.ts":             "",
+		"bin/program":            "",
+		"archives/bundle.zip":    "",
+		"archives/bundle.tar.gz": "",
+		"data/config.json":       "",
 	}
 	for rel := range want {
 		b, err := os.ReadFile(filepath.Join(fixtures, rel))
@@ -67,6 +68,8 @@ func TestTheInlineRouteNamesOnlyMediaTypes(t *testing.T) {
 		// A real SVG with a script in it: served as an image, sandboxed.
 		"script.svg": `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(3)</script></svg>`,
 		"x.html":     "<script>alert(4)</script>",
+		// A database is listed by its own route; here it is a download.
+		"app.db": "SQLite format 3\x00",
 	}
 	for rel, body := range hostile {
 		if err := os.WriteFile(filepath.Join(root, rel), []byte(body), 0o644); err != nil {
@@ -77,6 +80,7 @@ func TestTheInlineRouteNamesOnlyMediaTypes(t *testing.T) {
 	want["page.svg"] = ""
 	want["script.svg"] = "image/svg+xml"
 	want["x.html"] = ""
+	want["app.db"] = ""
 
 	project := postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+root+`","name":"inline"}`)
 	for rel, mime := range want {

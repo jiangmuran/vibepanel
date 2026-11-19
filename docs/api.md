@@ -259,6 +259,9 @@ counts and timestamps out of those files and nothing else leaves the machine.
 ### `GET /api/projects/{id}/preview?path=`
 ### `GET /api/projects/{id}/preview/render?path=&scripts=`
 ### `GET /api/projects/{id}/inline?path=`
+### `PUT /api/projects/{id}/file?path=`
+### `GET /api/projects/{id}/archive-entries?path=`
+### `GET /api/projects/{id}/sqlite?path=&table=`
 ### `POST /api/projects/{id}/upload?path=`
 ### `POST /api/projects`
 ### `PATCH /api/projects/{id}`
@@ -286,13 +289,15 @@ A restored project counts as just active and loses any manual position.
 project and answers `200` rather than `201`: nothing was created.
 `POST /api/sessions` in an archived project is a `409`.
 
-Paths in `files`, `download`, `preview` and `upload` are relative to the project
+Paths in `files`, `download`, `preview`, `file` and `upload` are relative to the project
 root and are resolved through it: a path that leaves the project is refused,
 symlinks included.
 
 `preview` is `download` with a ceiling and an opinion. It answers with the
 bytes, and says what it decided they are in `X-Preview-Kind`: `text`, `image`,
-`pdf`, `video`, `audio` or `binary`. With `meta=1`, a media kind -- image,
+`pdf`, `video`, `audio`, `archive`, `sqlite` or `binary`. An `archive` or a
+`sqlite` is answered with its headers and no body, with or without `meta=1`:
+the viewer reads it from `archive-entries` or `sqlite`, below. With `meta=1`, a media kind -- image,
 PDF, video, audio -- is answered with its headers and no body, whatever its
 size: the viewer then streams it from `inline`. Without it an image or a PDF
 is sent as before, for a tab older than the viewer. For an image or a PDF, `X-Preview-Type` carries the media type it
@@ -319,6 +324,11 @@ Three limits, and each answers differently:
   is not UTF-8 and has hardly a control character in it (`browse.Decode`). It
   is decoded first and cut afterwards, to the same budget, because in UTF-16 a
   newline is two bytes. UTF-8 carries no header.
+- A text file sent **whole and as it is on disk** carries
+  `ETag: "<sha256 of its bytes>"`, the version `PUT …/file` asks for. A
+  truncated one carries none, because a save of a cut-short view would save
+  the cut; nor does a decoded one, whose bytes on disk are not the UTF-8 that
+  was sent, so no save could ever match it.
 - Anything else — a NUL byte or invalid UTF-8 in what was read — is `binary`:
   a `200` with the first **64 KiB** (`previewHexBytes`), and
   `X-Preview-Truncated: true` when the file is longer. The panel draws them as
@@ -339,6 +349,93 @@ panel's. A PDF included: the viewer reads it with pdf.js, which fetches the
 bytes, and a sandbox on a response does nothing to a fetch. The policy keeps
 the panel's `frame-ancestors 'none'`: an `<img>`, `<video>` or `<audio>` is
 not a frame, and nothing else draws these.
+
+`PUT …/file` saves a text file from the viewer's editor. The body is the new
+content, UTF-8, at most **2 MiB** -- the text preview's bound, so anything the
+viewer shows whole can be sent back. `If-Match` is required and is the `ETag`
+the preview sent; the answer is `200` with the new `ETag`, in the header and
+as `{"etag": "\"…\"", "size": n}`.
+
+- No `If-Match`, or `*`, is `428`: a write that does not say what it replaces
+  overwrites whatever an agent wrote since the page loaded.
+- An `If-Match` that is not the sha256 of what is on disk now is `412`, with
+  "the file was changed after you opened it". The file is untouched. Two saves
+  of one version through the panel at once are one `200` and one `412`, never
+  two `200`s.
+- The file must exist (`404` otherwise: this does not create files), be a
+  regular file inside the project with symlinks resolved (`403` for a link
+  that leaves it; a link inside it saves its target and stays a link), and
+  still be what the viewer shows as UTF-8 text: read again here, an image, an
+  archive, a binary, a file of control characters or a UTF-16 or Latin-1
+  file is `415`, and a text file
+  past 2 MiB is `413`, since it was only ever shown cut short. New content
+  past the bound is `413`; content that is not UTF-8, or holds a NUL, is `400`.
+
+The write is a temporary file beside the original and a rename over it, so a
+reader sees the old file or the new one and never half; the file's permission
+bits are kept. Each save is an audit row, `files.write`, with who, the
+project, the path written and the size.
+`archive-entries` is an archive's table of contents, as JSON; nothing in the archive
+is served or opened. A zip (`PK`), a gzip stream, a POSIX tar (`ustar` at
+byte 257), else `415`:
+
+```json
+{"format": "zip", "entries": [
+  {"path": "dir/b.txt", "size": 2, "modified": 1700000000, "isDir": false},
+  {"path": "../../etc/passwd", "size": 1, "modified": 0, "isDir": false, "unsafe": true}
+ ], "truncated": false}
+```
+
+`format` is `zip`, `tar`, `tar.gz`, or `gzip` -- one compressed file with no
+tar in it, listed as one entry named after the stream (or the file without
+`.gz`), with `size` `-1` and a `note` saying why: gzip keeps the size only
+modulo 4 GiB. `modified` is Unix seconds, `0` when the archive does not say; a
+zip with no extended timestamp records local time with no zone, and it is read
+as UTC and marked `"wall": true`. Show such a time in UTC, which is the time as
+it was written; shown in the reader's zone it moves by that zone's offset, for
+a time that was never UTC. `wall` is absent from every other entry: a tar's
+times and a zip's extended timestamps are instants. A name is listed as the archive holds it, and `unsafe` marks one an
+extractor could be led outside its directory by: absolute, a drive letter, a
+`..` element, a backslash.
+
+What is read is bounded, and an archive cannot claim its way past it: a zip's
+end record and central directory, at most 32 MB of the directory, and a
+directory the file is too small to hold is `422` before any of it is read; a
+tar's headers, seeking over every entry's bytes, with at most 16 MB of PAX
+records and long names read; a `tar.gz`, which cannot be seeked through, at
+most 64 MB inflated. Past 10,000 entries, or past one of those bounds, the
+listing stops, `truncated` is `true`, `X-Preview-Truncated: true` is set, and
+`note` says which. A damaged archive is `422` with a sentence; one damaged after
+some entries is those entries and a `note`.
+
+`sqlite` is a SQLite database's tables and the first rows of one, as JSON. The
+file must start `SQLite format 3\0`, else `415`. It is opened read-only and
+immutable (`?mode=ro&immutable=1`), so nothing is written and nothing appears
+beside it -- no `-wal`, no `-shm`, no lock taken on a file another process may
+be writing. The price of `immutable` is that rows still in another process's
+`-wal` are not seen. Every statement stops at two seconds.
+
+```json
+{"tables": [{"name": "people", "kind": "table", "rows": 250,
+             "columns": [{"name": "id", "type": "INTEGER"}, {"name": "photo", "type": "BLOB"}],
+             "sql": "CREATE TABLE people (...)"}],
+ "table": "people", "columns": [...],
+ "rows": [[1, {"blob": 4096}], [2, null]], "more": true}
+```
+
+`tables` are the tables and views, by name, without SQLite's own; at most
+1,000. `rows` is `-1` when it was not counted: always for a view, since
+counting one runs it, and for a table whose count ran out of time. `table` is
+the one asked for with `?table=`, else the first; a name the database does not
+list is `400` and nothing runs, and the name is quoted in the statement as
+well. Up to 200 rows, `more` when there are others, and at most 200 columns
+and 4 MB of text across them, with `note` saying which bound bit. A cell is
+`null` for NULL, a number for a REAL or an INTEGER that a double holds
+exactly, a string for TEXT, `{"int": "..."}` for a larger INTEGER,
+`{"real": "+Inf"}` for an infinity, `{"blob": n}` for a BLOB of `n` bytes --
+never its bytes -- and `{"text": "...", "more": true}` for TEXT cut at 1,000
+characters. A file that is not a readable database is `422` with a sentence;
+a statement past its time is `422` saying so.
 
 A directory is `400`, and so is a FIFO, a socket or a device node: opening a
 FIFO with no writer never returns, and it would take the request goroutine and

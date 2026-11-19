@@ -125,6 +125,12 @@ walks the table.
   picture and is left alone on a fitted one; drag pans; pinch zooms on a
   touch screen. A PDF's footer has the same buttons. A transparent image
   sits on a checkerboard. An image that does not fit starts at its top-left, which is
+  (`1920 × 1080 · 2.4M`). `+` `-` `0` and Ctrl+wheel zoom about the cursor;
+  drag pans; pinch zooms on a touch screen. The zoom is also on screen --
+  `-`, the percentage, `+`, and fit or 100% -- and a double click toggles
+  fit and 100%: a viewer whose zoom lives only in keys and a modifier looks
+  like one that cannot zoom, which is what its owner reported. A transparent image sits on a
+  checkerboard. An image that does not fit starts at its top-left, which is
   the bug 「图片预览有bug 没法看到开头」 already fixed once, kept by a test.
 - Code colours are theme tokens (`--vp-tok-keyword` and friends), redefined
   under `[data-theme]` and the media query like every other token and nowhere
@@ -166,6 +172,9 @@ In the viewer, when the focus is not in the find box:
 | Ctrl/⌘ A | select the body: the text, code, hex, tree or table, not the header or the footer; in the find box, the box's text |
 | `e` | edit a text file (Editing, below) |
 | Ctrl/⌘ S, Esc | while editing: save, and stop editing; every other key is the editor's |
+| Ctrl/⌘ A | select the body and only the body: the text, the code, the bytes, the tree or the table, never the header or the footer, and never past the dialog |
+| `e` | edit, for a text file |
+| Ctrl/⌘ S | save, while editing |
 
 They are listed in the ⌥/ dialog under a *Viewer* heading, and nothing here
 takes a key from a text field or from the terminal: the viewer is a dialog
@@ -182,6 +191,30 @@ In the Files tab, which this touches because the viewer opens from it:
 
 Rows are focusable, the current one is `aria-current`, and icon sizes in the
 tab are one size (an audit finding).
+
+## Editing
+
+A text file can be changed where it is read. `e` (or the header's Edit)
+replaces the body with an editor -- CodeMirror 6, its own lazy chunk, with
+grammars for the ten commonest languages and plain text for the rest -- and
+the header shows a dot after the name while there are unsaved changes.
+Ctrl/⌘ S saves; closing the viewer or moving to another file with unsaved
+changes asks first.
+
+The save is `PUT /api/projects/{id}/file?path=` with the new content and an
+`If-Match` carrying the `ETag` the preview route sent when the file was
+read: the SHA-256 of the bytes, quoted, and sent only for a text file the
+read did not cut -- a cut file has no ETag, so it cannot be saved back as
+its first two megabytes. A save without `If-Match` answers 428; a file
+changed since it was read -- by an agent in the session, most likely --
+answers 412 with a sentence, and the viewer offers to reload rather than
+overwrite. The compare and the rename are one step under a lock, so two
+saves of the same file cannot both win. The server writes only a text file
+that already exists (binary and media answer 415, a missing file 404), at
+most 2 MB, through a temporary file in the same directory renamed over the
+original with its mode kept, and records `files.write` in the audit log with
+who, the project, the path and the size. Nothing here creates, renames or
+deletes a file.
 
 ## What stays
 
@@ -258,6 +291,30 @@ archive's central directory and tar headers, never an entry's bytes; a
 database with `?mode=ro&immutable=1` and a statement timeout, never a write;
 and both on the request goroutine only because each is a few milliseconds on
 a file the panel already opened, measured in the batch's test.
+
+An archive opens with the directories it is wrapped in already open --
+`pkg-1.0/` holding everything says nothing until it is -- down to the first
+directory with more than one thing in it, and everything below that folded.
+A directory's row counts what is under it; a file's gives its size and time
+-- in the reader's zone, except a zip's DOS time (`wall` in the listing),
+which has no zone and is shown as it was written.
+A name an extractor could be led outside its directory by is never filed
+into the tree, where `../../etc/passwd` would read as a directory called
+`..`: it is a row of its own at the top, under the name the archive gives
+it, marked with a sign and a word. Find searches the names and opens the
+directories of the match it is on. The footer gives the format, the files
+and directories, the unpacked total where every size is known, and what the
+listing left out -- in the panel's language, from the listing's fields; the
+server's English `note` is the tooltip.
+
+A database opens on its first table by name, with every table and view in a
+strip above it and each one's row count (a view is not counted: counting
+runs it). Choosing one asks the server for its rows; the strip stays while
+it does, and stays when it fails, so one table that times out does not take
+the others with it. NULL and a BLOB are drawn apart from text that reads the
+same -- italic, in the quieter ink, and marked in the DOM -- since `NULL` is
+also a string somebody stored. Source is the tables' and views' statements,
+in the line body, so find and go to line work on the schema.
 
 ### Keys, added
 

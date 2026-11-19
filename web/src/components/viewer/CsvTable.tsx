@@ -21,12 +21,18 @@ export function CsvTable({
   query,
   current,
   onCount,
+  stand,
+  titles,
 }: {
   rows: readonly string[][]
   more: boolean
   query: string
   current: number
   onCount: (n: number, capped: boolean) => void
+  /** Cells, as `row:column`, that stand in for a value: a database's NULL. */
+  stand?: ReadonlySet<string>
+  /** A tooltip for each column's heading: a database column's type. */
+  titles?: readonly string[]
 }) {
   const [head, ...body] = rows
   const width = Math.max(0, ...rows.map((r) => r.length))
@@ -80,6 +86,7 @@ export function CsvTable({
                   data-cell={key(0, c)}
                   data-match={hits.has(key(0, c)) ? 'true' : undefined}
                   data-current={at && at[0] === 0 && at[1] === c ? 'true' : undefined}
+                  title={titles?.[c] || undefined}
                   className={`border-b border-r border-hairline px-3 py-1 text-left font-semibold whitespace-pre-wrap ${cellClass(0, c)}`}
                 >
                   {safeBody(head?.[c] ?? '')}
@@ -102,7 +109,8 @@ export function CsvTable({
                         data-cell={key(r, c)}
                         data-match={hits.has(key(r, c)) ? 'true' : undefined}
                         data-current={at && at[0] === r && at[1] === c ? 'true' : undefined}
-                        className={`max-w-[32rem] border-b border-r border-hairline px-3 py-1 align-top whitespace-pre-wrap [overflow-wrap:anywhere] ${cellClass(r, c)}`}
+                        data-stand={stand?.has(key(r, c)) ? 'true' : undefined}
+                        className={`max-w-[32rem] border-b border-r border-hairline px-3 py-1 align-top whitespace-pre-wrap [overflow-wrap:anywhere] ${stand?.has(key(r, c)) ? 'italic text-ink-3' : ''} ${cellClass(r, c)}`}
                       >
                         {safeBody(row[c] ?? '')}
                       </td>

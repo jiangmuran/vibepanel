@@ -170,14 +170,14 @@ environment to start it in. The endpoint is why it exists: the same agent
 pointed at Anthropic, at a company proxy and at a self-hosted gateway is three
 configurations differing in one variable.
 
-Five ship with the panel: a shell, `claude`, `codex`, `opencode` and `agy`. Those
+Four ship with the panel: a shell, `claude`, `codex` and `opencode`. Those
 cannot be edited; a duplicate arrives with the variable names that agent reads
 already filled in. A variable left empty is not set at all, so a half-filled
 profile runs the agent exactly as a bare terminal would.
 
 There is no "API host" field on purpose. Which variable carries the endpoint is
-each agent's decision, and opencode and agy have none. They configure endpoints
-and models in their own settings.
+each agent's decision, and opencode has none. It configures endpoints
+and models in its own settings.
 
 A variable can be marked a **secret**, and then its value is never sent back to
 a browser: the settings page shows the name and says something is stored. It

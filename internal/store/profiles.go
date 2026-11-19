@@ -157,10 +157,12 @@ var builtinProfiles = []LaunchProfile{
 		{Name: "OPENAI_API_KEY", Secret: true},
 	}},
 	{ID: BuiltinPrefix + "opencode", Name: "opencode", Command: []string{"opencode"}},
-	// Antigravity CLI. No environment template, for opencode's reason: its
-	// model and credentials are chosen in its own settings and sign-in, and
-	// there is no single variable to name.
-	{ID: BuiltinPrefix + "agy", Name: "Antigravity CLI", Command: []string{"agy"}},
+	// Antigravity CLI was here and is not: offered beside Claude Code and
+	// Codex on a fresh panel it read as 「很奇怪」. The panel still recognises
+	// it -- hooks, usage, the chat bridge -- and an owner who wants it in the
+	// picker makes a profile for it. A row at builtin:agy left by an edit made
+	// while it was here is no longer an override of anything, so it lists as
+	// one of the owner's own profiles, which is what that edit was.
 }
 
 // BuiltinLaunchProfiles returns the catalogue.

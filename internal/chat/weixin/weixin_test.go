@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1170,5 +1171,151 @@ func TestTrustedOnlyBelievesTheIMsHosts(t *testing.T) {
 		if c.trusted(bad) {
 			t.Errorf("believed %s", bad)
 		}
+	}
+}
+
+// Typing(false) is the last word. A keepalive tick that had fired when the
+// reply went out used to send its "typing" after the "stopped", and the phone
+// showed 对方正在输入 again under the answer until it timed out by itself.
+// The tick is held between firing and sending so the two always meet.
+func TestNoKeepaliveIsSentAfterTypingStops(t *testing.T) {
+	f := newFake(t)
+	a := newAdapter(t, f, "")
+	a.keepalive, a.typingMax = 10*time.Millisecond, time.Second
+	inTick := make(chan struct{})
+	var once sync.Once
+	a.ticked = func() {
+		once.Do(func() {
+			close(inTick)
+			time.Sleep(40 * time.Millisecond)
+		})
+	}
+	running(t, a)
+	ctx := context.Background()
+	peer := chat.Peer{ID: "u1@im.wechat", ContextToken: "ctx"}
+	if err := a.Typing(ctx, peer, true); err != nil {
+		t.Fatal(err)
+	}
+	<-inTick
+	if err := a.Typing(ctx, peer, false); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	// The held tick sends nothing: it was taken after the stop, and a
+	// "typing" the stop then waits for is the reply arriving later.
+	var got []any
+	for _, c := range f.calls("sendtyping") {
+		got = append(got, c.Body["status"])
+	}
+	if !reflect.DeepEqual(got, []any{1.0, 2.0}) {
+		t.Fatalf("sendtyping went %v, want [1 2]: on, then the stop, and nothing after it", got)
+	}
+}
+
+// A keepalive already on the wire when the reply goes out is waited for, so
+// the server hears "stopped" after it, not before. The fake records what it
+// has finished handling, in order, which is what the phone shows.
+func TestTheStopWaitsForAKeepaliveInFlight(t *testing.T) {
+	f := newFake(t)
+	a := newAdapter(t, f, "")
+	a.keepalive, a.typingMax = 10*time.Millisecond, time.Second
+	var mu sync.Mutex
+	var handled []any
+	inFlight := make(chan struct{})
+	var once sync.Once
+	f.on("sendtyping", func(_ *http.Request, body map[string]any) (int, any) {
+		mu.Lock()
+		first := len(handled) == 0
+		mu.Unlock()
+		if body["status"] == 1.0 && !first {
+			once.Do(func() {
+				close(inFlight)
+				time.Sleep(40 * time.Millisecond)
+			})
+		}
+		mu.Lock()
+		handled = append(handled, body["status"])
+		mu.Unlock()
+		return 200, map[string]any{"ret": 0}
+	})
+	running(t, a)
+	ctx := context.Background()
+	peer := chat.Peer{ID: "u1@im.wechat", ContextToken: "ctx"}
+	if err := a.Typing(ctx, peer, true); err != nil {
+		t.Fatal(err)
+	}
+	<-inFlight
+	if err := a.Typing(ctx, peer, false); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if handled[len(handled)-1] != 2.0 {
+		t.Fatalf("the server handled %v: the stop landed before a keepalive", handled)
+	}
+}
+
+// Typing(true) twice for one person is one keepalive, not two, and the stop
+// ends it.
+func TestTypingTwiceLeavesOneKeepalive(t *testing.T) {
+	f := newFake(t)
+	a := newAdapter(t, f, "")
+	a.keepalive, a.typingMax = 10*time.Millisecond, time.Second
+	running(t, a)
+	ctx := context.Background()
+	peer := chat.Peer{ID: "u1@im.wechat", ContextToken: "ctx"}
+	for range 2 {
+		if err := a.Typing(ctx, peer, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Typing(ctx, peer, false); err != nil {
+		t.Fatal(err)
+	}
+	n := len(f.calls("sendtyping"))
+	time.Sleep(60 * time.Millisecond)
+	if got := len(f.calls("sendtyping")); got != n {
+		t.Fatalf("%d sendtyping after the stop: the first keepalive was left running", got-n)
+	}
+}
+
+// When the adapter stops, its keepalives stop with it rather than running on
+// for the two-minute cap after the channel is gone.
+func TestStoppingTheAdapterStopsItsKeepalives(t *testing.T) {
+	f := newFake(t)
+	a := newAdapter(t, f, "")
+	a.keepalive, a.typingMax = 10*time.Millisecond, time.Second
+	_, stop := running(t, a)
+	if err := a.Typing(context.Background(), chat.Peer{ID: "u1@im.wechat", ContextToken: "ctx"}, true); err != nil {
+		t.Fatal(err)
+	}
+	f.waitCalls(t, "sendtyping", 2)
+	_ = stop()
+	n := len(f.calls("sendtyping"))
+	time.Sleep(60 * time.Millisecond)
+	if got := len(f.calls("sendtyping")); got != n {
+		t.Fatalf("%d sendtyping after Run returned", got-n)
+	}
+}
+
+// The stop waits for a send, never for a tick: with the real five-second
+// keepalive, a stop that waited for the next one would hold the reply back.
+func TestTheStopDoesNotWaitForTheNextTick(t *testing.T) {
+	f := newFake(t)
+	a := newAdapter(t, f, "")
+	a.keepalive, a.typingMax = 5*time.Second, time.Minute
+	running(t, a)
+	ctx := context.Background()
+	peer := chat.Peer{ID: "u1@im.wechat", ContextToken: "ctx"}
+	if err := a.Typing(ctx, peer, true); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := a.Typing(ctx, peer, false); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("Typing(false) took %v", took)
 	}
 }

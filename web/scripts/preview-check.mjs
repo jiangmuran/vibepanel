@@ -58,6 +58,9 @@ writeFileSync(join(PROJ, 'large/bundle.min.js'), 'var a=1;'.repeat(240 * 1024) +
 // Two hundred pages, for what a long PDF costs: the first page's paint, and
 // how many pages hold a canvas once all of them have been scrolled past.
 writeFileSync(join(PROJ, 'large/two-hundred-pages.pdf'), longPdf(200))
+// One entry past the archive listing's bound: five megabytes of headers, so
+// made here rather than committed.
+writeFileSync(join(PROJ, 'large/ten-thousand-and-one.tar'), emptyTar(10001))
 
 /**
  * A PDF of `n` pages, a line at the top of each and one at the bottom,
@@ -65,6 +68,27 @@ writeFileSync(join(PROJ, 'large/two-hundred-pages.pdf'), longPdf(200))
  * on a page far from the view is where bringing the page into view is not
  * enough, and the match itself has to be centred once the page is drawn.
  */
+/** A ustar archive of n empty files, `f00001` and on. */
+function emptyTar(n) {
+  const out = Buffer.alloc((n + 2) * 512)
+  for (let i = 0; i < n; i++) {
+    const h = out.subarray(i * 512, i * 512 + 512)
+    h.write(`f${String(i + 1).padStart(5, '0')}`, 0, 'ascii')
+    h.write('0000644\0', 100, 'ascii')
+    h.write('0000000\0', 108, 'ascii')
+    h.write('0000000\0', 116, 'ascii')
+    h.write('00000000000\0', 124, 'ascii')
+    h.write('14524770400\0', 136, 'ascii')
+    h.write('        ', 148, 'ascii')
+    h.write('0', 156, 'ascii')
+    h.write('ustar\0' + '00', 257, 'ascii')
+    let sum = 0
+    for (const b of h) sum += b
+    h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'ascii')
+  }
+  return out
+}
+
 function longPdf(n) {
   const objs = []
   const obj = (body) => objs.push(body)
@@ -155,6 +179,13 @@ const KIND = [
   // Nine megabytes of 0x07: mostly control characters, so its bytes (batch 5).
   [/^large\/nine-megabytes\.bin$/, 'binary'],
   [/^(media|archives|bin)\//, 'binary'],
+  // Listed by the server (7c). The header of a database and nothing after
+  // it is a database SQLite says it cannot read.
+  [/^archives\//, 'archive'],
+  [/^large\/ten-thousand-and-one\.tar$/, 'archive'],
+  [/^db\//, 'sqlite'],
+  [/^bin\/sqlite\.db$/, 'error'],
+  [/^(media|bin)\//, 'binary'],
   // Bytes, drawn as a specimen (7b).
   [/^fonts\//, 'binary'],
 ]
@@ -258,7 +289,7 @@ try {
   // Every file at the widest; the narrower shapes take one of each kind and the
   // awkward names, which is where a layout breaks.
   const SAMPLE = files.filter((f) =>
-    /README|src\/app\.ts|config\.json|table\.csv|table\.tsv|huge\.png|manual\.pdf|fifty-thousand|nine-mega|中文|very-long|minified|page\.html|bundle\.zip|analysis\.ipynb|fixture\.otf|utf16/.test(f))
+    /README|src\/app\.ts|config\.json|table\.csv|table\.tsv|huge\.png|manual\.pdf|fifty-thousand|nine-mega|中文|very-long|minified|page\.html|bundle\.zip|analysis\.ipynb|fixture\.otf|utf16|project\.zip|climbs\.tar|app\.sqlite/.test(f))
   let opened = 0
   for (const shape of SHAPES) {
     const ctx = await contextFor(shape)
@@ -343,7 +374,13 @@ try {
         if (!geo.phoneCrumbs) note('FAIL', 'layout', `${shape.name} ${f}: more than the file's directory in the trail on a phone`)
         if (!geo.centred) note('FAIL', 'layout', `${shape.name} ${f}: the viewer is not centred in the window`)
         if (!geo.gutterFits) note('FAIL', 'layout', `${shape.name} ${f}: a line number runs into its line`)
-        if (errors.length) note('FAIL', 'errors', `${shape.name} ${f}: ${errors[0].slice(0, 200)}`)
+        // A file the table expects to open as an error -- a database that is
+        // only a header -- is answered 422 by the server, and the browser logs
+        // every 4xx it fetches as a console error. That one is the answer the
+        // viewer shows, not noise; any other 4xx, or any 4xx on a file that
+        // should open, still fails.
+        const unexpected = errors.filter((e) => !(want === 'error' && /status of 422/.test(e)))
+        if (unexpected.length) note('FAIL', 'errors', `${shape.name} ${f}: ${unexpected[0].slice(0, 200)}`)
         if (shape.name === '1280-light' || SAMPLE.includes(f)) {
           await page.screenshot({ path: join(SHOTS, `${shape.name}--${f.replace(/[/ ]/g, '_')}.png`) })
         }
@@ -1307,6 +1344,12 @@ try {
       const got = await nb.evaluate((el) => ({
         counts: [...el.querySelectorAll('[data-testid="nb-count"]')].map((c) => c.textContent),
         heading: el.querySelector('[data-cell="markdown"] h1')?.textContent ?? null,
+        // The heading's own words, without the # anchor that every rendered
+        // heading carries after them.
+        heading: (() => {
+          const h = el.querySelector('[data-cell="markdown"] h1')
+          return h ? [...h.childNodes].filter((n) => n.nodeName !== 'A').map((n) => n.textContent).join('') : null
+        })(),
         coloured: !!el.querySelector('[data-cell="code"] [data-testid="preview-code"] span[class*="--vp-tok-keyword"]'),
         outputs: [...el.querySelectorAll('[data-testid="nb-output"]')].map((o) => o.dataset.output),
         picture: (() => {
@@ -1324,6 +1367,7 @@ try {
       const outs = ['text', 'stderr', 'image', 'text', 'html', 'error']
       if (JSON.stringify(got.outputs) !== JSON.stringify(outs)) note('FAIL', 'notebook', `outputs ${JSON.stringify(got.outputs)}, want ${JSON.stringify(outs)}`)
       if (!got.picture || got.picture.w !== 48 || got.picture.src !== 'data:image/png;base64') note('FAIL', 'notebook', `the picture output is ${JSON.stringify(got.picture)}`)
+      if (!got.picture || got.picture.w !== 48 || got.picture.src !== 'data:image/png;base64,') note('FAIL', 'notebook', `the picture output is ${JSON.stringify(got.picture)}`)
       if (!got.htmlAsText || got.rendered) note('FAIL', 'notebook', 'an HTML output was rendered rather than shown as its source')
       if ((await page.title()) === 'ran') note('FAIL', 'notebook', "an HTML output's script ran")
       if (!got.traceback.includes('ZeroDivisionError') || /\x1b|\[0;31m/.test(got.traceback)) note('FAIL', 'notebook', `the traceback reads ${JSON.stringify(got.traceback.slice(0, 80))}`)
@@ -1396,6 +1440,189 @@ try {
     }
     if (errors.length) note('FAIL', 'more kinds', `thrown: ${errors[0].slice(0, 200)}`)
     note('PASS', 'more kinds', 'a notebook drawn cell by cell with its outputs, its HTML as text; four font formats set in themselves and taken out on close; UTF-16 and Latin-1 decoded and named')
+    await ctx.close()
+  }
+
+  // ── archives and databases ───────────────────────────────────────────────
+  // 7c. An archive is its table of contents from the server: the directory
+  // it is wrapped in opened, the rest folded, a name that climbs out shown
+  // whole and marked, find opening the directories of a match, the listing's
+  // bound said in the footer. A database is its tables in a strip and the
+  // first rows of the one chosen, NULL and a BLOB drawn apart from text, the
+  // arrows stepping tables, Source its schema -- and the file untouched, with
+  // nothing made beside it.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    const errors = []
+    page.on('pageerror', (e) => errors.push(String(e)))
+    const rowsOf = (v) =>
+      v.locator('[data-testid="viewer-archive"]').evaluate((el) =>
+        [...el.querySelectorAll('[role="treeitem"]')].map((r) => ({
+          level: Number(r.getAttribute('aria-level')),
+          text: r.firstElementChild.textContent,
+          unsafe: !!r.querySelector('[data-testid="archive-unsafe"]'),
+          when: r.lastElementChild.textContent,
+        })),
+      )
+
+    await filesAtRoot(page)
+    let v = await openFile(page, 'archives/project.zip')
+    await v.locator('[data-testid="viewer-archive"]').waitFor({ timeout: 10000 }).catch(() => note('FAIL', 'archive', 'project.zip drew no table of contents'))
+    if (await v.locator('[data-testid="viewer-archive"]').count()) {
+      let rows = await rowsOf(v)
+      const want = ['pkg-1.0', 'docs', 'src', 'README.md', 'needle-in-docs.txt']
+      if (JSON.stringify(rows.map((r) => r.text)) !== JSON.stringify(want)) {
+        note('FAIL', 'archive', `the zip opens as ${JSON.stringify(rows.map((r) => r.text))}, want the wrapping directory open and ${JSON.stringify(want.slice(1))} folded inside it`)
+      }
+      // A zip's DOS time is the time as it was written, in no zone: shown as
+      // written, not moved by this browser's offset. A directory the zip only
+      // implies has no time.
+      const times = rows.map((r) => r.when)
+      if (JSON.stringify(times) !== JSON.stringify(['—', '—', '—', '2024-03-01 12:30', '2024-03-01 12:30'])) note('FAIL', 'archive', `the time column reads ${JSON.stringify(times)}, want the files at 2024-03-01 12:30 as written`)
+      const count = await v.locator('[data-testid="archive-count"]').textContent()
+      if (!/\b5\b/.test(count) || !/\b4\b/.test(count)) note('FAIL', 'archive', `the footer counts ${JSON.stringify(count)}, want 5 files and 4 directories`)
+      if (!/ZIP/.test(await v.locator('[data-testid="viewer-format"]').textContent())) note('FAIL', 'archive', 'the footer does not say ZIP')
+      // Opening a folded directory by its row.
+      await v.locator('[data-entry="pkg-1.0/docs/"] [data-testid="archive-toggle"]').click()
+      rows = await rowsOf(v)
+      if (!rows.some((r) => r.text === 'guide.md' && r.level === 3)) note('FAIL', 'archive', 'opening docs/ does not show guide.md inside it')
+      // Find opens the directories of the match and outlines it.
+      await page.keyboard.press('Control+f')
+      await page.keyboard.type('strings')
+      await page.keyboard.press('Enter')
+      const cur = v.locator('[data-testid="viewer-archive"] [data-current="true"]')
+      await cur.waitFor({ timeout: 3000 }).catch(() => {})
+      const found = (await cur.count()) ? await cur.evaluate((r) => ({ text: r.firstElementChild.textContent, inView: (() => {
+        const a = r.getBoundingClientRect(), b = r.closest('[data-testid="viewer-archive"]').getBoundingClientRect()
+        return a.top >= b.top && a.bottom <= b.bottom
+      })() })) : null
+      if (found?.text !== 'strings.go' || !found.inView) note('FAIL', 'archive', `find for "strings" reached ${JSON.stringify(found)}, want strings.go opened and in view`)
+      const n = await v.locator('[data-testid="viewer-find-count"]').textContent()
+      if (!/1/.test(n)) note('FAIL', 'archive', `find counts ${JSON.stringify(n)}`)
+      await page.keyboard.press('Escape')
+      await page.screenshot({ path: join(SHOTS, 'archive.png') })
+    }
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'archives/climbs.tar')
+    {
+      const rows = await rowsOf(v).catch(() => [])
+      const bad = rows.filter((r) => r.unsafe).map((r) => r.text.replace(/\s*\S+$/, '').trim())
+      const marked = rows.filter((r) => r.unsafe).length
+      if (marked !== 2 || !rows.some((r) => r.text.startsWith('../escape.txt')) || !rows.some((r) => r.text.startsWith('/etc/absolute.txt'))) {
+        note('FAIL', 'archive', `climbs.tar: ${marked} names marked as escaping (${JSON.stringify(bad)}), want ../escape.txt and /etc/absolute.txt whole`)
+      }
+      if (rows.find((r) => r.text === 'fine.txt')?.unsafe !== false) note('FAIL', 'archive', 'climbs.tar: fine.txt is missing or marked')
+      if (rows.some((r) => r.text === '..' || r.text === 'etc')) note('FAIL', 'archive', 'climbs.tar: an escaping name was filed as a directory')
+    }
+    await page.keyboard.press('Escape')
+
+    for (const [f, fmt, noteWanted] of [['archives/log.gz', 'gzip', true], ['archives/bundle.tar.gz', 'tar.gz', false]]) {
+      await filesAtRoot(page)
+      v = await openFile(page, f)
+      const got = await v.locator('[data-testid="viewer-format"]').textContent().catch(() => null)
+      if (got !== fmt) note('FAIL', 'archive', `${f}: the footer says ${JSON.stringify(got)}, want ${fmt}`)
+      if ((await v.locator('[data-testid="archive-note"]').count()) !== (noteWanted ? 1 : 0)) note('FAIL', 'archive', `${f}: the size note is ${noteWanted ? 'missing' : 'there'}`)
+      await page.keyboard.press('Escape')
+    }
+
+    await filesAtRoot(page)
+    const t0 = Date.now()
+    v = await openFile(page, 'large/ten-thousand-and-one.tar')
+    await v.locator('[data-testid="viewer-archive"]').waitFor({ timeout: 10000 }).catch(() => {})
+    const ms = Date.now() - t0
+    const cut = await v.locator('[data-testid="preview-truncated"]').textContent().catch(() => null)
+    const drawn = await v.locator('[data-testid="viewer-archive"] [role="treeitem"]').count()
+    if (!cut || !/10[,.]?000/.test(cut)) note('FAIL', 'archive', `10,001 entries: the footer says ${JSON.stringify(cut)}, want that the first 10,000 are listed`)
+    if (drawn !== 10000) note('FAIL', 'archive', `10,001 entries: ${drawn} rows, want 10,000`)
+    note(ms > 4000 ? 'WARN' : 'PASS', 'archive', `10,000 entries listed and drawn in ${ms} ms`)
+    await page.keyboard.press('Escape')
+
+    // A database. Its bytes, and the directory it is in, before and after.
+    const dbPath = join(PROJ, 'db/app.sqlite')
+    const before = readFileSync(dbPath)
+    await filesAtRoot(page)
+    v = await openFile(page, 'db/app.sqlite')
+    const strip = v.locator('[data-testid="sqlite-tables"]')
+    await strip.waitFor({ timeout: 10000 }).catch(() => note('FAIL', 'sqlite', 'app.sqlite drew no tables'))
+    if (await strip.count()) {
+      const tabs = await v.locator('[data-testid="sqlite-table"]').evaluateAll((els) => els.map((e) => [e.dataset.name, e.getAttribute('aria-selected')]))
+      const names = tabs.map(([n]) => n)
+      if (JSON.stringify(names) !== JSON.stringify(['adults', 'empty', 'orders', 'people'])) note('FAIL', 'sqlite', `the strip is ${JSON.stringify(names)}`)
+      if (tabs[0]?.[1] !== 'true') note('FAIL', 'sqlite', 'the first table is not the one shown')
+      const cells = () =>
+        v.locator('[data-testid="viewer-table"]').evaluate((el) =>
+          [...el.querySelectorAll('tbody tr')].slice(0, 6).map((tr) =>
+            [...tr.querySelectorAll('td[data-cell]')].map((td) => ({ text: td.textContent, stand: td.dataset.stand === 'true' })),
+          ),
+        )
+      const wait = (name) =>
+        page.waitForFunction(([sel, name]) => {
+          const t = document.querySelector(`${sel} [data-testid="sqlite-table"][aria-selected="true"]`)
+          // The strip flips on the click; the rows arrive a fetch later and say
+          // which table they are. Both, or the cells read are the last table's.
+          const body = document.querySelector(`${sel} [data-testid="sqlite-body"]`)
+          return t?.dataset.name === name && body?.dataset.table === name && !document.querySelector(`${sel} [aria-busy="true"]`)
+        }, [VIEWER, name], { timeout: 5000 }).catch(() => note('FAIL', 'sqlite', `${name} did not become the table shown`))
+      await v.locator('[data-testid="sqlite-table"][data-name="people"]').click()
+      await wait('people')
+      const c = await cells()
+      // id, name, age, photo, note, big, score
+      const want = [
+        [c[0]?.[3], 'BLOB', true],
+        [c[1]?.[1], 'NULL', true],
+        [c[2]?.[4], 'NULL', false],
+        [c[5]?.[6], '+Inf', false],
+        [c[4]?.[5], '1152921504606846976', false],
+      ]
+      for (const [got, text, stand] of want) {
+        if (!got || !got.text.startsWith(text) || got.stand !== stand) note('FAIL', 'sqlite', `a cell reads ${JSON.stringify(got)}, want ${JSON.stringify(text)}${stand ? ' as a stand-in' : ' as text'}`)
+      }
+      if (!c[3]?.[4]?.text.endsWith('…')) note('FAIL', 'sqlite', 'a text cut at 1,000 characters does not say so')
+      const rowsText = await v.locator('[data-testid="sqlite-rows"]').textContent()
+      if (!/200/.test(rowsText) || !/250/.test(rowsText)) note('FAIL', 'sqlite', `the footer says ${JSON.stringify(rowsText)}, want the first 200 of 250`)
+      // The arrows step the strip; the last stays.
+      await v.locator('[data-testid="viewer-table"]').focus()
+      await page.keyboard.press('ArrowRight')
+      await sleep(200)
+      if ((await v.locator('[data-testid="sqlite-table"][aria-selected="true"]').getAttribute('data-name')) !== 'people') note('FAIL', 'sqlite', '→ past the last table moved')
+      await page.keyboard.press('ArrowLeft')
+      await wait('orders')
+      if ((await v.locator('[data-testid="viewer-table"] tbody tr').count()) !== 10) note('FAIL', 'sqlite', 'orders does not show its 10 rows')
+      await page.keyboard.press('ArrowLeft')
+      await wait('empty')
+      if (!(await v.locator('[data-testid="sqlite-no-rows"]').count())) note('FAIL', 'sqlite', 'an empty table does not say so')
+      // Find in the rows.
+      await v.locator('[data-testid="sqlite-table"][data-name="people"]').click()
+      await wait('people')
+      await page.keyboard.press('Control+f')
+      await page.keyboard.type('person 25')
+      await sleep(200)
+      const n = await v.locator('[data-testid="viewer-find-count"]').textContent()
+      if (!/\b1\b/.test(n)) note('FAIL', 'sqlite', `find "person 25" counts ${JSON.stringify(n)}, want 1 of the rows shown`)
+      await page.keyboard.press('Escape')
+      // Source is the schema.
+      await page.keyboard.press('s')
+      const schema = await v.locator('[data-testid="viewer-text"]').textContent().catch(() => '')
+      if (!schema.includes('CREATE TABLE people') || !schema.includes('CREATE VIEW adults')) note('FAIL', 'sqlite', `Source reads ${JSON.stringify(schema.slice(0, 80))}`)
+      await page.keyboard.press('s')
+      await page.screenshot({ path: join(SHOTS, 'sqlite.png') })
+    }
+    await page.keyboard.press('Escape')
+    const after = readFileSync(dbPath)
+    const beside = readdirSync(join(PROJ, 'db')).filter((f) => f !== 'app.sqlite')
+    if (!before.equals(after)) note('FAIL', 'sqlite', 'reading the database changed it')
+    if (beside.length) note('FAIL', 'sqlite', `reading the database left ${JSON.stringify(beside)} beside it`)
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'bin/sqlite.db')
+    if (!(await v.locator('[data-testid="preview-unavailable"]').count())) note('FAIL', 'sqlite', 'a database SQLite cannot read does not say so')
+    await page.keyboard.press('Escape')
+
+    if (errors.length) note('FAIL', 'archives and databases', `thrown: ${errors[0].slice(0, 200)}`)
+    note('PASS', 'archives and databases', 'a zip opened inside its wrapping directory, folded, found into; climbing names whole and marked; 10,000 entries and the bound said; a database stepped table by table with NULL and BLOB apart, its schema as Source, the file untouched')
     await ctx.close()
   }
 

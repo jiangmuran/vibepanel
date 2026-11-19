@@ -35,6 +35,8 @@ export type ViewerAction =
   | 'edit'
   | 'save'
   | 'stopEditing'
+  | 'prevTable'
+  | 'nextTable'
 
 export interface KeyLike {
   key: string
@@ -67,6 +69,12 @@ export interface KeyContext {
    * Escape, which leaves it.
    */
   editing?: boolean
+  /**
+   * The file on screen has more than one table to step through (a database).
+   * Only then are ← and → the viewer's; everywhere else they scroll a wide
+   * line, and Shift with them extends a selection everywhere.
+   */
+  tables?: boolean
 }
 
 /**
@@ -113,6 +121,10 @@ export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
       case 'G':
         return 'lastPage'
     }
+  }
+  if (ctx.tables && !e.shiftKey) {
+    if (e.key === 'ArrowLeft') return 'prevTable'
+    if (e.key === 'ArrowRight') return 'nextTable'
   }
   switch (e.key) {
     case '[':

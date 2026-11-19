@@ -33,6 +33,9 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/projects/{id}/download", s.handleDownload)
 	r.Get("/projects/{id}/preview", s.handlePreview)
 	r.Get("/projects/{id}/inline", s.handleInline)
+	r.Put("/projects/{id}/file", s.handleWriteFile)
+	r.Get("/projects/{id}/archive-entries", s.handleArchiveEntries)
+	r.Get("/projects/{id}/sqlite", s.handleSQLite)
 	// A second route rather than a mode on the first, and that placement is the
 	// design. See internal/httpapi/preview_render.go: /preview can only ever
 	// answer with an attachment, and exactly one handler in this codebase can
@@ -427,7 +430,10 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		// because nothing is read. Video and audio are answered the same way
 		// either way: a tab that predates them treats an unknown kind as one
 		// it cannot draw, and has no use for the bytes.
-		if r.URL.Query().Get("meta") == "1" || kind == browse.KindVideo || kind == browse.KindAudio {
+		// An archive and a database likewise: the viewer reads them from
+		// their listing routes, and their bytes are nothing to draw.
+		if r.URL.Query().Get("meta") == "1" || kind == browse.KindVideo || kind == browse.KindAudio ||
+			kind == browse.KindArchive || kind == browse.KindSQLite {
 			setAttachmentHeaders(w, name)
 			w.Header().Set("X-Preview-Kind", string(kind))
 			w.Header().Set("X-Preview-Type", mime)
@@ -523,6 +529,14 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	// by it, which is why it can be added to the safe endpoint at all.
 	if markup, _ := browse.SniffMarkup(name, head); markup != browse.MarkupNone {
 		w.Header().Set("X-Preview-Markup", string(markup))
+	}
+	// The validator the editor sends back in If-Match (handleWriteFile), and
+	// only for a file sent whole and as it is on disk. An edit of a cut-short
+	// view would save the cut; a decoded file was sent as UTF-8 its bytes on
+	// disk are not, so the hash of what was sent could never match, and the
+	// save refuses it anyway rather than change its encoding.
+	if !truncated && encoding == "" {
+		w.Header().Set("ETag", contentETag(text))
 	}
 	if truncated {
 		// The panel says so on screen. A preview that silently stops is the
