@@ -510,7 +510,10 @@ def database():
             2 ** 60 if i == 5 else i,
             float('inf') if i == 6 else i / 4,
         ))
-    db.executemany('INSERT INTO orders (person, total) VALUES (?, ?)', [(i, i * 1.5) for i in range(1, 11)])
+    # Persons 11 to 20, not 1 to 10: the trigger above rewrites the note of
+    # whoever orders, and the notes the check reads -- the literal 'NULL' on
+    # person 3, the long text on person 4 -- are on the first ten.
+    db.executemany('INSERT INTO orders (person, total) VALUES (?, ?)', [(i, i * 1.5) for i in range(11, 21)])
     db.commit()
     # One file, nothing beside it: the default journal is gone after commit.
     db.execute('PRAGMA journal_mode=DELETE')
