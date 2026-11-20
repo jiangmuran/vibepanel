@@ -28015,6 +28015,59 @@ error and for nothing else. The database body also names the table its
 rows belong to (`data-table`), because the strip flips on the click and
 the rows arrive a fetch later, and the check waits for both.
 
+## 2026-11-19 — The zoom on screen, and select all
+
+「图片要能缩放」, from the owner, on a viewer that could already zoom with
+`+` `-` `0`, Ctrl+wheel and a pinch. None of that is visible, so the
+viewer read as one that cannot zoom. The footer of a picture and of a PDF
+now carries `-`, the percentage, `+`, and a button that says where it goes
+-- 100% from fit, fit from anything else -- and a double click on a
+picture toggles the two, 100% about the point clicked. `+` `-` `0` and the
+buttons zoom about the middle of the view rather than the top-left, which
+meant moving the anchor from a scroll ratio to image pixels, because a
+fitted image is centred by its margins. A plain wheel was never taken and
+still is not; `preview-check` now asserts both halves of that: not taken on
+a fitted picture, scrolling a zoomed one.
+
+「全选可以快速选择」: Ctrl/⌘ A in the viewer selects the body and only the
+body -- the text, the code, the bytes, the tree, the table -- through a
+`display: contents` wrapper, so it is a selection target without being a
+box in the layout. On a picture, a video or a sound it clears the
+selection. In the find box it is the input's own. Listed in ⌥/.
+
+## 2026-11-19 — Editing a text file where it is read
+
+「把编辑文件也做进来」. `e`, or the header's Edit, replaces the body of a
+text file with CodeMirror 6 -- its own lazy chunk (330 KB, line at 340),
+one grammar chunk per language for the ten commonest and plain text for
+the rest -- and Ctrl/⌘ S saves through `PUT /api/projects/{id}/file` with
+the `If-Match` the preview route gave when the file was read
+(`docs/file-preview.md`, "Editing"). A dot after the name says there are
+unsaved changes; closing, previous, next and the breadcrumb ask first, and
+the tab's own close gets `beforeunload`.
+
+Three kinds of file cannot be edited, and the button says which: one the
+read cut (no ETag, so a save would write back two megabytes of a bigger
+file), one the server decoded from UTF-16 or Latin-1 (a save would turn it
+into UTF-8), and one with mixed line endings (any one separator would
+rewrite every line). The editor joins lines with the file's own ending, LF,
+CRLF or CR, and puts a byte-order mark back if the file had one: `res.text()`
+drops it, so without this a save silently removed it.
+
+A 412 -- the file changed after it was opened, by an agent in the session
+most likely -- says so and offers to reload, which drops the edits and
+opens the disk's version. The other refusals (400, 403, 404, 413, 415) each
+have a sentence in both languages. A save that succeeds updates the view's
+text and ETag.
+
+`ConfirmDialog` is a portal on `body` now, because a question asked from
+the viewer -- itself a portal on `body` at the same z -- came up underneath
+it. That changes every confirmation in the panel; `render-check` covers
+them. `preview-check`'s editing section saves and compares the disk byte
+for byte, has a refused save leave the disk alone, keeps CRLF and a BOM,
+asks the question on top, and finds the three files that cannot be edited;
+twelve vitest mutants go red.
+
 ## 2026-11-19 — Two more themes in the binary: 白瓷 and 乌金
 
 The complaint was that the panel looks industrial: a cold blue-grey with the

@@ -951,6 +951,149 @@ try {
     await ctx.close()
   }
 
+  // ── zoom on screen, and select-all ───────────────────────────────────────
+  // 「图片要能缩放」: the zoom as buttons in the footer, and a double click
+  // between fitted and 100% about the point clicked. A wheel without Ctrl is
+  // the page's on a fitted picture and scrolls a zoomed one. Ctrl/⌘+A selects
+  // the body and nothing around it, and is the find box's own in the box.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    await filesAtRoot(page)
+    let v = await openFile(page, 'img/huge.png')
+    const box = v.locator('[data-testid="viewer-image"]')
+    await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="viewer-image-size"]`), VIEWER, { timeout: 10000 }).catch(() => {})
+    const zoomOf = () => box.getAttribute('data-zoom')
+    const label = () => v.locator('[data-testid="viewer-zoom"]').textContent()
+    // A wheel on a fitted picture: nothing taken, nothing moved.
+    const r = await box.boundingBox()
+    const taken = await box.evaluate((b) => {
+      const e = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true })
+      b.dispatchEvent(e)
+      return e.defaultPrevented
+    })
+    if (taken) note('FAIL', 'zoom', 'a wheel without Ctrl on a fitted picture was taken')
+    await v.locator('[data-testid="viewer-zoom-in"]').click()
+    const z1 = await zoomOf()
+    if (z1 === 'fit') note('FAIL', 'zoom', 'the + button did not zoom')
+    const l1 = await label()
+    if (!/^\d+%$/.test(l1 ?? '')) note('FAIL', 'zoom', `zoomed, the footer says ${JSON.stringify(l1)}`)
+    await v.locator('[data-testid="viewer-zoom-out"]').click()
+    if (Number(await zoomOf()) >= Number(z1)) note('FAIL', 'zoom', 'the − button did not zoom out')
+    await v.locator('[data-testid="viewer-zoom-toggle"]').click()
+    if ((await zoomOf()) !== 'fit') note('FAIL', 'zoom', 'the toggle did not fit a zoomed picture')
+    await v.locator('[data-testid="viewer-zoom-toggle"]').click()
+    if ((await zoomOf()) !== '1.000') note('FAIL', 'zoom', `the toggle from fitted went to ${await zoomOf()}, want 1.000`)
+    // A wheel on a zoomed picture scrolls it.
+    await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2)
+    const top0 = await box.evaluate((b) => b.scrollTop)
+    await page.mouse.wheel(0, 300)
+    await sleep(300)
+    const top1 = await box.evaluate((b) => b.scrollTop)
+    if (!(top1 > top0)) note('FAIL', 'zoom', `a wheel on a zoomed picture did not scroll it: ${top0} -> ${top1}`)
+    if ((await zoomOf()) !== '1.000') note('FAIL', 'zoom', 'a wheel without Ctrl zoomed')
+    // Back to fitted, then a double click: 100%, with the pixel that was under
+    // the pointer still under it.
+    await page.keyboard.press('0')
+    // Whole pixels: the browser reports a click's clientX and clientY as
+    // integers, so a click dispatched at a fraction is anchored at the
+    // integer below it, and measuring from the fraction read as a drift of
+    // 3.7 px that the viewer never made.
+    const at = { x: Math.round(r.x + r.width * 0.3), y: Math.round(r.y + r.height * 0.4) }
+    const pixel = () => box.evaluate((b, p) => {
+      const i = b.querySelector('img').getBoundingClientRect()
+      const img = b.querySelector('img')
+      return [(p.x - i.left) * img.naturalWidth / i.width, (p.y - i.top) * img.naturalHeight / i.height]
+    }, at)
+    const before = await pixel()
+    await page.mouse.dblclick(at.x, at.y)
+    await sleep(200)
+    if ((await zoomOf()) !== '1.000') note('FAIL', 'zoom', `a double click on a fitted picture went to ${await zoomOf()}`)
+    const after = await pixel()
+    const drift = Math.hypot(after[0] - before[0], after[1] - before[1])
+    if (drift > 3) note('FAIL', 'zoom', `a double click moved the pixel under the pointer by ${drift.toFixed(1)} px (${before.map(Math.round)} -> ${after.map(Math.round)})`)
+    await page.mouse.dblclick(at.x, at.y)
+    await sleep(200)
+    if ((await zoomOf()) !== 'fit') note('FAIL', 'zoom', 'a double click on a zoomed picture did not fit it')
+    // The buttons zoom about the middle of the view.
+    const middle = { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    const mid = () => box.evaluate((b, p) => {
+      const i = b.querySelector('img').getBoundingClientRect()
+      const img = b.querySelector('img')
+      return [(p.x - i.left) * img.naturalWidth / i.width, (p.y - i.top) * img.naturalHeight / i.height]
+    }, middle)
+    const m0 = await mid()
+    await v.locator('[data-testid="viewer-zoom-toggle"]').click()
+    await sleep(200)
+    const m1 = await mid()
+    const mdrift = Math.hypot(m1[0] - m0[0], m1[1] - m0[1])
+    if (mdrift > 3) note('FAIL', 'zoom', `the toggle moved the middle of the view by ${mdrift.toFixed(1)} px of the picture`)
+    await page.screenshot({ path: join(SHOTS, 'zoom-controls.png') })
+    // Select-all on a picture selects nothing, and nothing behind the dialog.
+    await page.keyboard.press('Control+a')
+    const picSel = await page.evaluate(() => getSelection().toString())
+    if (picSel !== '') note('FAIL', 'select-all', `select-all on a picture selected ${JSON.stringify(picSel.slice(0, 60))}`)
+    await page.keyboard.press('Escape')
+    note('PASS', 'zoom', `buttons in, out and between fitted and 100%; a double click about the pointer (${drift.toFixed(1)} px); the toggle about the middle (${mdrift.toFixed(1)} px); the wheel left alone fitted and scrolling zoomed`)
+
+    // The PDF's footer has the same buttons.
+    await filesAtRoot(page)
+    v = await openFile(page, 'docs/manual.pdf')
+    const pdf = v.locator('[data-testid="viewer-pdf"]')
+    await v.locator('[data-testid="viewer-zoom-in"]').click()
+    if ((await pdf.getAttribute('data-zoom')) === 'fit') note('FAIL', 'zoom', 'the + button did not zoom a PDF')
+    await v.locator('[data-testid="viewer-zoom-toggle"]').click()
+    if ((await pdf.getAttribute('data-zoom')) !== 'fit') note('FAIL', 'zoom', 'the toggle did not fit a PDF')
+    await page.keyboard.press('Escape')
+
+    // Select-all, kind by kind: what is selected is inside the body, and
+    // holds the first and the last of what the body shows.
+    const selection = () => page.evaluate((sel) => {
+      const s = getSelection()
+      const body = document.querySelector(`${sel} [data-testid="viewer-body"]`)
+      if (!s || s.rangeCount === 0) return { text: '', inside: false }
+      const r = s.getRangeAt(0)
+      return { text: s.toString(), inside: !!body && body.contains(r.startContainer) && body.contains(r.endContainer) }
+    }, VIEWER)
+    for (const [f, first, last] of [
+      ['large/fifty-thousand.log', 'line 1 of', 'line 50000 of'],
+      ['src/app.ts', null, null],
+      ['data/config.json', null, null],
+      ['data/table.csv', null, null],
+      ['bin/random.bin', null, null],
+    ]) {
+      await filesAtRoot(page)
+      v = await openFile(page, f).catch(() => null)
+      if (!v) { note('FAIL', 'select-all', `${f} did not open`); continue }
+      await v.locator('[data-testid="viewer-content"]').click({ position: { x: 40, y: 40 } }).catch(() => {})
+      await page.keyboard.press('Control+a')
+      const got = await selection()
+      if (!got.inside || got.text.length === 0) note('FAIL', 'select-all', `${f}: the selection is ${got.inside ? 'empty' : 'outside the body'}`)
+      if (first && !got.text.includes(first)) note('FAIL', 'select-all', `${f}: the selection does not hold ${JSON.stringify(first)}`)
+      if (last && !got.text.includes(last)) note('FAIL', 'select-all', `${f}: the selection does not hold ${JSON.stringify(last)} -- a block not yet drawn was left out`)
+      if (/^\s*\d+\s/m.test(got.text) && f === 'src/app.ts') note('FAIL', 'select-all', `${f}: the selection holds line numbers`)
+      // The footer's own words are not in it.
+      const footer = (await v.locator('[data-testid="viewer-footer"]').textContent().catch(() => '')).trim()
+      if (footer && got.text.includes(footer)) note('FAIL', 'select-all', `${f}: the footer is selected`)
+      await page.keyboard.press('Escape')
+    }
+    // In the find box, the box's own.
+    await filesAtRoot(page)
+    v = await openFile(page, 'src/app.ts')
+    await page.keyboard.press('Control+f')
+    await page.keyboard.type('import')
+    await page.keyboard.press('Control+a')
+    const field = await page.evaluate(() => {
+      const el = document.activeElement
+      return el instanceof HTMLInputElement ? [el.selectionStart, el.selectionEnd, el.value.length] : null
+    })
+    if (!field || field[0] !== 0 || field[1] !== field[2]) note('FAIL', 'select-all', `in the find box, select-all did not select the box: ${JSON.stringify(field)}`)
+    const leaked = await selection()
+    if (leaked.inside && leaked.text) note('FAIL', 'select-all', 'in the find box, select-all selected the body')
+    note('PASS', 'select-all', 'the body and nothing around it, for text, code, a tree, a table and hex, the last line of 50,000 included; a picture selects nothing; the find box keeps its own')
+    await ctx.close()
+  }
+
   // ── PDF ──────────────────────────────────────────────────────────────────
   // 7a: pdf.js draws the pages, each when it comes near the view; the text is
   // a layer over them that find searches and marks; PgUp, PgDn, g and G turn
@@ -1203,6 +1346,7 @@ try {
     if (await nb.count()) {
       const got = await nb.evaluate((el) => ({
         counts: [...el.querySelectorAll('[data-testid="nb-count"]')].map((c) => c.textContent),
+        heading: el.querySelector('[data-cell="markdown"] h1')?.textContent ?? null,
         // The heading's own words, without the # anchor that every rendered
         // heading carries after them.
         heading: (() => {
@@ -1638,6 +1782,144 @@ try {
     const cut = await page.locator('[data-testid="preview-truncated"]').textContent().catch(() => null)
     if (!cut || !/2(\.0)?M/.test(cut)) note('FAIL', 'large', `a file past 2 MB says ${JSON.stringify(cut)} about being cut`)
     await ctx.close()
+  }
+
+  // ── editing ──────────────────────────────────────────────────────────────
+  // docs/file-preview.md, "Editing": `e` opens the editor on a text file the
+  // server sent whole; Ctrl+S saves against the version it was read at and
+  // the file on disk is what was typed, its line endings and byte order mark
+  // kept; a file changed on disk since is refused and offered a reload, and
+  // the disk keeps the other writer's bytes; unsaved edits are asked about
+  // before they are dropped, in a question that is on top. Last, and in a
+  // directory of its own, because it writes files.
+  {
+    mkdirSync(join(PROJ, 'edit'), { recursive: true })
+    const disk = (f) => readFileSync(join(PROJ, 'edit', f))
+    writeFileSync(join(PROJ, 'edit/note.ts'), 'export const a = 1\n')
+    writeFileSync(join(PROJ, 'edit/crlf.txt'), 'one\r\ntwo\r\n')
+    writeFileSync(join(PROJ, 'edit/bom.txt'), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('hello\n')]))
+    writeFileSync(join(PROJ, 'edit/mixed.txt'), 'a\r\nb\n')
+    for (const scheme of ['light', 'dark']) {
+      const ctx = await contextFor({ width: 1280, height: 800, scheme })
+      const page = await ctx.newPage()
+      const status = (v) => v.locator('[data-testid="edit-status"]').getAttribute('data-status').catch(() => null)
+      const waitStatus = (v, want) =>
+        page.waitForFunction(([sel, w]) => document.querySelector(`${sel} [data-testid="edit-status"]`)?.dataset.status === w, [VIEWER, want], { timeout: 8000 })
+          .then(() => true, () => false)
+      await filesAtRoot(page)
+      let v = await openFile(page, 'edit/note.ts')
+      const button = v.locator('[data-testid="viewer-edit"]')
+      if (!(await button.isEnabled().catch(() => false))) note('FAIL', 'edit', `${scheme}: the Edit button is not there or not enabled on a small text file`)
+      await page.keyboard.press('e')
+      const editor = v.locator('[data-testid="editor-content"]')
+      if (!(await editor.waitFor({ timeout: 10000 }).then(() => true, () => false))) {
+        note('FAIL', 'edit', `${scheme}: \`e\` did not open the editor`)
+        await ctx.close()
+        continue
+      }
+      const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))
+      if (focused !== 'editor-content') note('FAIL', 'edit', `${scheme}: the editor opened without the focus (${focused})`)
+      // The viewer's letters are the editor's now.
+      await page.keyboard.press('Control+End')
+      await page.keyboard.type('export const wne = 2\n')
+      if (await v.locator('[data-testid="viewer-findbar"]').count()) note('FAIL', 'edit', `${scheme}: typing opened the find bar`)
+      if (!(await v.locator('[data-testid="viewer-dirty"]').count())) note('FAIL', 'edit', `${scheme}: no dot after the name with unsaved changes`)
+      // The grammar coloured it, in the theme's token colour.
+      await page.waitForFunction((sel) => [...document.querySelectorAll(`${sel} .cm-line span`)].some((s) => getComputedStyle(s).color !== getComputedStyle(s.closest('.cm-content')).color), VIEWER, { timeout: 8000 })
+        .catch(() => note('FAIL', 'edit', `${scheme}: the TypeScript in the editor has no colour`))
+      await page.screenshot({ path: join(SHOTS, `edit-${scheme}.png`) })
+      await page.keyboard.press('Control+s')
+      if (!(await waitStatus(v, 'saved'))) note('FAIL', 'edit', `${scheme}: Ctrl+S did not save (${await status(v)})`)
+      const saved = disk('note.ts').toString()
+      if (saved !== 'export const a = 1\nexport const wne = 2\n') note('FAIL', 'edit', `${scheme}: the disk holds ${JSON.stringify(saved)}`)
+      if (await v.locator('[data-testid="viewer-dirty"]').count()) note('FAIL', 'edit', `${scheme}: the dot stayed after a save`)
+      // Esc leaves the editor, and the view is the saved text.
+      await page.keyboard.press('Escape')
+      await v.locator('[data-testid="viewer-body"]').waitFor({ timeout: 5000 }).catch(() => {})
+      const shown = await v.locator('[data-testid="viewer-body"]').textContent().catch(() => '')
+      if (!shown.includes('wne')) note('FAIL', 'edit', `${scheme}: after the save the view does not show it`)
+
+      // Somebody else writes the file; the save is refused and the disk keeps theirs.
+      await page.keyboard.press('e')
+      await editor.waitFor({ timeout: 10000 })
+      await page.keyboard.press('Control+End')
+      await page.keyboard.type('// mine\n')
+      writeFileSync(join(PROJ, 'edit/note.ts'), 'export const theirs = 3\n')
+      await page.keyboard.press('Control+s')
+      if (!(await waitStatus(v, 'changed'))) note('FAIL', 'edit', `${scheme}: a save over a file changed on disk was not refused (${await status(v)})`)
+      if (disk('note.ts').toString() !== 'export const theirs = 3\n') note('FAIL', 'edit', `${scheme}: the refused save changed the disk: ${JSON.stringify(disk('note.ts').toString())}`)
+      await v.locator('[data-testid="edit-reload"]').click()
+      const reloaded = await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="editor-content"]`)?.textContent.includes('theirs'), VIEWER, { timeout: 8000 }).then(() => true, () => false)
+      if (!reloaded) note('FAIL', 'edit', `${scheme}: Reload did not bring in the file as it is on disk`)
+      if (await v.locator('[data-testid="viewer-dirty"]').count()) note('FAIL', 'edit', `${scheme}: dirty after a reload`)
+      // And the reloaded version saves.
+      await page.keyboard.press('Control+End')
+      await page.keyboard.type('// after\n')
+      await page.keyboard.press('Control+s')
+      if (!(await waitStatus(v, 'saved')) || disk('note.ts').toString() !== 'export const theirs = 3\n// after\n') note('FAIL', 'edit', `${scheme}: a save after the reload did not land: ${JSON.stringify(disk('note.ts').toString())}`)
+
+      // Unsaved edits: Esc asks, and Cancel keeps them; closing asks, and
+      // the question is on top of the viewer.
+      await page.keyboard.type('// unsaved')
+      await page.keyboard.press('Escape')
+      const ask = page.locator('[data-testid="confirm-backdrop"]')
+      if (!(await ask.waitFor({ timeout: 3000 }).then(() => true, () => false))) {
+        note('FAIL', 'edit', `${scheme}: Esc with unsaved edits asked nothing`)
+      } else {
+        const onTop = await page.evaluate(() => {
+          const panel = document.querySelector('[data-testid="confirm-dialog"]')
+          const r = panel.getBoundingClientRect()
+          return panel.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
+        })
+        if (!onTop) note('FAIL', 'edit', `${scheme}: the question is under the viewer`)
+        await page.keyboard.press('Escape')
+        await sleep(200)
+        if (!(await editor.count())) note('FAIL', 'edit', `${scheme}: answering no to the question left the editor`)
+      }
+      await v.locator('[data-testid="preview-close"]').click()
+      if (!(await ask.waitFor({ timeout: 3000 }).then(() => true, () => false))) note('FAIL', 'edit', `${scheme}: closing with unsaved edits asked nothing`)
+      else {
+        await page.locator('[data-testid="confirm-yes"]').click()
+        await v.waitFor({ state: 'detached', timeout: 5000 }).catch(() => note('FAIL', 'edit', `${scheme}: dropping the edits did not close the viewer`))
+      }
+      if (disk('note.ts').toString().includes('unsaved')) note('FAIL', 'edit', `${scheme}: dropped edits reached the disk`)
+      writeFileSync(join(PROJ, 'edit/note.ts'), 'export const a = 1\n')
+      await ctx.close()
+    }
+
+    // Line endings and a byte order mark survive a save.
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    for (const [f, want] of [
+      ['crlf.txt', Buffer.from('one\r\ntwo\r\nthree\r\n')],
+      ['bom.txt', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('hello\nthree\n')])],
+    ]) {
+      await filesAtRoot(page)
+      const v = await openFile(page, `edit/${f}`)
+      await page.keyboard.press('e')
+      await v.locator('[data-testid="editor-content"]').waitFor({ timeout: 10000 })
+      await page.keyboard.press('Control+End')
+      await page.keyboard.type('three\n')
+      await page.keyboard.press('Control+s')
+      await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="edit-status"]`)?.dataset.status === 'saved', VIEWER, { timeout: 8000 }).catch(() => {})
+      const got = disk(f)
+      if (!got.equals(want)) note('FAIL', 'edit', `${f}: saved as ${JSON.stringify(got.toString('latin1'))}, want ${JSON.stringify(want.toString('latin1'))}`)
+      await page.keyboard.press('Escape')
+      await page.keyboard.press('Escape')
+    }
+    // What cannot be edited says why, on a button that does nothing.
+    for (const [f, why] of [['large/three-megabytes.log', 'cut'], ['encodings/utf16.txt', 'encoding'], ['edit/mixed.txt', 'mixed']]) {
+      await filesAtRoot(page)
+      const v = await openFile(page, f)
+      const b = v.locator('[data-testid="viewer-edit"]')
+      const state = await b.evaluate((el) => ({ disabled: el.disabled, title: el.title })).catch(() => null)
+      if (!state || !state.disabled || !state.title) note('FAIL', 'edit', `${f} (${why}): the Edit button is ${JSON.stringify(state)}, want disabled with a reason`)
+      await page.keyboard.press('e')
+      if (await v.locator('[data-testid="editor-content"]').count()) note('FAIL', 'edit', `${f} (${why}): \`e\` opened the editor`)
+      await page.keyboard.press('Escape')
+    }
+    await ctx.close()
+    note('PASS', 'edit', 'in both themes: `e`, typing that is the editor\'s, a coloured grammar, Ctrl+S to disk, Esc back to the saved view; a file changed on disk refused, kept, reloaded and saved over; unsaved edits asked about, on top, and never written; CRLF and a byte order mark kept; a cut, a UTF-16 and a mixed-endings file not editable, with the reason')
   }
 } catch (e) {
   note('FAIL', 'harness', String(e?.stack ?? e))

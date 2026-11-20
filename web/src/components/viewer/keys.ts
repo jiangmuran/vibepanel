@@ -31,6 +31,10 @@ export type ViewerAction =
   | 'nextPage'
   | 'firstPage'
   | 'lastPage'
+  | 'selectAll'
+  | 'edit'
+  | 'save'
+  | 'stopEditing'
   | 'prevTable'
   | 'nextTable'
 
@@ -60,6 +64,12 @@ export interface KeyContext {
    */
   pages?: boolean
   /**
+   * The body is the editor. Every key is then the editor's -- letters, the
+   * command-key shortcuts, select-all, its own find -- except saving and
+   * Escape, which leaves it.
+   */
+  editing?: boolean
+  /**
    * The file on screen has more than one table to step through (a database).
    * Only then are ← and → the viewer's; everywhere else they scroll a wide
    * line, and Shift with them extends a selection everywhere.
@@ -79,10 +89,18 @@ export interface KeyContext {
 export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
   if (e.isComposing || e.keyCode === 229) return null
   const command = ctx.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+  if (ctx.editing) {
+    if (command && !e.altKey && e.key.toLowerCase() === 's') return 'save'
+    if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) return 'stopEditing'
+    return null
+  }
   if (command && !e.altKey) {
     const k = e.key.toLowerCase()
     if (k === 'f') return 'find'
     if (k === 'g') return 'goToLine'
+    // The body's text and nothing around it. In a field it is the field's:
+    // the find box's text is what somebody selecting there means.
+    if (k === 'a') return ctx.inField ? null : 'selectAll'
     return null
   }
   if (e.key === 'Escape') return ctx.findOpen ? 'closeFind' : 'close'
@@ -132,6 +150,8 @@ export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
       return 'download'
     case 'c':
       return 'copyPath'
+    case 'e':
+      return 'edit'
   }
   return null
 }

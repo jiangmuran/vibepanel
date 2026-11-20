@@ -117,6 +117,14 @@ walks the table.
 ## Display
 
 - Images: fit to the window on open, with the real size in the footer
+  (`1920 × 1080 · 2.4M`). The footer has the zoom as buttons too: −, the
+  scale, +, and one that goes to 100% from fitted and to fitted from
+  anything else, which a double click on the picture also does, about the
+  point clicked. `+` `-` `0` and the buttons zoom about the middle of the
+  view, Ctrl+wheel about the cursor; a wheel without Ctrl scrolls a zoomed
+  picture and is left alone on a fitted one; drag pans; pinch zooms on a
+  touch screen. A PDF's footer has the same buttons. A transparent image
+  sits on a checkerboard. An image that does not fit starts at its top-left, which is
   (`1920 × 1080 · 2.4M`). `+` `-` `0` and Ctrl+wheel zoom about the cursor;
   drag pans; pinch zooms on a touch screen. The zoom is also on screen --
   `-`, the percentage, `+`, and fit or 100% -- and a double click toggles
@@ -158,9 +166,12 @@ In the viewer, when the focus is not in the find box:
 | `w` | wrap on and off |
 | `n` | line numbers on and off |
 | `s` | Source and Rendered |
-| `+` `-` `0` | zoom an image |
+| `+` `-` `0` | zoom an image or a PDF |
 | `d` | download |
 | `c` | copy the path |
+| Ctrl/⌘ A | select the body: the text, code, hex, tree or table, not the header or the footer; in the find box, the box's text |
+| `e` | edit a text file (Editing, below) |
+| Ctrl/⌘ S, Esc | while editing: save, and stop editing; every other key is the editor's |
 | Ctrl/⌘ A | select the body and only the body: the text, the code, the bytes, the tree or the table, never the header or the footer, and never past the dialog |
 | `e` | edit, for a text file |
 | Ctrl/⌘ S | save, while editing |

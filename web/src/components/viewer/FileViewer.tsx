@@ -9,6 +9,10 @@ import {
   FileQuestion,
   Hash,
   Loader2,
+  Minus,
+  Pencil,
+  Plus,
+  Save,
   Search,
   WrapText,
   X,
@@ -25,6 +29,7 @@ import { copyTextInGesture } from '../../clipboard'
 import { safeText } from '../text'
 import { t, useLang } from '../../i18n'
 import { useDialogFocus } from '../useDialogFocus'
+import { askConfirm } from '../ask'
 import { isMac } from '../keyprefs'
 import { formatBytes, PREVIEW_MAX_BYTES } from '../panels/preview'
 import { canRender, sandboxFor } from '../panels/render'
@@ -52,7 +57,9 @@ import { findMatches, firstMatchFrom, lineEndings, parseGoTo, splitLines, stepMa
 import { TextBody, type ScrollRequest } from './TextBody'
 import { ImageView } from './ImageView'
 import type { PdfFailure } from './PdfView'
-import { zoomAbout, percent, type Zoom } from './zoom'
+import { MAX_ZOOM, MIN_ZOOM, zoomAbout, percent, type Zoom } from './zoom'
+import { lineSeparator } from './editlangs'
+import type { EditorHandle } from './FileEditor'
 
 /**
  * The document renderer, fetched the first time a Markdown file is opened.
@@ -88,6 +95,16 @@ const FontSpecimen = lazy(() =>
  * pdf.js, fetched the first time a PDF is opened: a few hundred kilobytes,
  * and its worker another file again (bundle.test.ts).
  */
+/**
+ * The editor: CodeMirror, fetched the first time a file is edited, and never
+ * by somebody who only reads (bundle.test.ts).
+ */
+const FileEditor = lazy(() =>
+  import('./FileEditor').catch(() => ({
+    default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
+  })),
+)
+
 const PdfView = lazy(() =>
   import('./PdfView').catch(() => ({
     default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
@@ -121,7 +138,15 @@ const SqliteFooter = lazy<ComponentType<ComponentProps<typeof SqliteFooterT>>>((
 type View =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null; encoding: string | null }
+  | {
+      kind: 'text'
+      text: string
+      truncated: boolean
+      markup: Markup | null
+      encoding: string | null
+      etag: string | null
+      bom: boolean
+    }
   | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
   /** A medium, streamed from the inline route by the element that draws it. */
   | { kind: 'image' | 'pdf' | 'video' | 'audio'; url: string }
@@ -181,11 +206,25 @@ export function FileViewer(props: ViewerProps) {
   // The current file's key handler. The content registers it on every render,
   // so the dialog's one listener always reaches the file on screen.
   const keysRef = useRef<((e: React.KeyboardEvent) => void) | null>(null)
-  useDialogFocus(boxRef, props.onClose, { escape: false })
+  // Unsaved edits, as the editor last reported them. Everything that takes
+  // the file off screen -- closing, the backdrop, previous and next, a
+  // breadcrumb -- asks first while there are any.
+  const dirtyRef = useRef(false)
+  const guard =
+    <A extends unknown[]>(fn: (...a: A) => void) =>
+    async (...a: A) => {
+      if (dirtyRef.current && !(await discardEdits(props.entry.name))) return
+      dirtyRef.current = false
+      fn(...a)
+    }
+  const onClose = guard(props.onClose)
+  const onOpen = guard(props.onOpen)
+  const onReveal = guard(props.onReveal)
+  useDialogFocus(boxRef, onClose, { escape: false })
   return createPortal(
     <div
       className="vp-backdrop @container fixed inset-0 z-50 flex items-stretch justify-center bg-black/40"
-      onClick={props.onClose}
+      onClick={onClose}
       data-testid="preview-backdrop"
     >
       <div
@@ -203,11 +242,33 @@ export function FileViewer(props: ViewerProps) {
         // the dialog sat against the top edge.
         className="vp-panel-in flex h-full w-full max-w-5xl flex-col overflow-hidden border-hairline bg-surface shadow-xl outline-none @2xl:mx-4 @2xl:h-[88vh] @2xl:self-center @2xl:rounded-vp @2xl:border"
       >
-        <FileContent key={props.entry.path} {...props} boxRef={boxRef} keysRef={keysRef} />
+        <FileContent
+          key={props.entry.path}
+          {...props}
+          onClose={onClose}
+          onOpen={onOpen}
+          onReveal={onReveal}
+          onDirty={(d) => {
+            dirtyRef.current = d
+          }}
+          boxRef={boxRef}
+          keysRef={keysRef}
+        />
       </div>
     </div>,
     document.body,
   )
+}
+
+/** The question before unsaved edits are dropped. */
+function discardEdits(name: string): Promise<boolean> {
+  return askConfirm({
+    title: t('edit.discardTitle'),
+    body: t('edit.discardBody', { name }),
+    confirm: t('edit.discard'),
+    cancel: t('ask.cancel'),
+    destructive: true,
+  })
 }
 
 function FileContent({
@@ -218,9 +279,11 @@ function FileContent({
   onOpen,
   onReveal,
   onClose,
+  onDirty,
   boxRef,
   keysRef,
 }: ViewerProps & {
+  onDirty: (dirty: boolean) => void
   boxRef: React.RefObject<HTMLDivElement | null>
   keysRef: React.RefObject<((e: React.KeyboardEvent) => void) | null>
 }) {
@@ -249,6 +312,10 @@ function FileContent({
   const scrollSeq = useRef(0)
   const [copied, setCopied] = useState(false)
 
+  // Each read of the file, counted: the editor is made once per read, so a
+  // reload after a refused save is a new editor and a save is not.
+  const [reads, setReads] = useState(0)
+  const [reload, setReload] = useState(0)
   // The file the listings below were asked for, so an answer for the one
   // before is not drawn as this one's.
   const pathNow = useRef(entry.path)
@@ -263,6 +330,7 @@ function FileContent({
         if (cancelled) return
         if (p.kind === 'text' || p.kind === 'binary' || p.kind === 'tooBig' || p.kind === 'none') {
           setView(p)
+          setReads((n) => n + 1)
           return
         }
         // Read on the server, by the route of its own kind.
@@ -285,13 +353,64 @@ function FileContent({
     return () => {
       cancelled = true
     }
-  }, [projectId, entry.path])
+  }, [projectId, entry.path, reload])
+
+  // Editing (docs/file-preview.md, "Editing"). A text file the server sent
+  // whole, as UTF-8, with one kind of line ending: a cut file would be saved
+  // as its first two megabytes, a decoded one as UTF-8, and a mixed one with
+  // every line ending rewritten.
+  const [editing, setEditing] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const editorRef = useRef<EditorHandle | null>(null)
+  const markDirty = useCallback(
+    (d: boolean) => {
+      setDirty(d)
+      onDirty(d)
+    },
+    [onDirty],
+  )
+  const separator = view.kind === 'text' ? lineSeparator(view.text) : null
+  const noEdit =
+    view.kind !== 'text'
+      ? null
+      : view.truncated
+        ? t('edit.cut')
+        : view.encoding !== null
+          ? t('edit.encoding')
+          : separator === null
+            ? t('edit.mixed')
+            : null
+  const editable = view.kind === 'text' && view.etag !== null && noEdit === null
+  const startEditing = () => {
+    if (!editable) return
+    setFindOpen(false)
+    setGotoOpen(false)
+    setEditing(true)
+  }
+  const stopEditing = async () => {
+    if (dirty && !(await discardEdits(entry.name))) return
+    markDirty(false)
+    setEditing(false)
+    boxRef.current?.focus()
+  }
+  // A tab closed with edits in it is asked about by the browser's own
+  // question: the one thing a page may still do on the way out.
+  useEffect(() => {
+    if (!dirty) return
+    const ask = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', ask)
+    return () => window.removeEventListener('beforeunload', ask)
+  }, [dirty])
 
   // The image's zoom, here rather than in the image view so the keys reach it,
   // and its size once it has loaded, for the footer.
   const [zoom, setZoom] = useState<Zoom>('fit')
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null)
   const imageScale = useRef<() => number>(() => 1)
+  // A picture zooms about the middle of its view; a PDF does that itself.
+  const imageZoom = useRef<((z: Zoom) => void) | null>(null)
+  const zoomTo = (z: Zoom) => (imageZoom.current ?? setZoom)(z)
+  const zoomStep = (dir: 1 | -1) => zoomTo(zoomAbout(imageScale.current(), dir))
   // A PDF's pages: how many, the one at the top of the view, and a page to go
   // to. The zoom and its keys are the image's.
   const pdf = view.kind === 'pdf'
@@ -452,6 +571,18 @@ function FileContent({
     a.download = entry.name
     a.click()
   }
+  // Select-all is the body's text: the browser's own selects the whole page
+  // behind the dialog, header, footer and sidebar with it. A picture or a
+  // player has no text to select, and the one it would get is its help line.
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const selectBody = () => {
+    const el = bodyRef.current
+    const sel = window.getSelection()
+    if (!el || !sel) return
+    if (showsImage || view.kind === 'video' || view.kind === 'audio') sel.removeAllRanges()
+    else sel.selectAllChildren(el)
+  }
+
   const copyPath = () => {
     copyTextInGesture(entry.path, (ok) => {
       setCopied(ok)
@@ -506,10 +637,22 @@ function FileContent({
       // An image's, and only while one is drawn.
       case 'zoomIn':
       case 'zoomOut':
-        if (showsImage || pdf) setZoom(zoomAbout(imageScale.current(), a === 'zoomIn' ? 1 : -1))
+        if (showsImage || pdf) zoomStep(a === 'zoomIn' ? 1 : -1)
         return
       case 'zoomReset':
-        if (showsImage || pdf) setZoom('fit')
+        if (showsImage || pdf) zoomTo('fit')
+        return
+      case 'selectAll':
+        selectBody()
+        return
+      case 'edit':
+        startEditing()
+        return
+      case 'save':
+        editorRef.current?.save()
+        return
+      case 'stopEditing':
+        void stopEditing()
         return
       case 'prevPage':
         toPage(pageNow - 1)
@@ -534,10 +677,16 @@ function FileContent({
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // The editor's own keymap took it: its search panel's Escape, its Mod-s.
+    if (editing && e.defaultPrevented) return
     const target = e.target as HTMLElement
-    const inField = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
-    const a = viewerAction(e.nativeEvent, { inField, findOpen: findOpen || gotoOpen, mac: isMac(),
+    const inField = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable
+    const a = viewerAction(e.nativeEvent, {
+      inField,
+      findOpen: findOpen || gotoOpen,
+      mac: isMac(),
       pages: pdf && pageCount > 0,
+      editing,
       tables: view.kind === 'sqlite' && !source && view.db.tables.length > 1,
     })
     if (!a) return
@@ -625,6 +774,12 @@ function FileContent({
             <span className="min-w-0 truncate px-1 font-mono text-vp-base text-ink" title={safeText(entry.path)}>
               {safeText(entry.name)}
             </span>
+            {dirty && (
+              // A shape as well as a colour (red line 4): the dot is there or not.
+              <span data-testid="viewer-dirty" className="size-2 shrink-0 rounded-full bg-ink" title={t('edit.unsaved')}>
+                <span className="sr-only">{t('edit.unsaved')}</span>
+              </span>
+            )}
           </nav>
           <span className="tabular shrink-0 text-vp-xs text-ink-2">{formatBytes(entry.size)}</span>
           <button
@@ -661,7 +816,7 @@ function FileContent({
           >
             <ChevronRight size={14} />
           </button>
-          {rendered && (
+          {rendered && !editing && (
             <div data-testid="preview-mode" role="tablist" className="vp-segmented shrink-0">
               {([false, true] as const).map((wantSource) => {
                 // "Page" for a document or a page; highlighted code is not a page.
@@ -685,7 +840,7 @@ function FileContent({
             </div>
           )}
           <span className="flex-1" />
-          {(plain || structured || pdf) && (
+          {(plain || structured || pdf) && !editing && (
             <button
               type="button"
               onClick={() => (findOpen ? closeFind() : openFind())}
@@ -700,7 +855,7 @@ function FileContent({
           )}
           {/* Not for a binary: its rows are a fixed width and its offsets are
               its line numbers. */}
-          {plain && !binary && (
+          {plain && !binary && !editing && (
             <>
               <button
                 type="button"
@@ -725,6 +880,38 @@ function FileContent({
                 <span className="hidden @md:inline">{t('viewer.numbersShort')}</span>
               </button>
             </>
+          )}
+          {editing ? (
+            <>
+              <button
+                type="button"
+                onClick={() => editorRef.current?.save()}
+                data-testid="edit-save"
+                title={t('edit.save')}
+                className="vp-control text-vp-xs"
+              >
+                <Save size={12} />
+                <span className="hidden @md:inline">{t('edit.save')}</span>
+              </button>
+              <button type="button" onClick={() => void stopEditing()} data-testid="edit-done" className="vp-control text-vp-xs">
+                {t('edit.done')}
+              </button>
+            </>
+          ) : (
+            view.kind === 'text' &&
+            (editable || noEdit !== null) && (
+              <button
+                type="button"
+                onClick={startEditing}
+                disabled={!editable}
+                data-testid="viewer-edit"
+                title={noEdit ?? t('edit.edit')}
+                className="vp-control text-vp-xs disabled:opacity-40"
+              >
+                <Pencil size={12} />
+                <span className="hidden @md:inline">{t('edit.edit')}</span>
+              </button>
+            )
           )}
           <button
             type="button"
@@ -808,94 +995,121 @@ function FileContent({
         )}
       </header>
 
-      <Body
-        view={view}
-        entry={entry}
-        projectId={projectId}
-        scripts={scripts}
-        onScripts={setScripts}
-        plainBody={
-          <TextBody
-            lines={lines}
-            wrap={wrap}
-            numbers={numbers && !binary}
-            matches={found.matches}
-            current={current}
-            scrollTo={scrollTo}
-            onTopLine={onTopLine}
-            lang={colour}
-            diff={colour === 'diff'}
+      {/* What select-all selects: the body, and not the header or the footer.
+          `contents`, so the wrapper is no box of its own in the column. */}
+      {editing && view.kind === 'text' && view.etag !== null && separator !== null ? (
+        <Suspense fallback={null}>
+          <FileEditor
+            key={reads}
+            projectId={projectId}
+            path={entry.path}
+            name={entry.name}
+            text={view.text}
+            bom={view.bom}
+            etag={view.etag}
+            separator={separator}
+            handleRef={editorRef}
+            onDirty={markDirty}
+            onSaved={(text, etag) => setView((v) => (v.kind === 'text' ? { ...v, text, etag } : v))}
+            onReload={() => {
+              markDirty(false)
+              setReload((n) => n + 1)
+            }}
           />
-        }
-        plain={plain}
-        drawnBody={
-          notebook !== null && !source ? (
-            <Suspense fallback={null}>
-              <Notebook doc={notebook} projectId={projectId} path={entry.path} />
-            </Suspense>
-          ) : font !== null && !source ? (
-            <Suspense fallback={null}>
-              <FontSpecimen url={api.downloadURL(projectId, entry.path)} fileName={entry.name} format={font} />
-            </Suspense>
-          ) : null
-        }
-        pdfBody={
-          view.kind === 'pdf' ? (
-            <Suspense fallback={null}>
-              <PdfView
-                url={view.url}
-                zoom={zoom}
-                onZoom={setZoom}
-                scaleRef={imageScale}
-                query={findOpen ? query : ''}
+        </Suspense>
+      ) : (
+        <div ref={bodyRef} data-testid="viewer-body" className="contents">
+          <Body
+            view={view}
+            entry={entry}
+            projectId={projectId}
+            scripts={scripts}
+            onScripts={setScripts}
+            plainBody={
+              <TextBody
+                lines={lines}
+                wrap={wrap}
+                numbers={numbers && !binary}
+                matches={found.matches}
                 current={current}
-                onCount={onCount}
-                onPages={setPageCount}
-                onPage={setPageNow}
-                goTo={pageGoTo}
-                onFail={onPdfFail}
+                scrollTo={scrollTo}
+                onTopLine={onTopLine}
+                lang={colour}
+                diff={colour === 'diff'}
               />
-            </Suspense>
-          ) : null
-        }
-        imageBody={
-          showsImage ? (
-            <ImageView
-              url={api.inlineURL(projectId, entry.path)}
-              alt={t('preview.imageAlt', { name: safeText(entry.name) })}
-              zoom={zoom}
-              onZoom={setZoom}
-              onSize={(w, h) => setImageSize({ w, h })}
-              scaleRef={imageScale}
-            />
-          ) : null
-        }
-        structured={
-          !structured ? null : view.kind === 'archive' ? (
-            <Suspense fallback={null}>
-              <ArchiveView listing={view.listing} query={findOpen ? query : ''} current={current} onCount={onCount} />
-            </Suspense>
-          ) : view.kind === 'sqlite' ? (
-            <Suspense fallback={null}>
-              <SqliteView
-                db={view.db}
-                shown={view.shown}
-                pending={view.pending}
-                failed={view.failed}
-                onChoose={chooseTable}
-                query={findOpen ? query : ''}
-                current={current}
-                onCount={onCount}
-              />
-            </Suspense>
-          ) : json !== null ? (
-            <JsonTree value={json.value} query={findOpen ? query : ''} current={current} onCount={onCount} />
-          ) : (
-            <CsvTable rows={table!.rows} more={table!.more} query={findOpen ? query : ''} current={current} onCount={onCount} />
-          )
-        }
-        download={download}
-      />
+            }
+            plain={plain}
+            drawnBody={
+              notebook !== null && !source ? (
+                <Suspense fallback={null}>
+                  <Notebook doc={notebook} projectId={projectId} path={entry.path} />
+                </Suspense>
+              ) : font !== null && !source ? (
+                <Suspense fallback={null}>
+                  <FontSpecimen url={api.downloadURL(projectId, entry.path)} fileName={entry.name} format={font} />
+                </Suspense>
+              ) : null
+            }
+            pdfBody={
+              view.kind === 'pdf' ? (
+                <Suspense fallback={null}>
+                  <PdfView
+                    url={view.url}
+                    zoom={zoom}
+                    onZoom={setZoom}
+                    scaleRef={imageScale}
+                    query={findOpen ? query : ''}
+                    current={current}
+                    onCount={onCount}
+                    onPages={setPageCount}
+                    onPage={setPageNow}
+                    goTo={pageGoTo}
+                    onFail={onPdfFail}
+                  />
+                </Suspense>
+              ) : null
+            }
+            imageBody={
+              showsImage ? (
+                <ImageView
+                  url={api.inlineURL(projectId, entry.path)}
+                  alt={t('preview.imageAlt', { name: safeText(entry.name) })}
+                  zoom={zoom}
+                  onZoom={setZoom}
+                  onSize={(w, h) => setImageSize({ w, h })}
+                  scaleRef={imageScale}
+                  zoomRef={imageZoom}
+                />
+              ) : null
+            }
+            structured={
+              !structured ? null : view.kind === 'archive' ? (
+                <Suspense fallback={null}>
+                  <ArchiveView listing={view.listing} query={findOpen ? query : ''} current={current} onCount={onCount} />
+                </Suspense>
+              ) : view.kind === 'sqlite' ? (
+                <Suspense fallback={null}>
+                  <SqliteView
+                    db={view.db}
+                    shown={view.shown}
+                    pending={view.pending}
+                    failed={view.failed}
+                    onChoose={chooseTable}
+                    query={findOpen ? query : ''}
+                    current={current}
+                    onCount={onCount}
+                  />
+                </Suspense>
+              ) : json !== null ? (
+                <JsonTree value={json.value} query={findOpen ? query : ''} current={current} onCount={onCount} />
+              ) : (
+                <CsvTable rows={table!.rows} more={table!.more} query={findOpen ? query : ''} current={current} onCount={onCount} />
+              )
+            }
+            download={download}
+          />
+        </div>
+      )}
 
       {showsImage && view.kind === 'image' && (
         <footer
@@ -912,9 +1126,7 @@ function FileContent({
           )}
           <span className="tabular">{formatBytes(entry.size)}</span>
           <span aria-hidden="true">·</span>
-          <span className="tabular" data-testid="viewer-zoom">
-            {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
-          </span>
+          <ZoomControls zoom={zoom} onStep={zoomStep} onTo={zoomTo} />
           {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
         </footer>
       )}
@@ -933,9 +1145,7 @@ function FileContent({
           )}
           <span className="tabular">{formatBytes(entry.size)}</span>
           <span aria-hidden="true">·</span>
-          <span className="tabular" data-testid="viewer-zoom">
-            {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
-          </span>
+          <ZoomControls zoom={zoom} onStep={zoomStep} onTo={zoomTo} />
           {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
         </footer>
       )}
@@ -965,7 +1175,7 @@ function FileContent({
           {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
         </footer>
       )}
-      {view.kind === 'text' && (
+      {view.kind === 'text' && !editing && (
         <footer
           data-testid="viewer-footer"
           className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
@@ -1015,6 +1225,52 @@ function FileContent({
         </footer>
       )}
     </div>
+  )
+}
+
+/**
+ * The zoom in a footer, as buttons: the keys and Ctrl with the wheel are
+ * invisible, and a picture with nothing on screen to zoom it was a picture
+ * that could not be zoomed (「图片要能缩放」).
+ */
+function ZoomControls({ zoom, onStep, onTo }: { zoom: Zoom; onStep: (dir: 1 | -1) => void; onTo: (z: Zoom) => void }) {
+  return (
+    <span className="ml-auto flex items-center gap-1" data-testid="viewer-zoom-controls">
+      <button
+        type="button"
+        onClick={() => onStep(-1)}
+        disabled={zoom !== 'fit' && zoom <= MIN_ZOOM}
+        data-testid="viewer-zoom-out"
+        aria-label={t('viewer.zoomOut')}
+        title={t('viewer.zoomOut')}
+        className="vp-control disabled:opacity-40"
+      >
+        <Minus size={12} />
+      </button>
+      <span className="tabular min-w-[3.5em] text-center" data-testid="viewer-zoom" aria-live="polite">
+        {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
+      </span>
+      <button
+        type="button"
+        onClick={() => onStep(1)}
+        disabled={zoom !== 'fit' && zoom >= MAX_ZOOM}
+        data-testid="viewer-zoom-in"
+        aria-label={t('viewer.zoomIn')}
+        title={t('viewer.zoomIn')}
+        className="vp-control disabled:opacity-40"
+      >
+        <Plus size={12} />
+      </button>
+      {/* Says where it goes: 100% from fitted, fitted from anything else. */}
+      <button
+        type="button"
+        onClick={() => onTo(zoom === 'fit' ? 1 : 'fit')}
+        data-testid="viewer-zoom-toggle"
+        className="vp-control tabular text-vp-xs"
+      >
+        {zoom === 'fit' ? '100%' : t('viewer.fit')}
+      </button>
+    </span>
   )
 }
 

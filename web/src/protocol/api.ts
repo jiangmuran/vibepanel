@@ -1,4 +1,4 @@
-import { t, tKey } from '../i18n'
+import { t, tKey, type Key as I18nKey } from '../i18n'
 import { readArchiveListing, readDBListing, type ArchiveListing, type DBListing } from './listings'
 import type {
   ApiToken,
@@ -200,6 +200,18 @@ export type FilePreview =
       markup: Markup | null
       /** What the file was before the server decoded it; null for UTF-8. */
       encoding: string | null
+      /**
+       * The version a save sends back in If-Match: the server's ETag, sent
+       * only for a file it sent whole. Null for a cut file, which cannot be
+       * saved back as its first two megabytes.
+       */
+      etag: string | null
+      /**
+       * The file starts with a UTF-8 byte order mark. The text has none --
+       * decoding drops it -- so a save puts it back, or saving a file
+       * unchanged would change it.
+       */
+      bom: boolean
     }
   /** The first bytes of a file that is none of the others, for the hex view. */
   | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
@@ -232,6 +244,32 @@ function markupOf(header: string | null): Markup | null {
 const ENCODINGS = ['UTF-16 LE', 'UTF-16 BE', 'Latin-1'] as const
 function encodingOf(header: string | null): string | null {
   return ENCODINGS.find((e) => e === header) ?? null
+}
+
+/** A strong ETag of a SHA-256, the only shape the file route sends. */
+const ETAG = /^"[0-9a-f]{64}"$/
+function etagOf(header: string | null): string | null {
+  return header !== null && ETAG.test(header) ? header : null
+}
+
+/** saveFile's refusals, by status, as the viewer says them. */
+const SAVE_REFUSALS: Partial<Record<number, I18nKey>> = {
+  400: 'edit.notUtf8',
+  403: 'edit.outside',
+  404: 'edit.gone',
+  413: 'edit.tooBig',
+  415: 'edit.notText',
+}
+
+/**
+ * Thrown by saveFile when the file changed after it was opened: 412, the
+ * If-Match no longer what is on disk. The file is untouched.
+ */
+export class FileChangedError extends Error {
+  constructor() {
+    super(t('edit.changed'))
+    this.name = 'FileChangedError'
+  }
 }
 
 
@@ -1461,12 +1499,18 @@ export const api = {
     if (!res.ok) throw await failure(res)
     const kind = res.headers.get('X-Preview-Kind')
     if (kind === 'text') {
+      // Bytes rather than res.text(), which is the same decode, to see the
+      // byte order mark the decode drops.
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      const encoding = encodingOf(res.headers.get('X-Preview-Encoding'))
       return {
         kind: 'text',
-        text: await res.text(),
+        text: new TextDecoder().decode(bytes),
         truncated: res.headers.get('X-Preview-Truncated') === 'true',
         markup: markupOf(res.headers.get('X-Preview-Markup')),
-        encoding: encodingOf(res.headers.get('X-Preview-Encoding')),
+        encoding,
+        etag: etagOf(res.headers.get('ETag')),
+        bom: encoding === null && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf,
       }
     }
     if (kind === 'binary') {
@@ -1489,6 +1533,39 @@ export const api = {
     // too, and is better than a blank frame.
     await res.arrayBuffer()
     return { kind: 'none' }
+  },
+
+  /**
+   * Saves a text file over the version it was read at. `etag` is the one the
+   * preview sent; the answer is the new one. A 412 is FileChangedError, and
+   * every other refusal is an error saying what in the viewer's words: the
+   * server's sentences are English.
+   */
+  saveFile: async (projectId: string, path: string, text: string, etag: string): Promise<{ etag: string; size: number }> => {
+    let res: Response
+    try {
+      res = await fetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'If-Match': etag },
+        body: text,
+      })
+    } catch {
+      throw new NetworkError()
+    }
+    if (res.ok) {
+      const body = (await res.json()) as { etag?: unknown; size?: unknown }
+      const next = etagOf(typeof body.etag === 'string' ? body.etag : res.headers.get('ETag'))
+      if (!next) throw new Error(t('edit.failed', { status: String(res.status) }))
+      return { etag: next, size: typeof body.size === 'number' ? body.size : 0 }
+    }
+    if (res.status === 412) {
+      await res.arrayBuffer()
+      throw new FileChangedError()
+    }
+    const words = SAVE_REFUSALS[res.status]
+    if (!words) throw await failure(res)
+    await res.arrayBuffer()
+    throw new Error(t(words))
   },
 
   /**

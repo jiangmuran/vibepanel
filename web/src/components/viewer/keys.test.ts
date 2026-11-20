@@ -27,6 +27,7 @@ describe('viewerAction', () => {
       '0': 'zoomReset',
       d: 'download',
       c: 'copyPath',
+      e: 'edit',
       Escape: 'close',
     }
     for (const [k, want] of Object.entries(table)) expect(viewerAction(key(k), body), k).toBe(want)
@@ -40,6 +41,32 @@ describe('viewerAction', () => {
     // cursor movement in a text field.
     expect(viewerAction(key('f', { ctrlKey: true }), { ...body, mac: true })).toBeNull()
     expect(viewerAction(key('f', { metaKey: true }), body)).toBeNull()
+  })
+
+  it('selects the body with the command key and A, except in a field', () => {
+    expect(viewerAction(key('a', { ctrlKey: true }), body)).toBe('selectAll')
+    expect(viewerAction(key('A', { ctrlKey: true, shiftKey: true }), body)).toBe('selectAll')
+    expect(viewerAction(key('a', { metaKey: true }), { ...body, mac: true })).toBe('selectAll')
+    expect(viewerAction(key('a', { ctrlKey: true }), { ...body, mac: true })).toBeNull()
+    // The find box's own select-all.
+    expect(viewerAction(key('a', { ctrlKey: true }), finding)).toBeNull()
+    expect(viewerAction(key('a'), body)).toBeNull()
+  })
+
+  it('leaves every key to the editor but saving and Escape', () => {
+    const editing: KeyContext = { ...body, editing: true }
+    expect(viewerAction(key('s', { ctrlKey: true }), editing)).toBe('save')
+    expect(viewerAction(key('s', { metaKey: true }), { ...editing, mac: true })).toBe('save')
+    expect(viewerAction(key('Escape'), editing)).toBe('stopEditing')
+    expect(viewerAction(key('Escape'), { ...editing, inField: true })).toBe('stopEditing')
+    for (const k of ['e', 'w', 'n', 's', 'd', 'c', '[', ']', '+', '-', '0', 'Enter']) {
+      expect(viewerAction(key(k), editing), k).toBeNull()
+    }
+    for (const k of ['f', 'g', 'a', 'z']) {
+      expect(viewerAction(key(k, { ctrlKey: true }), editing), `Ctrl+${k}`).toBeNull()
+    }
+    // Not editing, Ctrl+S is nobody's here: the browser's.
+    expect(viewerAction(key('s', { ctrlKey: true }), body)).toBeNull()
   })
 
   it('closes find before it closes the viewer', () => {
