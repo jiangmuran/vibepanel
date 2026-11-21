@@ -197,7 +197,7 @@ function Figure({
       <div
         data-testid="spend-figure"
         data-rank={rank}
-        className={`tabular truncate ${hero ? 'text-vp-lg text-ink' : 'text-vp-md text-ink'}`}
+        className={`tabular truncate font-semibold tracking-tight ${hero ? 'text-vp-lg text-ink' : 'text-vp-md text-ink'}`}
         title={value === null ? undefined : `${exact(value)} tokens`}
       >
         {value === null ? '—' : compact(value)}
@@ -251,13 +251,13 @@ function ToolBar({ tools }: { tools: ToolShare[] }) {
           bar keeps enough width to be a proportion rather than a decoration;
           the legend takes what is left and wraps under it only when there are
           enough agents that it must. */}
-      <div className="vp-bar flex h-2.5 min-w-16 flex-1">
+      <div className="vp-bar flex h-1.5 min-w-16 flex-1 gap-0.5">
         {tools.map((x, i) => (
           <span
             key={x.tool}
             data-testid="token-tool-seg"
             title={toolTitle(x)}
-            className="overflow-hidden"
+            className="overflow-hidden rounded-full"
             style={{
               width: `${x.share * 100}%`,
               background: TOOL_TONES[i % TOOL_TONES.length],

@@ -140,7 +140,7 @@ export function Empty({
 
 /** Every field in this page's forms, so they are one width and one shape. */
 export const INPUT =
-  'w-full min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
+  'w-full min-w-0 rounded-md border border-hairline-strong bg-bg px-2.5 py-1.5 text-vp-base text-ink outline-none transition-colors duration-100 ease-vp focus:border-accent'
 
 /** A control with its name above it, filling one cell of the grid. */
 export function Field({
@@ -154,7 +154,7 @@ export function Field({
 }) {
   return (
     <div className="min-w-0">
-      <label htmlFor={htmlFor} className="mb-1 block text-vp-sm text-ink-3">
+      <label htmlFor={htmlFor} className="mb-1 block text-vp-sm text-ink-2">
         {label}
       </label>
       {children}

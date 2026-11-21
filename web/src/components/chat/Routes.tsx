@@ -240,8 +240,8 @@ function Toggle({ list, value, label, onChange }: { list: string[]; value: strin
   const on = list.includes(value)
   return (
     <label
-      className={`vp-press flex cursor-pointer items-center gap-1 rounded-vp border px-2 py-1 text-vp-sm has-focus-visible:ring-2 has-focus-visible:ring-accent ${on ? 'border-accent' : 'border-hairline text-ink-2'}`}
-      style={on ? { background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' } : undefined}
+      className={`vp-press flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-vp-sm has-focus-visible:ring-2 has-focus-visible:ring-accent ${on ? 'border-transparent' : 'border-hairline-strong text-ink-2 hover:text-ink'}`}
+      style={on ? { background: 'var(--ui-accent-fill)', color: 'var(--ui-accent-fill-ink)' } : undefined}
     >
       <input
         type="checkbox"

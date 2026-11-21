@@ -158,7 +158,7 @@ function AskPanel({ request }: { request: AskRequest }) {
             type="button"
             onClick={() => answerAsk(null)}
             data-testid="confirm-no"
-            className="vp-press flex-[2] rounded-vp border border-hairline px-3 py-2 text-vp-md text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+            className="vp-outline h-8 flex-[2] text-vp-base"
           >
             {safeText(request.cancel)}
           </button>
@@ -166,11 +166,11 @@ function AskPanel({ request }: { request: AskRequest }) {
             type="button"
             onClick={() => answerAsk(value)}
             data-testid="confirm-yes"
-            className="vp-press flex-1 rounded-vp px-3 py-2 text-vp-md"
+            className="vp-primary h-8 flex-1 text-vp-base"
             style={
               request.destructive
-                ? { background: 'var(--vp-state-crashed)', color: '#fff' }
-                : { background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }
+                ? { background: '#c92a2a', color: '#ffffff' }
+                : undefined
             }
           >
             {safeText(request.confirm)}

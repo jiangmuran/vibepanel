@@ -49,9 +49,55 @@ function certTone(unixSeconds: number): 'normal' | 'warn' | 'bad' {
  * conditional and the update block is not — one of them is a view of the
  * server and the other is a button.
  */
-export function PanelGroup({ info }: { info: SettingsInfo | null }) {
+import type { ThemeChoice } from '../theme'
+import { BUILT_IN_THEMES } from '../theme'
+
+function swatchBg(c: 'system' | (typeof BUILT_IN_THEMES)[number]): string {
+  if (c === 'light') return '#f4f5f7'
+  if (c === 'dark') return '#131417'
+  if (c === 'porcelain') return '#f3f0ea'
+  if (c === 'wujin') return '#191816'
+  return ['linear-gradient(135deg,', '#f4f5f7', '50%,', '#131417', '50%)'].join(' ')
+}
+
+export function PanelGroup({
+  info,
+  theme,
+  onThemeChange,
+}: {
+  info: SettingsInfo | null
+  theme?: ThemeChoice
+  onThemeChange?: (next: ThemeChoice) => void
+}) {
+  const choices = ['system', ...BUILT_IN_THEMES] as const
   return (
     <>
+      {theme !== undefined && onThemeChange && (
+        <div className="mb-6">
+          <h3 className="mb-2 text-vp-base font-semibold tracking-tight text-ink">{t('app.theme')}</h3>
+          <div className="vp-segmented w-fit max-w-full" role="radiogroup" aria-label={t('app.theme')} data-testid="settings-theme-picker">
+            {choices.map((c) => (
+              <button
+                key={c}
+                type="button"
+                role="radio"
+                aria-checked={theme === c}
+                data-active={theme === c ? 'true' : 'false'}
+                data-testid={`settings-theme-${c}`}
+                onClick={() => onThemeChange(c)}
+                className="vp-tab shrink-0 gap-1.5 px-2.5 text-vp-sm whitespace-nowrap"
+              >
+                <span
+                  aria-hidden="true"
+                  className="h-2.5 w-2.5 shrink-0 rounded-full border border-hairline-strong"
+                  style={{ background: swatchBg(c) }}
+                />
+                {t(`theme.${c}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <Section id="update" title={t('upd.title')}>
         <UpdateSection />
       </Section>
@@ -74,8 +120,7 @@ export function PanelGroup({ info }: { info: SettingsInfo | null }) {
             {(info.tmuxConfigStale || info.tmuxConfigUnknown) && (
               <div
                 data-testid="tmux-config-stale"
-                className="border-t border-hairline py-2 text-vp-base leading-relaxed"
-                style={{ color: 'var(--vp-state-waiting)' }}
+                className="border-t border-hairline py-2 text-vp-base leading-relaxed text-warn-ink"
               >
                 <span className="mr-1 text-ink-2">{t('set.tmuxConfigLabel')}</span>
                 {info.tmuxConfigStale ? t('set.tmuxConfigStale') : t('set.tmuxConfigUnknown')}

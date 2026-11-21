@@ -56,8 +56,8 @@ export function ArchiveSettings() {
           ))}
         </div>
       </fieldset>
-      {saved && <p className="mt-2 text-vp-sm text-state-done">{t('paste.saved')}</p>}
-      {err && <p className="mt-2 text-vp-sm text-state-crashed">{err}</p>}
+      {saved && <p className="mt-2 text-vp-sm text-done-ink">{t('paste.saved')}</p>}
+      {err && <p className="mt-2 text-vp-sm text-danger-ink">{err}</p>}
     </Section>
   )
 }

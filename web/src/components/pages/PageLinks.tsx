@@ -275,8 +275,7 @@ export function PageLinks({
                 type="button"
                 data-testid="share-dismiss"
                 onClick={() => setFresh(null)}
-                className="vp-press shrink-0 rounded-vp px-2.5 py-1.5 text-vp-base"
-                style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+                className="vp-primary shrink-0 text-vp-sm"
               >
                 {t('tok.done')}
               </button>
@@ -654,7 +653,7 @@ function NewLink({
         <button
           type="button"
           onClick={onCancel}
-          className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+          className="vp-outline text-vp-sm"
         >
           {t('share.cancel')}
         </button>
@@ -663,8 +662,7 @@ function NewLink({
           onClick={() => void create()}
           disabled={busy}
           data-testid="share-create"
-          className="vp-press rounded-vp px-3 py-1.5 text-vp-base disabled:opacity-40"
-          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          className="vp-primary text-vp-sm"
         >
           {t('share.create')}
         </button>

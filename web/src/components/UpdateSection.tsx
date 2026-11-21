@@ -321,8 +321,7 @@ export function UpdateSection() {
                 onClick={() => void apply()}
                 disabled={busy !== ''}
                 data-testid="update-apply"
-                className="vp-press flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
-                style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+                className="vp-primary text-vp-sm"
               >
                 <Download size={13} />
                 {job?.stage === 'failed' ? t('upd.retry') : t('upd.apply')}
@@ -348,8 +347,7 @@ export function UpdateSection() {
                 onClick={() => void apply()}
                 disabled={busy !== ''}
                 data-testid="update-elevate-apply"
-                className="vp-press flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
-                style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+                className="vp-primary text-vp-sm"
               >
                 <Download size={13} />
                 {t('upd.apply')}
@@ -386,8 +384,7 @@ export function UpdateSection() {
                 type="submit"
                 disabled={busy !== '' || secret === ''}
                 data-testid="update-elevate-apply"
-                className="vp-press flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
-                style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+                className="vp-primary text-vp-sm"
               >
                 <Download size={13} />
                 {t('upd.apply')}

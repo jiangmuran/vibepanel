@@ -360,7 +360,7 @@ function Notifications({ onOpenSettings }: StepProps) {
       <P>{t('tour.notify1')}</P>
       <P>{t('tour.notify2')}</P>
       {perm === 'granted' ? (
-        <p className="mt-3 flex items-center gap-2 text-vp-base text-state-done">
+        <p className="mt-3 flex items-center gap-2 text-vp-base text-done-ink">
           <Check size={14} /> {t('tour.on')}
         </p>
       ) : (
@@ -369,8 +369,7 @@ function Notifications({ onOpenSettings }: StepProps) {
           data-testid="tour-notify-on"
           disabled={typeof Notification === 'undefined'}
           onClick={() => void requestNotifyPermission().then(setPerm)}
-          className="vp-press mt-3 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
-          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          className="vp-primary mt-3 text-vp-sm"
         >
           {t('tour.turnOn')}
         </button>

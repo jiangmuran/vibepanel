@@ -219,16 +219,12 @@ export function Sharing({
             <FileUp size={13} />
             {t('page.import')}
           </button>
-          {/* Drawn whether or not the form is open. It used to disappear into
-              the form, which left a hole beside Import and a second button
-              with the same word two lines below it. */}
           <button
               type="button"
               data-testid="page-new"
               disabled={creating}
               onClick={() => setCreating(true)}
-              className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-40"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              className="vp-primary text-vp-sm"
             >
               <Plus size={13} />
               {t('page.create')}
@@ -236,22 +232,15 @@ export function Sharing({
         </span>
       </header>
 
-      {/* The two settings that are about sharing rather than about any one
-          page, in one quiet strip. They were two loose lines between the
-          heading and the list, which read as its first two rows. */}
-      {/* Only once something is in it. Both halves fetch themselves and both
-          render nothing until they land, so an unconditional box is an empty
-          bordered strip on every first paint -- and permanently, if either
-          request fails. */}
       {(catalogue?.pagesRootInfo || sharing) && (
-        <div className="mb-4 flex flex-col gap-2 rounded-vp border border-hairline bg-surface px-3 py-2 @3xl:flex-row @3xl:items-center @3xl:gap-4">
+        <div className="mb-4 flex flex-col gap-2 rounded-vp border border-hairline bg-surface px-3 py-2 @2xl:flex-row @2xl:items-center @2xl:gap-4">
           <PagesRootLine
             root={catalogue?.pagesRootInfo ?? null}
             onChanged={(next) => setCatalogue((c) => (c ? { ...c, pagesRoot: next.dir, pagesRootInfo: next } : c))}
             onError={fail}
           />
           {catalogue?.pagesRootInfo && sharing && (
-            <span className="hidden h-4 w-px shrink-0 bg-hairline @3xl:block" aria-hidden="true" />
+            <span className="hidden h-4 w-px shrink-0 bg-hairline @2xl:block" aria-hidden="true" />
           )}
           <VisitorWritesLine settings={sharing} onChanged={setSharing} onError={fail} />
         </div>
@@ -398,8 +387,7 @@ function PagesRootLine({
             disabled={busy}
             data-testid="pages-root-save"
             onClick={() => void save(value.trim())}
-            className="vp-press rounded-vp px-2.5 py-1 text-vp-base disabled:opacity-40"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary text-vp-sm"
           >
             {t('page.rootSave')}
           </button>
@@ -409,7 +397,7 @@ function PagesRootLine({
               disabled={busy}
               data-testid="pages-root-reset"
               onClick={() => void save('')}
-              className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2 hover:text-ink disabled:opacity-40"
+              className="vp-outline text-vp-sm"
             >
               {t('page.rootReset')}
             </button>
@@ -417,7 +405,7 @@ function PagesRootLine({
           <button
             type="button"
             onClick={() => setEditing(false)}
-            className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2 hover:text-ink"
+            className="vp-outline text-vp-sm"
           >
             {t('share.cancel')}
           </button>
@@ -577,7 +565,7 @@ function NewPage({
           {t('page.startAgent')}
         </label>
         <span className="flex items-center gap-2">
-          <button type="button" onClick={onCancel} className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2">
+          <button type="button" onClick={onCancel} className="vp-outline text-vp-sm">
             {t('share.cancel')}
           </button>
           <button
@@ -585,8 +573,7 @@ function NewPage({
             data-testid="page-create"
             disabled={busy || name.trim() === '' || (template === '' && dir.trim() === '')}
             onClick={() => void create()}
-            className="vp-press rounded-vp px-3 py-1.5 text-vp-base disabled:opacity-40"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary text-vp-sm"
           >
             {t('page.create')}
           </button>

@@ -47,132 +47,104 @@
      that iOS rubber-bands into, all of which had the same split. */
   color-scheme: light;
 
-  /* Surfaces, back to front — and the terminal is the front.
-     
-     Every one of these used to be #ffffff, so a three-column layout painted
-     the sidebar, the terminal and the side panel in one colour and left the
-     hairlines to carry the whole structure. They cannot: a screenshot of it
-     reads as an unstyled page. The chrome recedes and the terminal is a well
-     cut into it, which is the arrangement every editor uses because it is the
-     one that tells you where to look. */
-  --vp-bg: #e8eaed;
-  --vp-surface: #f7f8fa;
-  --vp-surface-2: #eceef2;
-  --vp-elevated: rgb(247 248 250 / 0.80);
+  /* Surfaces, back to front — 石墨·浅 (Graphite Light).
+     Cool mineral stone frame (--vp-bg) recedes behind a crisp white terminal
+     canvas and clean single-pixel hairlines. */
+  --vp-bg: #f4f5f7;
+  --vp-surface: #ffffff;
+  --vp-surface-2: #e9ecf0;
+  --vp-elevated: rgb(244 245 247 / 0.88);
   --vp-terminal-bg: #ffffff;
 
-  /* Hairlines. Apple's separators are translucent so they sit correctly on
-     whatever is behind them rather than assuming a flat backdrop. */
-  --vp-hairline: rgb(0 0 0 / 0.10);
-  --vp-hairline-strong: rgb(0 0 0 / 0.18);
+  --vp-hairline: rgb(15 23 42 / 0.08);
+  --vp-hairline-strong: rgb(15 23 42 / 0.15);
 
-  /* Text, most to least prominent. */
-  --vp-ink: #1d1d1f;
-  /* Alpha values verified against the frosted surface they actually sit on,
-     not against a flat white assumption, and against the darkest of the three
-     surfaces they are drawn on (--vp-bg). Secondary and tertiary both carry
-     real content -- hints, timestamps, counts -- so both meet AA at 4.5:1.
-     Tertiary used to be "decorative only" at 3:1 and was then used about 180
-     times for text somebody has to read; styles contrast.test.ts computes the
-     ratios from these values so they cannot slide back. */
-  --vp-ink-2: rgb(60 60 67 / 0.86); /* 6.2:1 on the darkest surface */
-  --vp-ink-3: rgb(60 60 67 / 0.75); /* 4.5:1 on the darkest surface */
+  /* Text, most to least prominent. All three steps clear WCAG AA 4.5:1 across
+     all three surfaces (--vp-bg, --vp-surface, --vp-surface-2), verified in
+     contrast.test.ts. */
+  --vp-ink: #141518;
+  --vp-ink-2: #454b55;
+  --vp-ink-3: #5f6673;
 
-  --vp-accent: #0062cc;
+  --vp-accent: #364fc7;
   --vp-accent-ink: #ffffff;
-  --vp-selection: rgb(0 122 255 / 0.20);
+  --vp-selection: rgb(54 79 199 / 0.16);
   /* Find in the file viewer. The current match is also outlined
      (viewer/TextBody.tsx), so the two shades are never the only difference. */
   --vp-find: rgb(255 204 0 / 0.35);
-  --vp-find-current: rgb(255 149 0 / 0.55);
+  --vp-find-current: rgb(255 149 0 / 0.50);
   --vp-find-ring: #b25000;
   /* Code, by token (viewer/tokens.ts). Every one is at least 4.5:1 on all
      three surfaces in its theme; contrast.test.ts computes it. */
-  --vp-tok-comment: #555c68;
-  --vp-tok-keyword: #94228a;
-  --vp-tok-string: #28690b;
-  --vp-tok-number: #954600;
-  --vp-tok-function: #1f56a3;
-  --vp-tok-type: #8a5000;
-  --vp-tok-property: #00668c;
-  --vp-tok-tag: #b0232a;
-  --vp-tok-regex: #a2321a;
-  --vp-tok-variable: #71399c;
-  --vp-tok-punct: #474e5b;
-  --vp-tok-inserted: #1b6b2c;
-  --vp-tok-deleted: #a82329;
+  --vp-tok-comment: #525965;
+  --vp-tok-keyword: #8c2082;
+  --vp-tok-string: #23650a;
+  --vp-tok-number: #8f4300;
+  --vp-tok-function: #1d509a;
+  --vp-tok-type: #824b00;
+  --vp-tok-property: #006084;
+  --vp-tok-tag: #a82027;
+  --vp-tok-regex: #9a2e18;
+  --vp-tok-variable: #6b3594;
+  --vp-tok-punct: #434a56;
+  --vp-tok-inserted: #186628;
+  --vp-tok-deleted: #a22026;
 
   /* Session states. Never the only signal — each is paired with a distinct
      shape in the UI, because colour alone fails for colour-blind users and in
      a dark room at 2am, which is exactly when this panel gets read. */
-  --vp-state-waiting: #ff9500;
-  --vp-state-working: #007aff;
-  --vp-state-done: #34c759;
-  --vp-state-dead: rgb(60 60 67 / 0.40);
-  --vp-state-crashed: #ff3b30;
-  /* The same alarm, dark enough to be read as words.
-     #ff3b30 is the state dot's red, and a dot is a shape as well as a colour so
-     it never had to pass a contrast bar. Used as *text* on the light surface it
-     measures 3.34:1 against a required 4.5 -- render-check found it the day the
-     repo line started writing the word "conflict" in it. */
-  --vp-danger-ink: #c9251d;
+  --vp-state-waiting: #a65000;
+  --vp-state-working: #4f46e5;
+  --vp-state-done: #087f5b;
+  --vp-state-dead: rgb(15 23 42 / 0.42);
+  --vp-state-crashed: #c22525;
+  --vp-danger-ink: #c22525;
 
-  /* Terminal palette, light. Tuned for contrast on white rather than lifted
-     straight from a dark theme — inverted dark palettes wash out badly. */
-  --vp-term-fg: #1d1d1f;
-  --vp-term-cursor: #007aff;
-  --vp-term-black: #3a3a3c;
-  --vp-term-red: #d70015;
-  --vp-term-green: #0f7b32;
-  --vp-term-yellow: #a05a00;
-  --vp-term-blue: #0040dd;
-  --vp-term-magenta: #a316b8;
-  --vp-term-cyan: #00707c;
-  --vp-term-white: #8e8e93;
-  --vp-term-bright-black: #6c6c70;
-  --vp-term-bright-red: #ff3b30;
-  --vp-term-bright-green: #34c759;
-  --vp-term-bright-yellow: #c77700;
-  --vp-term-bright-blue: #007aff;
-  --vp-term-bright-magenta: #af52de;
-  --vp-term-bright-cyan: #00a0b0;
-  --vp-term-bright-white: #1d1d1f;
+  /* Terminal palette, Graphite Light. */
+  --vp-term-fg: #18191c;
+  --vp-term-cursor: #364fc7;
+  --vp-term-black: #34373d;
+  --vp-term-red: #c92a2a;
+  --vp-term-green: #097f5b;
+  --vp-term-yellow: #9c5400;
+  --vp-term-blue: #2b4acb;
+  --vp-term-magenta: #9322a8;
+  --vp-term-cyan: #0b7285;
+  --vp-term-white: #868e96;
+  --vp-term-bright-black: #656b75;
+  --vp-term-bright-red: #e03131;
+  --vp-term-bright-green: #0ca678;
+  --vp-term-bright-yellow: #b45309;
+  --vp-term-bright-blue: #4263eb;
+  --vp-term-bright-magenta: #ae3ec9;
+  --vp-term-bright-cyan: #1098ad;
+  --vp-term-bright-white: #141518;
 
-  /* iOS spring easing. Everything that moves uses this one curve so the whole
-     interface feels like a single object. */
-  --vp-ease: cubic-bezier(0.32, 0.72, 0, 1);
-  --vp-radius: 12px;
-  --vp-radius-lg: 16px;
+  /* Fast-out deceleration with zero overshoot: responsive and calm. */
+  --vp-ease: cubic-bezier(0.2, 0, 0, 1);
+  --vp-radius: 8px;
+  --vp-radius-lg: 12px;
 
-  /* The chrome's rhythm: one control height, one control radius, one strip
-     height, in one place.
-
-     8px rather than the 6px of `rounded-md`, because a control sits inside a
-     12px track with 2px of padding around it and 12 − 2 is 8. Concentric
-     radii are the difference between a pill in a groove and two rounded
-     rectangles that happen to overlap; at this size it is not subtle.
-
-     28 and 40 are chosen together: the strip is the control plus six pixels of
-     air top and bottom, which is the same air the terminal below it gets from
-     its own inset. */
   --vp-control-h: 1.75rem;
-  --vp-radius-control: 8px;
-  --vp-chrome-h: 2.5rem;
+  --vp-radius-control: 6px;
+  --vp-chrome-h: 2.375rem;
 
-  /* Depth, for the themes that have any. Light and dark are flat: the zero
-     shadows here are what they get, so `.vp-well` and `.vp-row-selected`
-     below paint exactly what the classes they replaced did.
+  /* Internal UI & elevation tokens (outside `--vp-*` so the plugin v1 contract
+     in internal/plugins BaseTokens stays minimal and stable).
+     Separates primary button fills from text/sparkline accents so dark mode
+     never resorts to neon cyan pills with black ink. */
+  --ui-accent-fill: #18191c;
+  --ui-accent-fill-hover: #2c2e35;
+  --ui-accent-fill-ink: #ffffff;
+  --ui-warn-ink: #9c4a00;
+  --ui-done-ink: #067252;
+  --ui-badge-ink: #ffffff;
+  --ui-switch-on: #364fc7;
+  --ui-row-bar: #18191c;
 
-     A zero shadow and not `none`, because `.vp-well` puts two of these in one
-     `box-shadow` list and `none` is not valid as an item of a list: the whole
-     declaration is dropped, ring and all.
-
-     Not `--vp-*` on purpose. That prefix is the plugin contract
-     (internal/plugins BaseTokens, contract-v1.txt): a name there is a name a
-     stranger's theme may set for good. These are one release old. */
-  --depth-raised: 0 0 0 0 transparent;
+  --depth-raised: 0 1px 2px rgb(15 23 42 / 0.05), 0 0 0 1px rgb(15 23 42 / 0.05);
   --depth-panel: 0 0 0 0 transparent;
-  --depth-selected: var(--vp-surface-2);
+  --depth-selected: #ffffff;
   --depth-waiting-ring: 0px;
 }
 
@@ -180,286 +152,331 @@
   :root:not([data-theme='light']) {
     color-scheme: dark;
 
-    /* See the light block: the chrome recedes, the terminal is the well.
-       These were #000000 chrome over a #000000 terminal, which is the same
-       flatness one shade down. */
-    --vp-bg: #0d0d10;
-    --vp-surface: #17171b;
-    --vp-surface-2: #222228;
-    --vp-elevated: rgb(23 23 27 / 0.78);
-    --vp-terminal-bg: #0a0a0d;
+    /* 石墨·深 (Graphite Dark): neutral deep graphite frame over a recessed
+       #0d0e11 terminal sheet, monochrome soft-white primary actions. */
+    --vp-bg: #131417;
+    --vp-surface: #181a1f;
+    --vp-surface-2: #21242c;
+    --vp-elevated: rgb(19 20 23 / 0.88);
+    --vp-terminal-bg: #0d0e11;
 
-    --vp-hairline: rgb(255 255 255 / 0.12);
-    --vp-hairline-strong: rgb(255 255 255 / 0.20);
+    --vp-hairline: rgb(255 255 255 / 0.08);
+    --vp-hairline-strong: rgb(255 255 255 / 0.15);
 
-    --vp-ink: #f5f5f7;
-    --vp-ink-2: rgb(235 235 245 / 0.65); /* 6.9:1 */
-    --vp-ink-3: rgb(235 235 245 / 0.53); /* 4.8:1 */
+    --vp-ink: #eceef2;
+    --vp-ink-2: #a5abb8;
+    --vp-ink-3: #8a91a0;
 
-    --vp-accent: #2e90ff;
-    --vp-accent-ink: #000000;
-    --vp-selection: rgb(10 132 255 / 0.30);
+    --vp-accent: #7c96ff;
+    --vp-accent-ink: #0d0e11;
+    --vp-selection: rgb(99 132 255 / 0.26);
     --vp-find: rgb(255 214 10 / 0.22);
-    --vp-find-current: rgb(255 159 10 / 0.45);
+    --vp-find-current: rgb(255 159 10 / 0.44);
     --vp-find-ring: #ffd60a;
-    --vp-tok-comment: #8d95a3;
-    --vp-tok-keyword: #e08ad6;
-    --vp-tok-string: #8fd16a;
-    --vp-tok-number: #f2a65e;
-    --vp-tok-function: #79b8ff;
-    --vp-tok-type: #e8c06b;
-    --vp-tok-property: #5ccfe6;
-    --vp-tok-tag: #ff8580;
-    --vp-tok-regex: #ff9e7a;
-    --vp-tok-variable: #c4a3f0;
-    --vp-tok-punct: #a8afbd;
-    --vp-tok-inserted: #73d98a;
-    --vp-tok-deleted: #ff8a85;
+    --vp-tok-comment: #8e96a5;
+    --vp-tok-keyword: #e28fd9;
+    --vp-tok-string: #8fd46e;
+    --vp-tok-number: #f2a863;
+    --vp-tok-function: #7ebbff;
+    --vp-tok-type: #e9c370;
+    --vp-tok-property: #62d2e8;
+    --vp-tok-tag: #ff8a85;
+    --vp-tok-regex: #ffa280;
+    --vp-tok-variable: #c7a7f2;
+    --vp-tok-punct: #abb2c0;
+    --vp-tok-inserted: #75dc8c;
+    --vp-tok-deleted: #ff8e89;
 
-    --vp-state-waiting: #ff9f0a;
-    --vp-state-working: #0a84ff;
-    --vp-state-done: #30d158;
-    --vp-state-dead: rgb(235 235 245 / 0.30);
-    --vp-state-crashed: #ff453a;
-    --vp-danger-ink: #ff6961;
+    --vp-state-waiting: #f59f00;
+    --vp-state-working: #6384ff;
+    --vp-state-done: #20c997;
+    --vp-state-dead: rgb(236 238 242 / 0.36);
+    --vp-state-crashed: #ff7b7b;
+    --vp-danger-ink: #ff7b7b;
 
-    --vp-term-fg: #f5f5f7;
-    --vp-term-cursor: #0a84ff;
-    --vp-term-black: #48484a;
-    --vp-term-red: #ff453a;
-    --vp-term-green: #30d158;
-    --vp-term-yellow: #ffd60a;
-    --vp-term-blue: #0a84ff;
-    --vp-term-magenta: #bf5af2;
-    --vp-term-cyan: #40c8e0;
-    --vp-term-white: #aeaeb2;
-    --vp-term-bright-black: #636366;
-    --vp-term-bright-red: #ff6961;
-    --vp-term-bright-green: #64d97e;
+    --vp-term-fg: #e6e8ec;
+    --vp-term-cursor: #7c96ff;
+    --vp-term-black: #454954;
+    --vp-term-red: #ff6b6b;
+    --vp-term-green: #38d9a9;
+    --vp-term-yellow: #fcc419;
+    --vp-term-blue: #748ffc;
+    --vp-term-magenta: #cc5de8;
+    --vp-term-cyan: #3bc9db;
+    --vp-term-white: #adb5bd;
+    --vp-term-bright-black: #6c7382;
+    --vp-term-bright-red: #ff8787;
+    --vp-term-bright-green: #63e6be;
     --vp-term-bright-yellow: #ffe066;
-    --vp-term-bright-blue: #64b5ff;
-    --vp-term-bright-magenta: #da8fff;
-    --vp-term-bright-cyan: #7ce0f0;
+    --vp-term-bright-blue: #91a7ff;
+    --vp-term-bright-magenta: #e599f7;
+    --vp-term-bright-cyan: #66d9e8;
     --vp-term-bright-white: #ffffff;
+
+    --ui-accent-fill: #eceef2;
+    --ui-accent-fill-hover: #ffffff;
+    --ui-accent-fill-ink: #111215;
+    --ui-warn-ink: #fcc419;
+    --ui-done-ink: #38d9a9;
+    --ui-badge-ink: #141518;
+    --ui-switch-on: #4c6ef5;
+    --ui-row-bar: #eceef2;
+
+    --depth-raised: inset 0 1px 0 rgb(255 255 255 / 0.04);
+    --depth-panel: 0 0 0 0 transparent;
+    --depth-selected: #20232b;
+    --depth-waiting-ring: 0px;
   }
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --vp-bg: #0d0d10;
-  --vp-surface: #17171b;
-  --vp-surface-2: #222228;
-  --vp-elevated: rgb(23 23 27 / 0.78);
-  --vp-terminal-bg: #0a0a0d;
+  --vp-bg: #131417;
+  --vp-surface: #181a1f;
+  --vp-surface-2: #21242c;
+  --vp-elevated: rgb(19 20 23 / 0.88);
+  --vp-terminal-bg: #0d0e11;
 
-  --vp-hairline: rgb(255 255 255 / 0.12);
-  --vp-hairline-strong: rgb(255 255 255 / 0.20);
+  --vp-hairline: rgb(255 255 255 / 0.08);
+  --vp-hairline-strong: rgb(255 255 255 / 0.15);
 
-  --vp-ink: #f5f5f7;
-  --vp-ink-2: rgb(235 235 245 / 0.65); /* 6.9:1 */
-  --vp-ink-3: rgb(235 235 245 / 0.53); /* 4.8:1 */
+  --vp-ink: #eceef2;
+  --vp-ink-2: #a5abb8;
+  --vp-ink-3: #8a91a0;
 
-  --vp-accent: #2e90ff;
-  --vp-accent-ink: #000000;
-  --vp-selection: rgb(10 132 255 / 0.30);
+  --vp-accent: #7c96ff;
+  --vp-accent-ink: #0d0e11;
+  --vp-selection: rgb(99 132 255 / 0.26);
   --vp-find: rgb(255 214 10 / 0.22);
-  --vp-find-current: rgb(255 159 10 / 0.45);
+  --vp-find-current: rgb(255 159 10 / 0.44);
   --vp-find-ring: #ffd60a;
-  --vp-tok-comment: #8d95a3;
-  --vp-tok-keyword: #e08ad6;
-  --vp-tok-string: #8fd16a;
-  --vp-tok-number: #f2a65e;
-  --vp-tok-function: #79b8ff;
-  --vp-tok-type: #e8c06b;
-  --vp-tok-property: #5ccfe6;
-  --vp-tok-tag: #ff8580;
-  --vp-tok-regex: #ff9e7a;
-  --vp-tok-variable: #c4a3f0;
-  --vp-tok-punct: #a8afbd;
-  --vp-tok-inserted: #73d98a;
-  --vp-tok-deleted: #ff8a85;
+  --vp-tok-comment: #8e96a5;
+  --vp-tok-keyword: #e28fd9;
+  --vp-tok-string: #8fd46e;
+  --vp-tok-number: #f2a863;
+  --vp-tok-function: #7ebbff;
+  --vp-tok-type: #e9c370;
+  --vp-tok-property: #62d2e8;
+  --vp-tok-tag: #ff8a85;
+  --vp-tok-regex: #ffa280;
+  --vp-tok-variable: #c7a7f2;
+  --vp-tok-punct: #abb2c0;
+  --vp-tok-inserted: #75dc8c;
+  --vp-tok-deleted: #ff8e89;
 
-  --vp-state-waiting: #ff9f0a;
-  --vp-state-working: #0a84ff;
-  --vp-state-done: #30d158;
-  --vp-state-dead: rgb(235 235 245 / 0.30);
-  --vp-state-crashed: #ff453a;
-  --vp-danger-ink: #ff6961;
+  --vp-state-waiting: #f59f00;
+  --vp-state-working: #6384ff;
+  --vp-state-done: #20c997;
+  --vp-state-dead: rgb(236 238 242 / 0.36);
+  --vp-state-crashed: #ff7b7b;
+  --vp-danger-ink: #ff7b7b;
 
-  --vp-term-fg: #f5f5f7;
-  --vp-term-cursor: #0a84ff;
-  --vp-term-black: #48484a;
-  --vp-term-red: #ff453a;
-  --vp-term-green: #30d158;
-  --vp-term-yellow: #ffd60a;
-  --vp-term-blue: #0a84ff;
-  --vp-term-magenta: #bf5af2;
-  --vp-term-cyan: #40c8e0;
-  --vp-term-white: #aeaeb2;
-  --vp-term-bright-black: #636366;
-  --vp-term-bright-red: #ff6961;
-  --vp-term-bright-green: #64d97e;
+  --vp-term-fg: #e6e8ec;
+  --vp-term-cursor: #7c96ff;
+  --vp-term-black: #454954;
+  --vp-term-red: #ff6b6b;
+  --vp-term-green: #38d9a9;
+  --vp-term-yellow: #fcc419;
+  --vp-term-blue: #748ffc;
+  --vp-term-magenta: #cc5de8;
+  --vp-term-cyan: #3bc9db;
+  --vp-term-white: #adb5bd;
+  --vp-term-bright-black: #6c7382;
+  --vp-term-bright-red: #ff8787;
+  --vp-term-bright-green: #63e6be;
   --vp-term-bright-yellow: #ffe066;
-  --vp-term-bright-blue: #64b5ff;
-  --vp-term-bright-magenta: #da8fff;
-  --vp-term-bright-cyan: #7ce0f0;
+  --vp-term-bright-blue: #91a7ff;
+  --vp-term-bright-magenta: #e599f7;
+  --vp-term-bright-cyan: #66d9e8;
   --vp-term-bright-white: #ffffff;
+
+  --ui-accent-fill: #eceef2;
+  --ui-accent-fill-hover: #ffffff;
+  --ui-accent-fill-ink: #111215;
+  --ui-warn-ink: #fcc419;
+  --ui-done-ink: #38d9a9;
+  --ui-badge-ink: #141518;
+  --ui-switch-on: #4c6ef5;
+  --ui-row-bar: #eceef2;
+
+  --depth-raised: inset 0 1px 0 rgb(255 255 255 / 0.04);
+  --depth-panel: 0 0 0 0 transparent;
+  --depth-selected: #20232b;
+  --depth-waiting-ring: 0px;
 }
 
-/* ── 白瓷墨彩: two built-in themes beside light and dark ──────────────────
-
-   白瓷 (porcelain) is light and 乌金 (wujin) is dark. Tokens only, like every
-   block above, and each declares *every* colour token rather than the handful
-   it changes: on a device whose system is dark the media block above still
-   matches `:root:not([data-theme='light'])`, so anything porcelain left out
-   would arrive from the dark palette -- pale ink on a white surface.
-
-   Two decisions that look like mistakes and are not:
-   - The accent is the ink. Buttons, selection and the focus ring are one
-     black (one white, in wujin); blue and green appear only as session state.
-   - Red is "waiting for you" and nothing else, so `--vp-state-crashed` is the
-     ink as well. A crashed session is still an x (red line 4: the shape says
-     it), and `--vp-danger-ink` stays red for words and destructive buttons. */
+/* ── 棉纸与曜石 (Cotton Paper & Warm Obsidian) ─────────────────────────────
+   Warm, zero-glare built-in pair beside Graphite Light/Dark, tuned for long
+   terminal reading sessions. Each block declares every token that `:root[data-theme='dark']`
+   declares so OS dark/light preference never leaks an unmatched colour. */
 :root[data-theme='porcelain'] {
   color-scheme: light;
-  --vp-bg: #ecebe8;
-  --vp-surface: #f6f5f3;
-  --vp-surface-2: #eae8e5;
-  --vp-elevated: rgb(246 245 243 / 0.82);
-  --vp-terminal-bg: #ffffff;
+  --vp-bg: #f3f0ea;
+  --vp-surface: #faf8f4;
+  --vp-surface-2: #e7e2d8;
+  --vp-elevated: rgb(243 240 234 / 0.88);
+  --vp-terminal-bg: #fdfcfa;
 
-  --vp-hairline: rgb(32 30 28 / 0.10);
-  --vp-hairline-strong: rgb(32 30 28 / 0.18);
+  --vp-hairline: rgb(42 36 28 / 0.085);
+  --vp-hairline-strong: rgb(42 36 28 / 0.16);
 
-  --vp-ink: #201e1c;
-  --vp-ink-2: #4f4b47;
-  --vp-ink-3: #625d58;
+  --vp-ink: #211f1c;
+  --vp-ink-2: #4e4942;
+  --vp-ink-3: #666057;
 
-  --vp-accent: #201e1c;
+  --vp-accent: #9e4224;
   --vp-accent-ink: #ffffff;
-  --vp-selection: rgb(32 30 28 / 0.16);
+  --vp-selection: rgb(184 82 48 / 0.16);
   --vp-find: rgb(255 204 0 / 0.35);
-  --vp-find-current: rgb(255 149 0 / 0.55);
+  --vp-find-current: rgb(255 149 0 / 0.50);
   --vp-find-ring: #b25000;
-  --vp-tok-comment: #565c66;
-  --vp-tok-keyword: #8e2086;
-  --vp-tok-string: #27660b;
-  --vp-tok-number: #8f4300;
-  --vp-tok-function: #1e539d;
-  --vp-tok-type: #854d00;
-  --vp-tok-property: #006386;
-  --vp-tok-tag: #aa2229;
-  --vp-tok-regex: #9c301a;
-  --vp-tok-variable: #6d3796;
-  --vp-tok-punct: #454b57;
-  --vp-tok-inserted: #1a6729;
-  --vp-tok-deleted: #a22228;
+  --vp-tok-comment: #59554e;
+  --vp-tok-keyword: #882080;
+  --vp-tok-string: #24620a;
+  --vp-tok-number: #8a4000;
+  --vp-tok-function: #1d5096;
+  --vp-tok-type: #804900;
+  --vp-tok-property: #005f80;
+  --vp-tok-tag: #a42026;
+  --vp-tok-regex: #962d18;
+  --vp-tok-variable: #693490;
+  --vp-tok-punct: #45423c;
+  --vp-tok-inserted: #186327;
+  --vp-tok-deleted: #9e2026;
 
-  --vp-state-waiting: #c6282b;
-  --vp-state-working: #2d5f9a;
-  --vp-state-done: #2f8560;
-  --vp-state-dead: rgb(32 30 28 / 0.45);
-  --vp-state-crashed: #201e1c;
-  --vp-danger-ink: #a81d20;
+  --vp-state-waiting: #a1451c;
+  --vp-state-working: #366594;
+  --vp-state-done: #2b7a54;
+  --vp-state-dead: rgb(42 36 28 / 0.42);
+  --vp-state-crashed: #b02323;
+  --vp-danger-ink: #b02323;
 
-  --vp-term-fg: #201e1c;
-  --vp-term-cursor: #201e1c;
+  --vp-term-fg: #24211d;
+  --vp-term-cursor: #9e4224;
   --vp-term-black: #3a3632;
-  --vp-term-red: #a81d20;
-  --vp-term-green: #2a7359;
-  --vp-term-yellow: #8a5a00;
-  --vp-term-blue: #2d5f9a;
-  --vp-term-magenta: #8f3a78;
-  --vp-term-cyan: #1c6b7a;
-  --vp-term-white: #8a857f;
-  --vp-term-bright-black: #6b6660;
-  --vp-term-bright-red: #c6282b;
-  --vp-term-bright-green: #2f8560;
-  --vp-term-bright-yellow: #a06a00;
-  --vp-term-bright-blue: #3b74b8;
-  --vp-term-bright-magenta: #a84d90;
-  --vp-term-bright-cyan: #23808f;
-  --vp-term-bright-white: #201e1c;
+  --vp-term-red: #b02323;
+  --vp-term-green: #276749;
+  --vp-term-yellow: #8a5200;
+  --vp-term-blue: #2d5a88;
+  --vp-term-magenta: #8c3675;
+  --vp-term-cyan: #1c6876;
+  --vp-term-white: #8a847c;
+  --vp-term-bright-black: #69635c;
+  --vp-term-bright-red: #c83232;
+  --vp-term-bright-green: #2f855a;
+  --vp-term-bright-yellow: #a35e00;
+  --vp-term-bright-blue: #3b72ab;
+  --vp-term-bright-magenta: #a64b8e;
+  --vp-term-bright-cyan: #237d8c;
+  --vp-term-bright-white: #211f1c;
 
-  --vp-radius: 14px;
-  --vp-radius-lg: 20px;
-  --vp-radius-control: 10px;
+  --vp-radius: 9px;
+  --vp-radius-lg: 14px;
+  --vp-radius-control: 7px;
 
-  --depth-raised: 0 1px 2px rgb(32 30 28 / 0.08), 0 3px 8px rgb(32 30 28 / 0.06);
-  --depth-panel: 0 1px 2px rgb(32 30 28 / 0.06), 0 10px 28px rgb(32 30 28 / 0.08);
-  --depth-selected: #ffffff;
-  --depth-waiting-ring: 4px;
+  --ui-accent-fill: #292623;
+  --ui-accent-fill-hover: #3d3934;
+  --ui-accent-fill-ink: #faf8f4;
+  --ui-warn-ink: #964219;
+  --ui-done-ink: #246344;
+  --ui-badge-ink: #ffffff;
+  --ui-switch-on: #b85230;
+  --ui-row-bar: #b85230;
+
+  --depth-raised: 0 1px 2px rgb(42 36 28 / 0.06), 0 0 0 1px rgb(42 36 28 / 0.06);
+  --depth-panel: 0 0 0 0 transparent;
+  --depth-selected: #fdfcfa;
+  --depth-waiting-ring: 0px;
 }
 
 :root[data-theme='wujin'] {
   color-scheme: dark;
-  --vp-bg: #131211;
-  --vp-surface: #1c1b19;
-  --vp-surface-2: #272523;
-  --vp-elevated: rgb(28 27 25 / 0.80);
-  --vp-terminal-bg: #0e0d0c;
+  --vp-bg: #191816;
+  --vp-surface: #211f1c;
+  --vp-surface-2: #2a2723;
+  --vp-elevated: rgb(25 24 22 / 0.88);
+  --vp-terminal-bg: #131210;
 
-  --vp-hairline: rgb(240 238 234 / 0.10);
-  --vp-hairline-strong: rgb(240 238 234 / 0.18);
+  --vp-hairline: rgb(238 232 222 / 0.08);
+  --vp-hairline-strong: rgb(238 232 222 / 0.15);
 
-  --vp-ink: #f0eeea;
-  --vp-ink-2: #bcb8b1;
-  --vp-ink-3: #9d988f;
+  --vp-ink: #ece8e1;
+  --vp-ink-2: #b5afa5;
+  --vp-ink-3: #969086;
 
-  --vp-accent: #f0eeea;
-  --vp-accent-ink: #201e1c;
-  --vp-selection: rgb(240 238 234 / 0.22);
+  --vp-accent: #e58d6e;
+  --vp-accent-ink: #191816;
+  --vp-selection: rgb(217 119 87 / 0.24);
   --vp-find: rgb(255 214 10 / 0.22);
-  --vp-find-current: rgb(255 159 10 / 0.45);
+  --vp-find-current: rgb(255 159 10 / 0.44);
   --vp-find-ring: #ffd60a;
-  --vp-tok-comment: #949ba8;
-  --vp-tok-keyword: #e08ad6;
-  --vp-tok-string: #8fd16a;
-  --vp-tok-number: #f2a65e;
-  --vp-tok-function: #79b8ff;
-  --vp-tok-type: #e8c06b;
-  --vp-tok-property: #5ccfe6;
-  --vp-tok-tag: #ff8580;
-  --vp-tok-regex: #ff9e7a;
-  --vp-tok-variable: #c4a3f0;
-  --vp-tok-punct: #a8afbd;
-  --vp-tok-inserted: #73d98a;
-  --vp-tok-deleted: #ff8a85;
+  --vp-tok-comment: #99958e;
+  --vp-tok-keyword: #e28fd9;
+  --vp-tok-string: #8fd46e;
+  --vp-tok-number: #f2a863;
+  --vp-tok-function: #7ebbff;
+  --vp-tok-type: #e9c370;
+  --vp-tok-property: #62d2e8;
+  --vp-tok-tag: #ff8a85;
+  --vp-tok-regex: #ffa280;
+  --vp-tok-variable: #c7a7f2;
+  --vp-tok-punct: #b3aea5;
+  --vp-tok-inserted: #75dc8c;
+  --vp-tok-deleted: #ff8e89;
 
-  --vp-state-waiting: #ff6b5e;
-  --vp-state-working: #7fb0e6;
-  --vp-state-done: #63c79b;
-  --vp-state-dead: rgb(240 238 234 / 0.32);
-  --vp-state-crashed: #f0eeea;
-  --vp-danger-ink: #ff8478;
+  --vp-state-waiting: #e8924f;
+  --vp-state-working: #6d9dc5;
+  --vp-state-done: #52b788;
+  --vp-state-dead: rgb(238 232 222 / 0.36);
+  --vp-state-crashed: #f28482;
+  --vp-danger-ink: #f28482;
 
-  --vp-term-fg: #f0eeea;
-  --vp-term-cursor: #f0eeea;
-  --vp-term-black: #4a4743;
-  --vp-term-red: #ff6b5e;
-  --vp-term-green: #63c79b;
-  --vp-term-yellow: #e3c26a;
-  --vp-term-blue: #7fb0e6;
+  --vp-term-fg: #e8e4dc;
+  --vp-term-cursor: #e58d6e;
+  --vp-term-black: #4a4641;
+  --vp-term-red: #f08080;
+  --vp-term-green: #6fcf97;
+  --vp-term-yellow: #e9b465;
+  --vp-term-blue: #80aee0;
   --vp-term-magenta: #d79ad0;
-  --vp-term-cyan: #6fc6d6;
-  --vp-term-white: #bcb8b1;
-  --vp-term-bright-black: #6e6a64;
-  --vp-term-bright-red: #ff8f84;
-  --vp-term-bright-green: #86d9b3;
-  --vp-term-bright-yellow: #f0d68a;
+  --vp-term-cyan: #72c4d1;
+  --vp-term-white: #bcb6ac;
+  --vp-term-bright-black: #736e66;
+  --vp-term-bright-red: #ff9494;
+  --vp-term-bright-green: #86deb0;
+  --vp-term-bright-yellow: #f2c97d;
   --vp-term-bright-blue: #a3c8f0;
   --vp-term-bright-magenta: #e5b5df;
   --vp-term-bright-cyan: #97d8e4;
   --vp-term-bright-white: #ffffff;
 
-  --vp-radius: 14px;
-  --vp-radius-lg: 20px;
-  --vp-radius-control: 10px;
+  --vp-radius: 9px;
+  --vp-radius-lg: 14px;
+  --vp-radius-control: 7px;
 
-  --depth-raised: 0 3px 8px rgb(0 0 0 / 0.30);
-  --depth-panel: 0 10px 28px rgb(0 0 0 / 0.32);
-  --depth-selected: #272523;
-  --depth-waiting-ring: 4px;
+  --ui-accent-fill: #b85230;
+  --ui-accent-fill-hover: #c95d39;
+  --ui-accent-fill-ink: #ffffff;
+  --ui-warn-ink: #f0a868;
+  --ui-done-ink: #6fcf97;
+  --ui-badge-ink: #191816;
+  --ui-switch-on: #c85a36;
+  --ui-row-bar: #d97757;
+
+  --depth-raised: inset 0 1px 0 rgb(255 255 255 / 0.04);
+  --depth-panel: 0 0 0 0 transparent;
+  --depth-selected: #262420;
+  --depth-waiting-ring: 0px;
+}
+
+/* Plugin themes only declare `--vp-*` tokens (docs/plugins.md §5), so derive
+   the internal button/switch fills from the plugin's own `--vp-accent`. */
+:root[data-theme^='ext-'] {
+  --ui-accent-fill: var(--vp-accent);
+  --ui-accent-fill-hover: var(--vp-accent);
+  --ui-accent-fill-ink: var(--vp-accent-ink);
+  --ui-switch-on: var(--vp-accent);
+  --ui-row-bar: var(--vp-accent);
 }
 
 /* Expose the tokens to Tailwind as utilities (bg-surface, text-ink-2, ...).
@@ -493,10 +510,12 @@
   --color-state-dead: var(--vp-state-dead);
   --color-state-crashed: var(--vp-state-crashed);
   --color-danger-ink: var(--vp-danger-ink);
+  --color-warn-ink: var(--ui-warn-ink);
+  --color-done-ink: var(--ui-done-ink);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
-    system-ui, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', sans-serif;
+  --font-sans: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont,
+    'SF Pro Text', 'PingFang SC', 'HarmonyOS Sans SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI', system-ui, sans-serif;
   /* Latin faces first, then CJK fallbacks.
      Agents write Chinese, and the usual monospace stack has no glyphs for it —
      `monospace` resolves to something like DejaVu Sans Mono, which renders
@@ -543,16 +562,16 @@
      Pinned by a test: an arbitrary text-[Npx] in a component fails it, which is
      the only thing that stops a sixth size arriving the next time somebody
      needs something "just a bit smaller". */
-  --text-vp-xs: 10.5px;
+  --text-vp-xs: 11px;
   --text-vp-xs--line-height: 1.45;
   --text-vp-sm: 11.5px;
   --text-vp-sm--line-height: 1.45;
   --text-vp-base: 12.5px;
   --text-vp-base--line-height: 1.5;
-  --text-vp-md: 13px;
+  --text-vp-md: 13.5px;
   --text-vp-md--line-height: 1.5;
-  --text-vp-lg: 15px;
-  --text-vp-lg--line-height: 1.4;
+  --text-vp-lg: 15.5px;
+  --text-vp-lg--line-height: 1.38;
 
   /* Three larger steps, for figures that are the point of a view (the token
      usage totals). Named here rather than as an arbitrary text-[42px], which
@@ -617,7 +636,9 @@ body {
   background: var(--vp-bg);
   color: var(--vp-ink);
   font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   /* iOS bounce-scrolls the whole document behind a full-screen app, which
      drags the terminal away from under the user's finger mid-selection. */
   overscroll-behavior: none;
@@ -632,12 +653,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* A terminal set into the chrome, and the session row that is on screen.
-
-   Both read the depth tokens, so a flat theme draws them flat. The ring is
-   the waiting colour thinned, around the terminal of a session that is
-   waiting for the person; its width is a token and is zero in light and dark,
-   where the triangle in the header already says so and a ring was never drawn. */
+/* A terminal set into the chrome, and the session row that is on screen. */
 .vp-well {
   background: var(--vp-terminal-bg);
   box-shadow: var(--depth-panel);
@@ -648,8 +664,20 @@ body {
     0 0 0 var(--depth-waiting-ring) color-mix(in srgb, var(--vp-state-waiting) 16%, transparent);
 }
 .vp-row-selected {
+  position: relative;
   background: var(--depth-selected);
   box-shadow: var(--depth-raised);
+  color: var(--vp-ink);
+}
+.vp-row-selected::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  bottom: 6px;
+  width: 2.5px;
+  border-radius: 999px;
+  background: var(--ui-row-bar);
 }
 
 /* Frosted chrome, the way the platform does it.
@@ -748,18 +776,8 @@ body {
  * Height is left alone deliberately: padding grows the header rather than
  * pushing its contents out of it. */
 .vp-safe-top {
-  /* The height is repeated from the header's own h-11 rather than switching to
-   * content-box, because border-box is what the rest of the sheet assumes and
-   * changing it would move this element by the width of its border on every
-   * device — including the ones with no inset at all, which have nothing wrong
-   * with them. Written this way, hardware without an inset renders identically
-   * to before, down to the pixel.
-   *
-   * If the header's height changes, this has to change with it. That is a real
-   * cost; it buys not touching box-sizing under a component that is already
-   * blurred, bordered and positioned. */
   padding-top: env(safe-area-inset-top, 0px);
-  height: calc(2.75rem + env(safe-area-inset-top, 0px));
+  min-height: calc(var(--vp-chrome-h) + env(safe-area-inset-top, 0px));
 }
 
 /* Padding only, for something that sizes itself from its contents.
@@ -894,7 +912,7 @@ body {
 @keyframes vp-panel-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.97);
+    transform: translateY(3px) scale(0.99);
   }
   to {
     opacity: 1;
@@ -973,13 +991,13 @@ body {
 }
 
 .vp-backdrop {
-  animation: vp-backdrop-in 160ms var(--vp-ease) both;
-  backdrop-filter: blur(6px) saturate(120%);
-  -webkit-backdrop-filter: blur(6px) saturate(120%);
+  animation: vp-backdrop-in 130ms var(--vp-ease) both;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
 }
 
 .vp-panel-in {
-  animation: vp-panel-in 220ms var(--vp-ease) both;
+  animation: vp-panel-in 140ms var(--vp-ease) both;
 }
 
 /* The phone's project drawer comes in from the edge it is attached to.
@@ -1003,11 +1021,25 @@ body {
 }
 
 .vp-drawer-in {
-  animation: vp-drawer-in 220ms var(--vp-ease) both;
+  animation: vp-drawer-in 180ms var(--vp-ease) both;
 }
 
 .vp-scrim-in {
-  animation: vp-backdrop-in 160ms var(--vp-ease) both;
+  animation: vp-backdrop-in 140ms var(--vp-ease) both;
+}
+
+@keyframes vp-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.vp-sheet-up {
+  border-radius: var(--vp-radius-lg) var(--vp-radius-lg) 0 0;
+  animation: vp-sheet-up 180ms var(--vp-ease) both;
 }
 
 /* A toast arrives from the edge it lives on rather than from behind.
@@ -1033,23 +1065,17 @@ body {
 }
 
 .vp-toast-in {
-  animation: vp-toast-in 160ms var(--vp-ease) both;
+  animation: vp-toast-in 140ms var(--vp-ease) both;
 }
 
-/* Press feedback.
- *
- * A control that only changes colour on hover gives a touch device nothing at
- * all: there is no hover on a finger, so the button and the label beside it
- * behave identically until something happens somewhere else on screen. A small
- * scale on :active is the one affordance that works for both.
- */
+/* Subtle press feedback: crisp 100ms response without rubbery 0.94/0.97 jelly bounce. */
 .vp-press {
-  transition: transform 120ms var(--vp-ease), background-color 200ms var(--vp-ease),
-    color 200ms var(--vp-ease), opacity 200ms var(--vp-ease);
+  transition: transform 80ms var(--vp-ease), background-color 110ms var(--vp-ease),
+    border-color 110ms var(--vp-ease), color 110ms var(--vp-ease), opacity 110ms var(--vp-ease);
 }
 
 .vp-press:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(0.99);
 }
 
 /* ── the directory picker ───────────────────────────────────────────────── */
@@ -1177,185 +1203,274 @@ body {
  * finger still gets its 44px.
  */
 
-.vp-control {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  gap: 0.25rem;
-  height: var(--vp-control-h);
-  min-width: var(--vp-control-h);
-  padding-inline: 0.25rem;
-  border-radius: var(--vp-radius-control);
-  color: var(--vp-ink-2);
-  background: transparent;
-  transition: transform 120ms var(--vp-ease), background-color 200ms var(--vp-ease),
-    color 200ms var(--vp-ease), opacity 200ms var(--vp-ease);
+@layer components {
+  .vp-control {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    height: var(--vp-control-h);
+    min-width: var(--vp-control-h);
+    padding-inline: 0.25rem;
+    border-radius: var(--vp-radius-control);
+    color: var(--vp-ink-2);
+    background: transparent;
+    transition: background-color 100ms var(--vp-ease), color 100ms var(--vp-ease),
+      opacity 100ms var(--vp-ease);
+  }
+
+  .vp-control:hover:not(:disabled) {
+    background: var(--vp-surface-2);
+    color: var(--vp-ink);
+  }
+
+  .vp-control:active:not(:disabled) {
+    background: color-mix(in srgb, var(--vp-ink) 10%, transparent);
+    color: var(--vp-ink);
+  }
+
+  .vp-control:disabled {
+    color: var(--vp-ink-3);
+    opacity: 0.55;
+    pointer-events: none;
+  }
+
+  /* Primary filled action button: monochrome high-contrast in Graphite, warm
+     espresso / terracotta-clay in Paper & Obsidian, plugin accent in plugin themes. */
+  .vp-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    height: var(--vp-control-h);
+    padding-inline: 0.75rem;
+    border-radius: var(--vp-radius-control);
+    background: var(--ui-accent-fill);
+    color: var(--ui-accent-fill-ink);
+    font-weight: 500;
+    white-space: nowrap;
+    transition: transform 80ms var(--vp-ease), background-color 110ms var(--vp-ease),
+      opacity 110ms var(--vp-ease);
+  }
+
+  .vp-primary:hover:not(:disabled) {
+    background: var(--ui-accent-fill-hover);
+  }
+
+  .vp-primary:active:not(:disabled) {
+    transform: scale(0.99);
+  }
+
+  .vp-primary:disabled {
+    background: var(--vp-surface-2);
+    color: var(--vp-ink-3);
+    opacity: 1;
+    pointer-events: none;
+  }
+
+  .vp-outline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3125rem;
+    height: var(--vp-control-h);
+    padding-inline: 0.625rem;
+    border: 1px solid var(--vp-hairline-strong);
+    border-radius: var(--vp-radius-control);
+    color: var(--vp-ink);
+    background: transparent;
+    white-space: nowrap;
+    transition: transform 80ms var(--vp-ease), background-color 110ms var(--vp-ease),
+      border-color 110ms var(--vp-ease), color 110ms var(--vp-ease), opacity 110ms var(--vp-ease);
+  }
+
+  .vp-outline:hover:not(:disabled) {
+    background: var(--vp-surface-2);
+    border-color: var(--vp-ink-3);
+    color: var(--vp-ink);
+  }
+
+  .vp-outline:active:not(:disabled) {
+    transform: scale(0.99);
+  }
+
+  .vp-outline:disabled {
+    color: var(--vp-ink-3);
+    border-color: var(--vp-hairline);
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  .vp-control-on-2:hover:not(:disabled) {
+    background: var(--vp-surface);
+  }
+
+  .vp-control[aria-pressed='true'] {
+    color: var(--vp-ink);
+    background: var(--vp-surface-2);
+  }
+
+  .vp-chrome {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    min-height: var(--vp-chrome-h);
+  }
+
+  .vp-divider {
+    flex-shrink: 0;
+    align-self: center;
+    width: 1px;
+    height: 0.875rem;
+    background: var(--vp-hairline);
+  }
+
+  .vp-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    height: var(--vp-control-h);
+    padding-inline: 0.5rem;
+    border-radius: var(--vp-radius-control);
+    color: var(--vp-ink-2);
+    user-select: none;
+    -webkit-user-select: none;
+    transition: background-color 110ms var(--vp-ease), color 110ms var(--vp-ease);
+  }
+
+  .vp-tab-drag {
+    touch-action: none;
+  }
+
+  .vp-tab:hover {
+    color: var(--vp-ink);
+  }
+
+  .vp-tab[aria-selected='true'],
+  .vp-tab[data-active='true'] {
+    color: var(--vp-ink);
+    font-weight: 500;
+    background: var(--vp-surface);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.10), 0 0 0 1px var(--vp-hairline);
+  }
 }
 
-.vp-control:hover:not(:disabled) {
-  background: var(--vp-surface-2);
-  color: var(--vp-ink);
-}
-
-.vp-control:active:not(:disabled) {
-  transform: scale(0.94);
-}
-
-/* `.vp-tap`'s 44px min-width has to survive `.vp-control`.
- *
- * Both are one class, so specificity ties and source order decides — and the
- * touch floor is defined hundreds of lines further up, which means
- * `.vp-control`'s `min-width: var(--vp-control-h)` silently won. The render
- * check measured the result and named it: pin-session, kill-session and
- * project-new-shell at 28x44 css pixels on a phone, three controls in a row
- * that are exactly half as wide as a thumb needs and one of which kills a
- * running agent.
- *
- * Restated here rather than moved, because moving `.vp-tap` down would put the
- * touch floor in the middle of the chrome section, which is not where anybody
- * looking for it would go. */
 @media (pointer: coarse) {
   .vp-control.vp-tap {
     min-width: 2.75rem;
   }
+  select {
+    min-height: 2.75rem;
+  }
 }
 
-/* A bordered text button: an icon and a word, at control height.
- *
- * `.vp-control` is the icon-only square and `.vp-segmented` is the set you
- * choose from; this is the third shape the panel actually uses and the one
- * that was being written out by hand. The sharing list had seven copies of
- * `vp-press flex items-center gap-1 rounded-vp border border-hairline px-2
- * py-1 text-vp-sm text-ink-2 transition-colors … hover:border-accent
- * hover:text-ink`, differing only in padding -- which is exactly how the panel
- * arrived at three control heights in one row before, and why
- * chrome-vocabulary.test.ts exists.
- *
- * A colour set on the element wins: the destructive ones say so in their ink
- * rather than in a second class.
- *
- * No font-size here, on purpose. This rule is unlayered and Tailwind's
- * utilities are in a layer, so a size set here could never be overridden by a
- * `text-vp-*` beside it -- and the one in a page header sits next to a larger
- * primary button than the ones in a card do. */
-.vp-outline {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: var(--vp-control-h);
-  padding-inline: 0.5rem;
-  border: 1px solid var(--vp-hairline);
-  border-radius: var(--vp-radius-control);
-  color: var(--vp-ink-2);
-  background: transparent;
-  white-space: nowrap;
-  transition: transform 120ms var(--vp-ease), border-color 200ms var(--vp-ease),
-    color 200ms var(--vp-ease), opacity 200ms var(--vp-ease);
-}
+/* Custom engineered checkboxes, radios and switches.
+   Styled directly on native `<input>` elements via `appearance: none` so keyboard
+   navigation, `<label>` association and Playwright's `.check()`/`.isChecked()`
+   work unchanged, while satisfying Red Line 4 with an explicit check/dot shape. */
+@layer base {
+  input[type='checkbox']:not(.sr-only),
+  input[type='radio']:not(.sr-only) {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    border: 1.5px solid var(--vp-hairline-strong);
+    background: var(--vp-surface);
+    vertical-align: middle;
+    cursor: pointer;
+    transition: background-color 100ms var(--vp-ease), border-color 100ms var(--vp-ease);
+  }
 
-.vp-outline:hover:not(:disabled) {
-  border-color: var(--vp-accent);
-  color: var(--vp-ink);
-}
+  input[type='checkbox']:not(.sr-only) {
+    border-radius: 4px;
+  }
 
-.vp-outline:active:not(:disabled) {
-  transform: scale(0.97);
-}
+  input[type='radio']:not(.sr-only) {
+    border-radius: 999px;
+  }
 
-.vp-outline:disabled {
-  opacity: 0.4;
-}
+  input[type='checkbox']:not(.sr-only):hover:not(:disabled),
+  input[type='radio']:not(.sr-only):hover:not(:disabled) {
+    border-color: var(--vp-ink-3);
+  }
 
-/* A control whose ground is already `--vp-surface-2`.
- *
- * `.vp-control`'s hover *is* `--vp-surface-2`, so on that ground the hover is
- * a no-op and the button reads as dead — which is what the directory picker's
- * two controls sit on: they live inside the search bar, and the bar is
- * `bg-surface-2`. One rule saying which ground the control is on, rather than
- * a second hand-written class list that differs from the first by one colour,
- * which is how the drift this section exists to remove started. */
-.vp-control-on-2:hover:not(:disabled) {
-  background: var(--vp-surface);
-}
+  input[type='checkbox']:not(.sr-only):checked,
+  input[type='radio']:not(.sr-only):checked {
+    background: var(--ui-switch-on);
+    border-color: var(--ui-switch-on);
+  }
 
-/* On, as opposed to merely hovered. Colour is not carrying this alone (red
-   line 4): the only control that uses it is the split toggle, and what says
-   the split is on is that there are two panes below instead of one. */
-.vp-control[aria-pressed='true'] {
-  color: var(--vp-accent);
-}
+  input[type='checkbox']:not(.sr-only):not(.vp-switch):checked::after {
+    content: '';
+    width: 0.28rem;
+    height: 0.52rem;
+    border-right: 1.8px solid #ffffff;
+    border-bottom: 1.8px solid #ffffff;
+    transform: translateY(-0.5px) rotate(45deg);
+  }
 
-/* A row of chrome: the side panel's header, the terminal strip's tab row, the
-   rail either of them collapses to.
- *
- * `min-height` rather than `height`, so the 44px touch floor grows the row
- * instead of pushing its controls out through the bottom — which is what a
- * fixed 40px row does on a tablet, where the pointer is coarse and the layout
- * is still the wide one. */
-.vp-chrome {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  min-height: var(--vp-chrome-h);
-}
+  input[type='radio']:not(.sr-only):checked::after {
+    content: '';
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 999px;
+    background: #ffffff;
+  }
 
-/* A hairline between the things you are choosing among and the controls that
-   act on whatever you chose. Two groups a few pixels apart read as one ragged
-   row; the rule is what says which half is content. */
-.vp-divider {
-  flex-shrink: 0;
-  align-self: center;
-  width: 1px;
-  height: 1rem;
-  background: var(--vp-hairline);
-}
+  input[type='checkbox']:not(.sr-only):disabled,
+  input[type='radio']:not(.sr-only):disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
 
-/* One item in a set you choose from — a panel tab, a terminal tab.
- *
- * Same height and same radius as `.vp-control`, because a thing you select and
- * a thing you press are both controls and there was never a reason for them to
- * be different sizes. What differs is what "chosen" looks like. */
-.vp-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: var(--vp-control-h);
-  padding-inline: 0.375rem;
-  border-radius: var(--vp-radius-control);
-  color: var(--vp-ink-2);
-  /* A tab is draggable, and a press that drags across two labels selects the
-     text of both. There is nothing in a tab worth selecting. */
-  user-select: none;
-  -webkit-user-select: none;
-  transition: transform 120ms var(--vp-ease), background-color 200ms var(--vp-ease),
-    color 200ms var(--vp-ease), flex-grow 260ms var(--vp-ease);
-}
+  input[type='checkbox'].vp-switch {
+    width: 2.125rem;
+    height: 1.1875rem;
+    border-radius: 999px;
+    border: 1px solid var(--vp-hairline-strong);
+    background: var(--vp-surface-2);
+  }
 
-/* Only where a tab can be dragged into a pane. Without it a touch screen
-   scrolls instead of reporting the gesture and the drag never arrives — and
-   *with* it on the terminal strip, whose tabs scroll sideways, the strip stops
-   scrolling. Two strips, two answers. */
-.vp-tab-drag {
-  touch-action: none;
-}
+  input[type='checkbox'].vp-switch::before {
+    content: '';
+    position: absolute;
+    left: 2px;
+    width: 0.875rem;
+    height: 0.875rem;
+    border-radius: 999px;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22);
+    transition: transform 140ms var(--vp-ease);
+  }
 
-.vp-tab:hover {
-  color: var(--vp-ink);
-}
+  input[type='checkbox'].vp-switch:checked {
+    background: var(--ui-switch-on);
+    border-color: var(--ui-switch-on);
+  }
 
-.vp-tab:active {
-  transform: scale(0.97);
-}
+  input[type='checkbox'].vp-switch:checked::before {
+    transform: translateX(0.9375rem);
+  }
 
-/* Lifted out of the strip rather than tinted inside it, and lifted the same
-   way in both strips — which is most of what makes them read as one interface
-   rather than two that happen to be in the same window. */
-.vp-tab[aria-selected='true'],
-.vp-tab[data-active='true'] {
-  color: var(--vp-ink);
-  background: var(--vp-surface);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+  /* Shape inside the switch thumb when checked (Red Line 4). */
+  input[type='checkbox'].vp-switch:checked::after {
+    content: '';
+    position: absolute;
+    right: 5.5px;
+    width: 3.5px;
+    height: 6.5px;
+    border-right: 1.6px solid var(--ui-switch-on);
+    border-bottom: 1.6px solid var(--ui-switch-on);
+    transform: translateY(-0.5px) rotate(45deg);
+  }
 }
 
 /* The segmented track, and the marker that slides inside it.
@@ -1426,10 +1541,10 @@ body {
 .vp-scroll-x,
 .vp-segmented {
   background:
-    linear-gradient(to right, var(--vp-scroll-bg) 30%, transparent) left center / 1.5rem 100% no-repeat local,
-    linear-gradient(to left, var(--vp-scroll-bg) 30%, transparent) right center / 1.5rem 100% no-repeat local,
-    radial-gradient(farthest-side at 0 50%, var(--vp-hairline-strong), transparent) left center / 0.5rem 100% no-repeat scroll,
-    radial-gradient(farthest-side at 100% 50%, var(--vp-hairline-strong), transparent) right center / 0.5rem 100% no-repeat scroll,
+    linear-gradient(to right, var(--vp-scroll-bg) 65%, transparent) left center / 1rem 100% no-repeat local,
+    linear-gradient(to left, var(--vp-scroll-bg) 65%, transparent) right center / 1rem 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--vp-hairline), transparent) left center / 0.375rem 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--vp-hairline), transparent) right center / 0.375rem 100% no-repeat scroll,
     var(--vp-scroll-bg);
 }
 
@@ -1536,19 +1651,14 @@ body {
  * reflow the strip mid-animation and cannot move the marker it is standing
  * under. */
 .vp-tab-icon {
-  opacity: 0.75;
-  transition: opacity 200ms var(--vp-ease), transform 200ms var(--vp-ease);
+  opacity: 0.72;
+  transition: opacity 110ms var(--vp-ease);
 }
 
 .vp-tab[aria-selected='true'] .vp-tab-icon,
 .vp-tab[data-active='true'] .vp-tab-icon,
 .vp-tab:hover .vp-tab-icon {
   opacity: 1;
-}
-
-.vp-tab[aria-selected='true'] .vp-tab-icon,
-.vp-tab[data-active='true'] .vp-tab-icon {
-  transform: scale(1.12);
 }
 
 .vp-marker {
@@ -1558,8 +1668,8 @@ body {
   left: 0;
   border-radius: var(--vp-radius-control);
   background: var(--vp-surface);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
-  transition: transform 260ms var(--vp-ease), width 260ms var(--vp-ease);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.10), 0 0 0 1px var(--vp-hairline);
+  transition: transform 160ms var(--vp-ease), width 160ms var(--vp-ease);
 }
 
 /* Where a dragged tab would land, drawn for every pane at once.
@@ -1696,38 +1806,34 @@ body {
  * covering the 280px panel instead. FilePreview's own comment says so. */
 @keyframes vp-swap-forward {
   from {
-    opacity: 0;
-    transform: translateX(10px);
+    opacity: 0.75;
   }
   to {
     opacity: 1;
-    transform: none;
   }
 }
 
 @keyframes vp-swap-back {
   from {
-    opacity: 0;
-    transform: translateX(-10px);
+    opacity: 0.75;
   }
   to {
     opacity: 1;
-    transform: none;
   }
 }
 
 .vp-swap[data-dir='forward'] {
-  animation: vp-swap-forward 200ms var(--vp-ease) backwards;
+  animation: vp-swap-forward 90ms var(--vp-ease) backwards;
 }
 
 .vp-swap[data-dir='back'] {
-  animation: vp-swap-back 200ms var(--vp-ease) backwards;
+  animation: vp-swap-back 90ms var(--vp-ease) backwards;
 }
 
 @keyframes vp-edge-in-right {
   from {
     opacity: 0;
-    transform: translateX(14px);
+    transform: translateX(8px);
   }
   to {
     opacity: 1;
@@ -1738,7 +1844,7 @@ body {
 @keyframes vp-edge-in-bottom {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -1747,11 +1853,11 @@ body {
 }
 
 .vp-edge-in-right {
-  animation: vp-edge-in-right 220ms var(--vp-ease) backwards;
+  animation: vp-edge-in-right 160ms var(--vp-ease) backwards;
 }
 
 .vp-edge-in-bottom {
-  animation: vp-edge-in-bottom 220ms var(--vp-ease) backwards;
+  animation: vp-edge-in-bottom 160ms var(--vp-ease) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1794,79 +1900,48 @@ body {
   overflow: hidden;
   border-radius: 999px;
   background: var(--vp-surface-2);
+  box-shadow: inset 0 0 0 1px var(--vp-hairline);
 }
 
 .vp-bar-fill {
   display: block;
   height: 100%;
   border-radius: 999px;
-  transition: width 500ms var(--vp-ease);
+  transition: width 360ms var(--vp-ease);
 }
 
-/* A list that fills in rather than appearing.
- *
- * Six session rows or four meters arriving on one frame is a block of text
- * that was not there and now is; the eye has to re-read all of it to find what
- * changed. Staggered, they arrive in the order they are sorted in — busiest
- * first, in the monitor — and the order is itself the information.
- *
- * The delays are written out rather than computed because CSS cannot count.
- * Eight is where it stops: past that the last row would arrive a third of a
- * second late, which is a wait rather than a movement, and a list long enough
- * to have a ninth row is a list you scroll rather than watch.
- *
- * It runs on mount only, and it carries nothing: every row is fully opaque
- * 200ms later, and under prefers-reduced-motion they are all opaque
- * immediately. */
 @keyframes vp-row-in {
   from {
-    opacity: 0;
-    transform: translateY(3px);
+    opacity: 0.85;
   }
   to {
     opacity: 1;
-    transform: none;
   }
 }
 
 .vp-rows > * {
-  animation: vp-row-in 200ms var(--vp-ease) backwards;
+  animation: vp-row-in 80ms var(--vp-ease) backwards;
 }
 
-.vp-rows > *:nth-child(2) { animation-delay: 25ms; }
-.vp-rows > *:nth-child(3) { animation-delay: 50ms; }
-.vp-rows > *:nth-child(4) { animation-delay: 75ms; }
-.vp-rows > *:nth-child(5) { animation-delay: 100ms; }
-.vp-rows > *:nth-child(6) { animation-delay: 125ms; }
-.vp-rows > *:nth-child(7) { animation-delay: 150ms; }
-.vp-rows > *:nth-child(n + 8) { animation-delay: 175ms; }
+.vp-rows > *:nth-child(2) { animation-delay: 8ms; }
+.vp-rows > *:nth-child(3) { animation-delay: 16ms; }
+.vp-rows > *:nth-child(4) { animation-delay: 24ms; }
+.vp-rows > *:nth-child(5) { animation-delay: 32ms; }
+.vp-rows > *:nth-child(6) { animation-delay: 40ms; }
+.vp-rows > *:nth-child(7) { animation-delay: 48ms; }
+.vp-rows > *:nth-child(n + 8) { animation-delay: 56ms; }
 
-/* Half of a stacked tab, while nothing is dragging it.
- *
- * The divider inside a tab is dragged with a pointer and stepped with the
- * arrow keys, and the two want opposite things. A keyboard step is discrete —
- * 16 pixels appearing from nowhere reads as a jump, and easing it is what makes
- * it read as one boundary moving. A pointer drag is already continuous, and a
- * transition on the thing under the pointer means the divider arrives where the
- * pointer was two frames ago, which reads as the panel lagging.
- *
- * So the class is applied only while `data-dragging` is false; StackedTab does
- * that in the component rather than here, because the state is the component's.
- * Under prefers-reduced-motion the keyboard step simply arrives. */
 .vp-stack-half {
-  transition: flex-grow 180ms var(--vp-ease);
+  transition: flex-grow 150ms var(--vp-ease);
 }
 
-/* The working indicator breathes rather than blinking: a blink in the corner
-   of the eye reads as an alert, and "working" is the state that needs no
-   attention at all. */
 @keyframes vp-breathe {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
+  50% { opacity: 0.52; }
 }
 
 .vp-breathe {
-  animation: vp-breathe 2s var(--vp-ease) infinite;
+  animation: vp-breathe 2.4s ease-in-out infinite;
 }
 
 /* What the panel shows while it is not connected is what it last heard, not

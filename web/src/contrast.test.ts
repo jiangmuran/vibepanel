@@ -131,6 +131,32 @@ describe('text contrast', () => {
       it('--vp-accent-ink on --vp-accent is at least 4.5:1', () => {
         expect(ratio(token(block, '--vp-accent-ink').rgb, token(block, '--vp-accent').rgb)).toBeGreaterThanOrEqual(4.5)
       })
+
+      it('--ui-accent-fill-ink on --ui-accent-fill is at least 4.5:1', () => {
+        expect(ratio(token(block, '--ui-accent-fill-ink').rgb, token(block, '--ui-accent-fill').rgb)).toBeGreaterThanOrEqual(4.5)
+      })
+
+      for (const [name, bg] of surfaces) {
+        it(`--ui-warn-ink on ${name} is at least 4.5:1`, () => {
+          expect(ratio(token(block, '--ui-warn-ink').rgb, bg)).toBeGreaterThanOrEqual(4.5)
+        })
+        it(`--ui-done-ink on ${name} is at least 4.5:1`, () => {
+          expect(ratio(token(block, '--ui-done-ink').rgb, bg)).toBeGreaterThanOrEqual(4.5)
+        })
+        it(`--vp-danger-ink on ${name} is at least 4.5:1`, () => {
+          expect(ratio(token(block, '--vp-danger-ink').rgb, bg)).toBeGreaterThanOrEqual(4.5)
+        })
+        it(`--vp-state-waiting on ${name} is at least 4.5:1`, () => {
+          expect(ratio(token(block, '--vp-state-waiting').rgb, bg)).toBeGreaterThanOrEqual(4.5)
+        })
+        it(`--vp-state-crashed on ${name} is at least 4.5:1`, () => {
+          expect(ratio(token(block, '--vp-state-crashed').rgb, bg)).toBeGreaterThanOrEqual(4.5)
+        })
+      }
+
+      it('--ui-badge-ink on --vp-state-waiting is at least 4.5:1', () => {
+        expect(ratio(token(block, '--ui-badge-ink').rgb, token(block, '--vp-state-waiting').rgb)).toBeGreaterThanOrEqual(4.5)
+      })
     })
   }
 })

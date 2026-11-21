@@ -205,10 +205,8 @@ note(m1 !== null && m2 !== null && Math.abs(m2 - m1) > 20, `the marker travels (
   const moving = mid !== null && end !== null && from !== null &&
     Math.abs(end - mid) > 6 && Math.abs(mid - from) > 2
   note(moving, `the marker is mid-flight a frame later (${from} -> ${mid} -> ${end})`)
-  // The glyph on the selected tab lifts, which is what replaced the label
-  // folding open. Not the only thing saying which tab is selected -- the
-  // marker is under it and aria-selected is on it -- but the strip is four
-  // identical-sized icons now and one of them has to look chosen.
+  // The glyph on the selected tab brightens without puffing up in scale, so
+  // switching tabs keeps icon geometry crisp and steady while the marker moves.
   const scale = await narrow.evaluate(() => {
     const on = document.querySelector('[role="tab"][aria-selected="true"] .vp-tab-icon')
     const off = document.querySelector('[role="tab"][aria-selected="false"] .vp-tab-icon')
@@ -219,8 +217,8 @@ note(m1 !== null && m2 !== null && Math.abs(m2 - m1) > 20, `the marker travels (
     }
     return { on: read(on), off: read(off) }
   })
-  note(scale !== null && scale.on.t !== scale.off.t && scale.on.o > scale.off.o,
-    `the selected glyph is lifted (${JSON.stringify(scale)})`)
+  note(scale !== null && scale.on.o > scale.off.o,
+    `the selected glyph is brightened (${JSON.stringify(scale)})`)
 
   await narrow.close()
 }

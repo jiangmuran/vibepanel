@@ -35,10 +35,7 @@ function ago(unix: number): string {
 export function Channels({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
   return (
     <Section id="channels" title={t('chat.channels')} lead={t('chat.channelsLead')}>
-      {/* Stretched, not started: cards of one row share a height and keep
-          their buttons on one line along the bottom, where three cards of
-          three heights read as three unfinished boxes. */}
-      <div className="grid grid-cols-1 items-stretch gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
         {data.factories.map((f) => (
           <ChannelCard
             key={f.kind}
@@ -63,10 +60,10 @@ function HealthLine({ ch }: { ch: ChatChannel | null }) {
   const tone = !ch.enabled
     ? 'var(--vp-ink-3)'
     : erroring
-      ? 'var(--vp-state-crashed)'
+      ? 'var(--vp-danger-ink)'
       : h.running
-        ? 'var(--vp-state-done)'
-        : 'var(--vp-state-waiting)'
+        ? 'var(--ui-done-ink)'
+        : 'var(--ui-warn-ink)'
   const word = !ch.enabled
     ? t('chat.off')
     : erroring
@@ -263,9 +260,10 @@ function ChannelCard({
           </span>
         )}
         {channel && (
-          <label className="ml-auto flex items-center gap-1 text-vp-sm text-ink-2">
+          <label className="ml-auto flex items-center gap-1.5 text-vp-sm text-ink-2">
             <input
               type="checkbox"
+              className="vp-switch"
               checked={channel.enabled}
               onChange={(e) => void toggle(e.target.checked)}
               data-testid={`chat-enabled-${factory.kind}`}

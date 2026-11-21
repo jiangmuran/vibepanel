@@ -143,7 +143,7 @@ export function BottomTerminals(props: Props) {
         className="vp-grip -mt-1 h-2 cursor-row-resize"
       />}
 
-      <div className="vp-chrome gap-1 px-2 vp-blur">
+      <div className="vp-chrome gap-1 border-b border-hairline px-2 vp-blur">
         {/* The tabs scroll; the controls after them do not.
 
             This row had no overflow handling at all. Eight terminals in an
@@ -266,11 +266,8 @@ export function BottomTerminals(props: Props) {
         )}
       </div>
 
-      {/* Set into the chrome, like the main terminal above it. Two terminals
-          treated differently in one window is the detail that makes a layout
-          look assembled rather than designed. */}
       <div
-        className="vp-well mx-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-vp border border-hairline"
+        className="vp-well min-h-0 flex-1 overflow-hidden"
       >
         {active ? (
           <TerminalView

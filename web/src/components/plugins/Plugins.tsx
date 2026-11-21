@@ -185,8 +185,7 @@ export function Plugins({ onOpenProject }: { onOpenProject?: (projectId: string)
             disabled={busy}
             onClick={() => fileInput.current?.click()}
             title={t('plg.installZipWhy')}
-            className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-40"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary text-vp-sm"
           >
             <FileUp size={13} />
             {t('plg.installZip')}
@@ -748,7 +747,7 @@ function NewPlugin({
         </div>
       </fieldset>
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <button type="button" onClick={onCancel} className="vp-outline text-vp-base">
+        <button type="button" onClick={onCancel} className="vp-outline text-vp-sm">
           {t('dir.cancel')}
         </button>
         <button
@@ -756,8 +755,7 @@ function NewPlugin({
           data-testid="plugin-new-create"
           disabled={busy || !name.trim()}
           onClick={() => void create()}
-          className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-40"
-          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          className="vp-primary text-vp-sm"
         >
           <Plus size={13} />
           {t('plg.create')}

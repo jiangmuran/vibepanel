@@ -13,7 +13,7 @@ import { t } from '../../i18n'
 import { copyTextInGesture } from '../../clipboard'
 import { LaunchProfiles } from '../LaunchProfiles'
 import { ClaudeAccounts } from '../ClaudeAccounts'
-import { Row, Section } from './parts'
+import { Section } from './parts'
 import { TuneClaude } from './TuneClaude'
 import { PasteSettings } from './PasteSettings'
 import { ArchiveSettings } from './ArchiveSettings'
@@ -111,33 +111,23 @@ function HooksSection() {
       </p>
 
       {error && (
-        <p className="mb-2 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
+        <p className="mb-2 text-vp-base text-warn-ink">
           {error}
         </p>
       )}
 
       {status && (
         <div data-testid="hooks-status">
-          {/* A row each, because the agents are configured by different
-              mechanisms in different files and fail separately — the runbook
-              has a section for exactly that — so a single "hooks are
-              installed" line would describe a machine where one of them is
-              wired as though all were.
-
-              Which rows: the ones ticked below, plus any agent whose hooks are
-              actually installed. Five rows of install buttons on a machine
-              running one agent is a page people stop reading, and hiding a row
-              for hooks this panel wrote would hide the only button that takes
-              them out again. */}
-          {visibleHookAgents(status).map((id) => {
-            const row = agentRow(id, status)
-            return (
-              <AgentHooks
-                key={id}
-                label={hookAgentName(id)}
-                value={row.value}
-                file={row.file}
-                installed={row.installed}
+          <div className="overflow-hidden rounded-vp border border-hairline bg-bg/40">
+            {visibleHookAgents(status).map((id) => {
+              const row = agentRow(id, status)
+              return (
+                <AgentHooks
+                  key={id}
+                  label={hookAgentName(id)}
+                  value={row.value}
+                  file={row.file}
+                  installed={row.installed}
                 note={row.note}
                 busy={busy}
                 testid={row.testid}
@@ -146,6 +136,7 @@ function HooksSection() {
               />
             )
           })}
+          </div>
 
           <AgentsShown
             shown={status.agentsShown}
@@ -158,7 +149,7 @@ function HooksSection() {
               type="button"
               onClick={() => setShowSnippet((v) => !v)}
               data-testid="hooks-preview"
-              className="vp-press rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              className="vp-outline text-vp-sm"
             >
               {showSnippet ? t('set.hide') : t('set.showWrites')}
             </button>
@@ -383,18 +374,34 @@ function AgentHooks({
   onRemove: () => void
 }) {
   return (
-    <div className="mb-3" data-testid={`${testid}-block`}>
-      <Row label={label} value={value} />
-      <Row label={t('set.settingsFile')} value={file} />
-      {note && <p className="mt-1 text-vp-sm leading-relaxed text-ink-2">{note}</p>}
-      <div className="mt-2">
+    <div
+      className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline px-3.5 py-2.5 last:border-b-0"
+      data-testid={`${testid}-block`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-vp-base font-medium text-ink">{label}</span>
+          <span
+            className={`rounded-md px-1.5 py-0.5 text-vp-xs ${
+              installed ? 'bg-surface-2 text-done-ink' : 'bg-surface-2 text-ink-2'
+            }`}
+          >
+            {value}
+          </span>
+        </div>
+        <div className="mt-0.5 truncate font-mono text-vp-xs text-ink-3" title={file}>
+          {file}
+        </div>
+        {note && <p className="mt-1 text-vp-sm leading-relaxed text-ink-2">{note}</p>}
+      </div>
+      <div className="shrink-0">
         {installed ? (
           <button
             type="button"
             disabled={busy}
             data-testid={`${testid}-remove`}
             onClick={onRemove}
-            className="rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
+            className="vp-outline text-vp-sm"
           >
             {t('set.remove')}
           </button>
@@ -404,8 +411,7 @@ function AgentHooks({
             disabled={busy}
             data-testid={`${testid}-install`}
             onClick={onInstall}
-            className="rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary text-vp-sm"
           >
             {busy ? t('set.working') : t('set.install')}
           </button>

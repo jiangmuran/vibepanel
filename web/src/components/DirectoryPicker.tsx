@@ -564,8 +564,7 @@ export function DirectoryPicker({
                   onClick={() => void create()}
                   disabled={!newName.trim()}
                   data-testid="dir-new-confirm"
-                  className="vp-press shrink-0 rounded-md px-2.5 py-1 text-vp-sm disabled:opacity-40"
-                  style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+                  className="vp-primary shrink-0 px-2.5 text-vp-sm"
                 >
                   {t('dir.create')}
                 </button>
@@ -574,8 +573,7 @@ export function DirectoryPicker({
             {error?.at === 'create' && (
               <p
                 data-testid="dir-error"
-                className="px-3 pb-1 pl-12 text-vp-sm"
-                style={{ color: 'var(--vp-state-crashed)' }}
+                className="px-3 pb-1 pl-12 text-vp-sm text-danger-ink"
               >
                 {safeText(error.message)}
               </p>
@@ -710,7 +708,7 @@ export function DirectoryPicker({
               type="button"
               onClick={onClose}
               data-testid="dir-cancel"
-              className="vp-press flex-1 rounded-vp border border-hairline px-3 py-2 text-vp-md text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+              className="vp-outline h-8 flex-1 text-vp-base"
             >
               {t('dir.cancel')}
             </button>
@@ -721,8 +719,7 @@ export function DirectoryPicker({
               data-testid="dir-confirm"
               data-restores={again ? again.id : undefined}
               title={typed.kind === 'path' ? typed.abs : here}
-              className="vp-press flex-[2] rounded-vp px-3 py-2 text-vp-md disabled:opacity-40"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              className="vp-primary h-8 flex-[2] text-vp-base"
             >
               {primaryLabel}
             </button>

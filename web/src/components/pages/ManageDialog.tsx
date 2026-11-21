@@ -334,8 +334,7 @@ function SecretRow({
           setValue('')
           void onSave(v)
         }}
-        className="vp-press rounded-vp px-2 py-1 text-vp-sm disabled:opacity-40"
-        style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+        className="vp-primary text-vp-sm"
       >
         {t('secrets.save')}
       </button>
@@ -344,7 +343,7 @@ function SecretRow({
           type="button"
           data-testid="page-secret-delete"
           onClick={() => void onDelete()}
-          className="vp-press rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink-2 hover:text-ink"
+          className="vp-outline text-vp-sm"
         >
           {t('secrets.delete')}
         </button>

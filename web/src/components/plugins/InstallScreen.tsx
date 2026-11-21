@@ -166,7 +166,7 @@ export function InstallScreen({
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-2 border-t border-hairline px-5 py-3">
-          <button type="button" onClick={onClose} className="vp-outline text-vp-base" data-testid="plugin-screen-cancel">
+          <button type="button" onClick={onClose} className="vp-outline text-vp-sm" data-testid="plugin-screen-cancel">
             {t('ask.cancel')}
           </button>
           <button
@@ -174,8 +174,8 @@ export function InstallScreen({
             disabled={!canConfirm(screen, busy)}
             onClick={() => void pressConfirm()}
             data-testid="plugin-screen-confirm"
-            className="vp-press rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-40"
-            style={{ background: danger ? 'var(--vp-state-crashed)' : 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary text-vp-sm"
+            style={danger ? { background: '#c92a2a', color: '#ffffff' } : undefined}
           >
             {t(confirmKey)}
           </button>

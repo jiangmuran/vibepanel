@@ -62,9 +62,7 @@ export function MobileKeyBar({
   return (
     <div
       data-testid="key-bar"
-      // vp-safe-bottom: this is the lowest thing on a phone, and the viewport
-      // is set to extend under the home indicator. See the class for why.
-      className="flex shrink-0 flex-col gap-1 border-t border-hairline px-1 py-1.5 [--vp-safe-pad:0.375rem] vp-blur vp-safe-bottom"
+      className="flex shrink-0 flex-col gap-1.5 px-1.5 pt-0.5 pb-1.5 [--vp-safe-pad:0.375rem] vp-blur vp-safe-bottom"
     >
       {/* Two rows, because eighteen keys do not fit across a phone and a
           single scrolling row hides whichever ones are not in view — which,
@@ -182,10 +180,20 @@ function Key({
         e.preventDefault()
         onPress()
       }}
-      className={`flex h-8 shrink-0 items-center justify-center rounded-vp border border-hairline text-vp-base transition-colors duration-150 ease-vp ${
+      className={`flex h-8 shrink-0 items-center justify-center rounded-md border font-mono text-vp-sm font-medium transition-colors duration-100 ease-vp active:translate-y-px ${
         wide ? 'min-w-11 px-2' : 'w-8'
-      } ${active ? 'text-accent-ink' : 'text-ink'}`}
-      style={active ? { background: 'var(--vp-accent)', borderColor: 'var(--vp-accent)' } : undefined}
+      } ${
+        active
+          ? 'border-transparent'
+          : label === '^C'
+            ? 'border-hairline-strong bg-surface text-danger-ink shadow-[0_1px_0_rgb(0_0_0/0.16)]'
+            : 'border-hairline-strong bg-surface text-ink shadow-[0_1px_0_rgb(0_0_0/0.16)]'
+      }`}
+      style={
+        active
+          ? { background: 'var(--ui-accent-fill)', color: 'var(--ui-accent-fill-ink)', borderColor: 'var(--ui-accent-fill)' }
+          : undefined
+      }
     >
       {children ?? label}
     </button>

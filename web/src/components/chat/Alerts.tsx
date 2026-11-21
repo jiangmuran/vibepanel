@@ -96,8 +96,8 @@ export function Alerts({ data, onChange }: { data: ChatSettings; onChange: () =>
             {now.diskTotal > 0 && <span>{t('chat.nowDisk', { p: percent(now.diskTotal - now.diskFree, now.diskTotal) })}</span>}
           </p>
         )}
-        <label className="mb-3 flex items-center gap-2 text-vp-md text-ink">
-          <input type="checkbox" checked={cfg.enabled} onChange={(e) => set({ enabled: e.target.checked })} data-testid="chat-alerts-enabled" />
+        <label className="mb-3 flex items-center gap-2 text-vp-base text-ink">
+          <input type="checkbox" className="vp-switch" checked={cfg.enabled} onChange={(e) => set({ enabled: e.target.checked })} data-testid="chat-alerts-enabled" />
           {t('chat.alertsEnabled')}
         </label>
         <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-4">
@@ -107,15 +107,15 @@ export function Alerts({ data, onChange }: { data: ChatSettings; onChange: () =>
           {number('diskPercent', t('chat.alertDisk'), 50, 100)}
         </div>
         <div className="mt-3">
-          <span className="mb-1 block text-vp-xs text-ink-3">{t('chat.to')}</span>
+          <span className="mb-1 block text-vp-xs text-ink-2">{t('chat.to')}</span>
           <div className="flex flex-wrap gap-1">
             {[{ key: '*', label: t('chat.toEveryone') }, ...(everyone ? [] : peers)].map((p) => {
               const on = to.includes(p.key)
               return (
                 <label
                   key={p.key}
-                  className={`vp-press flex cursor-pointer items-center gap-1 rounded-vp border px-2 py-1 text-vp-sm has-focus-visible:ring-2 has-focus-visible:ring-accent ${on ? 'border-accent' : 'border-hairline text-ink-2'}`}
-                  style={on ? { background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' } : undefined}
+                  className={`vp-press flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-vp-sm has-focus-visible:ring-2 has-focus-visible:ring-accent ${on ? 'border-transparent' : 'border-hairline-strong text-ink-2 hover:text-ink'}`}
+                  style={on ? { background: 'var(--ui-accent-fill)', color: 'var(--ui-accent-fill-ink)' } : undefined}
                 >
                   <input type="checkbox" className="sr-only" checked={on} onChange={(e) => toggle(p.key, e.target.checked)} />
                   {on && <Check size={12} aria-hidden="true" />}

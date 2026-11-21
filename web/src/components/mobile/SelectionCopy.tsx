@@ -57,8 +57,7 @@ export function SelectionCopy({ selection = '' }: { selection?: string }) {
         onClick={() => {
           copyTextInGesture(text, (ok) => setCopiedText(ok ? text : ''))
         }}
-        className="flex shrink-0 items-center gap-1 rounded-vp px-3 py-1 text-vp-base font-medium"
-        style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+        className="vp-primary shrink-0 text-vp-sm"
       >
         <Copy size={12} />
         {copied ? t('sel.copied') : t('sel.copy')}

@@ -119,7 +119,7 @@ export function TokenUsageView({
   }
 
   return (
-    <div className="vp-backdrop absolute inset-0 z-30 flex items-start justify-center overflow-y-auto bg-black/40 px-3 py-6">
+    <div className="vp-backdrop absolute inset-0 z-30 flex items-center justify-center bg-black/45 p-3">
       <div
         ref={dialogRef}
         data-testid="token-view"
@@ -127,10 +127,10 @@ export function TokenUsageView({
         role="dialog"
         aria-modal="true"
         aria-labelledby="vp-tokens-title"
-        className="vp-panel-in @container w-full max-w-6xl overflow-hidden rounded-vp-lg border border-hairline bg-surface shadow-xl"
+        className="vp-panel-in @container flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-vp-lg border border-hairline-strong bg-surface shadow-2xl"
       >
-        <header className="flex items-center gap-2 border-b border-hairline px-5 py-3">
-          <h2 id="vp-tokens-title" className="flex-1 truncate text-vp-lg font-semibold tracking-tight text-ink">
+        <header className="flex shrink-0 items-center gap-2 border-b border-hairline px-5 py-3">
+          <h2 id="vp-tokens-title" className="flex-1 truncate text-vp-md font-semibold tracking-tight text-ink">
             {t('spend.title')}
           </h2>
           <button
@@ -140,7 +140,7 @@ export function TokenUsageView({
             disabled={busy}
             title={busy ? t('spend.refreshing') : t('spend.refresh')}
             aria-label={busy ? t('spend.refreshing') : t('spend.refresh')}
-            className="vp-control disabled:opacity-50"
+            className="vp-control vp-tap disabled:opacity-50"
           >
             <RefreshCw size={14} className={busy || data?.scanning ? 'animate-spin' : ''} />
           </button>
@@ -150,23 +150,25 @@ export function TokenUsageView({
             title={t('spend.close')}
             aria-label={t('spend.close')}
             data-testid="token-view-close"
-            className="vp-control"
+            className="vp-control vp-tap"
           >
             <X size={15} />
           </button>
         </header>
 
-        <Filters
-          projects={projects}
-          project={project}
-          onProject={setProject}
-          tool={tool}
-          onTool={setTool}
-          days={days}
-          onDays={setDays}
-        />
+        <div className="shrink-0">
+          <Filters
+            projects={projects}
+            project={project}
+            onProject={setProject}
+            tool={tool}
+            onTool={setTool}
+            days={days}
+            onDays={setDays}
+          />
+        </div>
 
-        <div className="flex flex-col gap-3 bg-surface-2 px-3 py-4 @xl:px-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-bg px-3 py-4 @xl:px-5">
           {error && <Warning text={error} />}
           {!data ? (
             <p className="py-16 text-center text-vp-base text-ink-2">{t('spend.scanning')}</p>

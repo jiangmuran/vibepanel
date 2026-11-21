@@ -275,32 +275,26 @@ export function LaunchProfiles() {
       )}
 
       {!draft && (
-        <button
-          type="button"
-          onClick={() => openEditor({ ...EMPTY })}
-          data-testid="profile-new"
-          className="vp-press mt-3 flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base"
-          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
-        >
-          <Plus size={13} />
-          {t('profile.new')}
-        </button>
-      )}
-
-      {/* One way back, and it is what makes deleting something you did not
-          create a reasonable thing to offer with one press. Only the
-          catalogue: a button here that removed the owner's own profiles would
-          be the worst button in the panel. */}
-      {!draft && (
-        <button
-          type="button"
-          onClick={() => void restore()}
-          data-testid="profile-restore"
-          className="vp-press mt-3 ml-2 inline-flex items-center gap-1.5 rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink-2"
-        >
-          <RotateCcw size={13} />
-          {t('profile.restore')}
-        </button>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => openEditor({ ...EMPTY })}
+            data-testid="profile-new"
+            className="vp-primary text-vp-sm"
+          >
+            <Plus size={13} />
+            {t('profile.new')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void restore()}
+            data-testid="profile-restore"
+            className="vp-outline text-vp-sm"
+          >
+            <RotateCcw size={13} />
+            {t('profile.restore')}
+          </button>
+        </div>
       )}
 
       {draft && (
@@ -519,8 +513,7 @@ function Editor({
           type="button"
           onClick={onSave}
           data-testid="profile-save"
-          className="vp-press shrink-0 rounded-vp px-3 py-1.5 text-vp-base"
-          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          className="vp-primary shrink-0 text-vp-sm"
         >
           {t('profile.save')}
         </button>
@@ -528,7 +521,7 @@ function Editor({
           type="button"
           onClick={onCancel}
           data-testid="profile-cancel"
-          className="vp-press shrink-0 rounded-vp px-3 py-1.5 text-vp-base text-ink-2 hover:text-ink"
+          className="vp-outline shrink-0 text-vp-sm"
         >
           {t('profile.cancel')}
         </button>

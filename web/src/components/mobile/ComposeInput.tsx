@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { CornerDownLeft, ImagePlus, Send, WifiOff } from 'lucide-react'
+import { CornerDownLeft, ImagePlus, Keyboard, Send, WifiOff } from 'lucide-react'
 import { t, useLang } from '../../i18n'
 import { isEnter } from '../enter'
 
@@ -39,27 +39,17 @@ export function ComposeInput({
   disconnected = false,
   onPaste,
   onFiles,
+  keysShown,
+  onToggleKeys,
 }: {
   sessionId: string
   /** Send is off while the panel is not connected; typing a draft is not. */
   disconnected?: boolean
   /** False when nothing was sent, and then the box keeps what was typed. */
   onPaste: (text: string, submit: boolean) => boolean
-  /**
-   * Attach files, which on a phone has no other road.
-   *
-   * Everywhere else an image reaches the panel by being pasted or dropped, and
-   * a phone can do neither: there is no drop, and iOS does not deliver an image
-   * on the clipboard to a `paste` handler on a page that is not an editable
-   * field. The file panel's own chooser exists but is in the side panel, which
-   * a narrow layout does not show. So handing an agent a screenshot -- the
-   * single most common thing anybody wants to do from a phone -- was possible
-   * on a desktop only. 「ipad和手机端无法上传图片」.
-   *
-   * A file input is what makes it work: iOS answers one with Photo Library,
-   * Take Photo and Files, which is every source a screenshot can come from.
-   */
   onFiles: (files: File[]) => void
+  keysShown?: boolean
+  onToggleKeys?: () => void
 }) {
   useLang()
   const chooser = useRef<HTMLInputElement | null>(null)
@@ -154,97 +144,85 @@ export function ComposeInput({
   return (
     <div data-testid="compose" className="shrink-0 border-t border-hairline px-2 py-1.5 vp-blur">
       {unsent && (
-        <p role="alert" data-testid="compose-unsent" className="mb-1 flex items-center gap-1.5 text-vp-sm text-ink">
-          <WifiOff size={14} aria-hidden className="shrink-0" style={{ color: 'var(--vp-state-crashed)' }} />
+        <p role="alert" data-testid="compose-unsent" className="mb-1 flex items-center gap-1.5 px-1 text-vp-sm text-ink">
+          <WifiOff size={14} aria-hidden className="shrink-0 text-danger-ink" />
           {t('compose.unsent')}
         </p>
       )}
-      <div className="flex items-end gap-1">
-      <textarea
-        value={text}
-        onChange={(e) => {
-          // Any edit makes the next submission a new one, including retyping
-          // the same words on purpose.
-          lastSent.current = ''
-          setUnsent(false)
-          setText(e.target.value)
-        }}
-        onKeyDown={(e) => {
-          // Enter sends; Shift-Enter is a newline inside the message, for the
-          // rare multi-line paste.
-          //
-          // isComposing is the whole reason this box exists, applied to the box
-          // itself. With an input method, Enter is how a candidate is chosen —
-          // Chromium reports that keypress as key "Enter" with isComposing set
-          // — so without this guard, picking the first word of a Chinese
-          // sentence sends it. The component built to keep an IME away from the
-          // terminal was firing on the IME's own confirm key.
-          // keyCode 229 as well as isComposing, which is what the rest of the
-          // panel checks (ConfirmDialog, DirectoryPicker) and this one did not.
-          // 229 is the "the IME is handling this" keycode, and the keyboards
-          // that report it without setting isComposing are the transcription
-          // and dictation ones -- the same family as the double-send above.
-          if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
-          if (isEnter(e) && !e.shiftKey) {
-            e.preventDefault()
-            send()
-          }
-        }}
-        rows={1}
-        placeholder={t('compose.placeholder')}
-        data-testid="compose-input"
-        // The terminal is a monospace grid; what you are about to send should
-        // look like what will arrive.
-        className="max-h-24 min-h-8 flex-1 resize-none rounded-vp border border-hairline bg-surface px-2 py-1.5 font-mono text-vp-md text-ink outline-none placeholder:font-sans placeholder:text-ink-2 focus:border-accent"
-      />
-      <input
-        ref={chooser}
-        type="file"
-        multiple
-        // Not `capture`: that forces the camera and hides the photo library,
-        // and the thing being attached is almost always a screenshot that
-        // already exists.
-        accept="image/*,application/pdf,text/*"
-        data-testid="compose-file"
-        className="hidden"
-        onChange={(e) => {
-          onFiles([...(e.target.files ?? [])])
-          // Cleared so the same file can be chosen twice running.
-          e.target.value = ''
-        }}
-      />
-      <button
-        type="button"
-        onClick={() => chooser.current?.click()}
-        title={t('compose.attach')}
-        data-testid="compose-attach"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-vp border border-hairline text-ink-2 transition-colors duration-150 ease-vp"
-      >
-        <ImagePlus size={13} />
-      </button>
-      <button
-        type="button"
-        onClick={() => setNewline((v) => !v)}
-        title={newline ? t('compose.withEnter') : t('compose.withoutEnter')}
-        data-testid="compose-newline"
-        data-on={newline ? 'true' : 'false'}
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-vp border border-hairline transition-colors duration-150 ease-vp ${
-          newline ? 'text-accent' : 'text-ink-2'
-        }`}
-      >
-        <CornerDownLeft size={13} />
-      </button>
-      <button
-        type="button"
-        onClick={send}
-        disabled={!text || disconnected}
-        title={t('compose.send')}
-        data-testid="compose-send"
-        className="flex h-8 w-9 shrink-0 items-center justify-center rounded-vp transition-opacity duration-150 ease-vp disabled:opacity-40"
-        style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
-      >
-        <Send size={13} />
-      </button>
+      <div className="flex items-end gap-1 rounded-vp-lg border border-hairline-strong bg-surface px-1.5 py-1">
+        <input
+          ref={chooser}
+          type="file"
+          multiple
+          accept="image/*,application/pdf,text/*"
+          data-testid="compose-file"
+          className="hidden"
+          onChange={(e) => {
+            onFiles([...(e.target.files ?? [])])
+            e.target.value = ''
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => chooser.current?.click()}
+          title={t('compose.attach')}
+          data-testid="compose-attach"
+          className="vp-control shrink-0"
+        >
+          <ImagePlus size={15} />
+        </button>
+        <textarea
+          value={text}
+          onChange={(e) => {
+            lastSent.current = ''
+            setUnsent(false)
+            setText(e.target.value)
+          }}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+            if (isEnter(e) && !e.shiftKey) {
+              e.preventDefault()
+              send()
+            }
+          }}
+          rows={1}
+          placeholder={t('compose.placeholder')}
+          data-testid="compose-input"
+          className="max-h-24 min-h-8 flex-1 resize-none border-0 bg-transparent px-1.5 py-1 font-mono text-vp-md text-ink outline-none placeholder:font-sans placeholder:text-ink-3"
+        />
+        <button
+          type="button"
+          onClick={() => setNewline((v) => !v)}
+          title={newline ? t('compose.withEnter') : t('compose.withoutEnter')}
+          data-testid="compose-newline"
+          data-on={newline ? 'true' : 'false'}
+          aria-pressed={newline}
+          className="vp-control shrink-0"
+        >
+          <CornerDownLeft size={14} />
+        </button>
+        {onToggleKeys && (
+          <button
+            type="button"
+            onClick={onToggleKeys}
+            title={t('app.toggleKeys')}
+            data-testid="compose-keys-toggle"
+            aria-pressed={keysShown}
+            className="vp-control shrink-0"
+          >
+            <Keyboard size={14} />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={send}
+          disabled={!text || disconnected}
+          title={t('compose.send')}
+          data-testid="compose-send"
+          className="vp-primary w-9 shrink-0 px-0"
+        >
+          <Send size={14} />
+        </button>
       </div>
     </div>
   )

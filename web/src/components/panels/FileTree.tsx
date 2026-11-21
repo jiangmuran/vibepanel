@@ -620,15 +620,14 @@ export function FileTree({
             <button
               type="submit"
               data-testid="file-preview-create"
-              className="vp-press rounded-vp px-3 py-1 text-vp-sm"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              className="vp-primary text-vp-sm"
             >
               {t('files.previewCreate')}
             </button>
             <button
               type="button"
               onClick={() => setPreviewForm(null)}
-              className="vp-press rounded-vp border border-hairline px-3 py-1 text-vp-sm text-ink-2"
+              className="vp-outline text-vp-sm"
             >
               {t('files.previewCancel')}
             </button>

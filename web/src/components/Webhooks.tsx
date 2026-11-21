@@ -211,12 +211,9 @@ export function Webhooks() {
             key={p.key}
             type="button"
             disabled={busy}
-            // Added to the page, not to the server. A new row has nothing in
-            // it yet -- the custom one has nothing in it on purpose -- and the
-            // Save button below is what persists the list.
             onClick={() => setList((l) => [...l, { ...p.make(), id: '' }])}
             data-testid="webhook-add"
-            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink-2 hover:text-ink disabled:opacity-50"
+            className="vp-outline text-vp-sm"
           >
             <Plus size={12} />
             {t(p.key as Parameters<typeof t>[0])}
@@ -228,8 +225,7 @@ export function Webhooks() {
             disabled={busy}
             onClick={() => void save(list)}
             data-testid="webhook-save"
-            className="vp-press ml-auto rounded-vp px-3 py-1 text-vp-base font-medium disabled:opacity-50"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary ml-auto text-vp-sm"
           >
             {t('wh.save')}
           </button>
@@ -237,7 +233,7 @@ export function Webhooks() {
       </div>
 
       {list.some((w) => w.url.includes('YOUR_')) && (
-        <p className="mt-2 text-vp-sm" style={{ color: 'var(--vp-state-waiting)' }}>
+        <p className="mt-2 text-vp-sm text-warn-ink">
           {safeText(t('wh.placeholder'))}
         </p>
       )}

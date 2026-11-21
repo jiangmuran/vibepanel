@@ -36,7 +36,7 @@ export function NotificationsGroup() {
         {!notifySupported() ? (
           <p className="text-vp-base text-ink-3">{t('notify.insecure')}</p>
         ) : state === 'denied' ? (
-          <p className="text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
+          <p className="text-vp-base text-warn-ink">
             {t('notify.denied')}
           </p>
         ) : state === 'granted' && on ? (
@@ -49,7 +49,7 @@ export function NotificationsGroup() {
                 setNotifyEnabled(false)
                 setOn(false)
               }}
-              className="vp-press rounded-vp border border-hairline px-2 py-1 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-outline text-vp-sm"
             >
               {t('dir.cancel')}
             </button>
@@ -64,8 +64,7 @@ export function NotificationsGroup() {
                 setOn(p === 'granted')
               })
             }}
-            className="rounded-vp px-3 py-1.5 text-vp-base"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary text-vp-sm"
           >
             {t('notify.enable')}
           </button>

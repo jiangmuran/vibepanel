@@ -19,8 +19,8 @@ export function Section({
   children: React.ReactNode
 }) {
   return (
-    <section data-section={id} className="mb-6 last:mb-0">
-      <h3 className="mb-2 text-vp-sm font-semibold tracking-wide text-ink-2 uppercase">{title}</h3>
+    <section data-section={id} className="@container mb-6 last:mb-0">
+      <h3 className="mb-2 text-vp-base font-semibold tracking-tight text-ink">{title}</h3>
       {children}
     </section>
   )
@@ -37,10 +37,10 @@ export function Row({
 }) {
   return (
     <div className="flex items-baseline gap-3 border-b border-hairline py-1.5 last:border-0">
-      <span className="w-32 shrink-0 text-vp-sm text-ink-2">{label}</span>
+      <span className="shrink-0 text-vp-sm text-ink-2" style={{ width: 'clamp(6.5rem, 24cqi, 9.5rem)' }}>{label}</span>
       <span
         className={`tabular min-w-0 flex-1 truncate text-vp-base ${
-          tone === 'bad' ? 'text-state-crashed' : tone === 'warn' ? 'text-state-waiting' : 'text-ink'
+          tone === 'bad' ? 'text-danger-ink' : tone === 'warn' ? 'text-warn-ink' : 'text-ink'
         }`}
         title={value}
       >

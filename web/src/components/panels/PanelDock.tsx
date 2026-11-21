@@ -49,7 +49,7 @@ export function PanelDock({
           <DockHeader block={block} onOpen={() => onOpen(block)} />
           {block === 'tokens' ? (
             spend.error !== null ? (
-              <p className="px-3 py-2 text-vp-sm" style={{ color: 'var(--vp-state-waiting)' }}>
+              <p className="px-3 py-2 text-vp-sm text-warn-ink">
                 {safeText(spend.error)}
               </p>
             ) : spend.data === null ? (
@@ -101,12 +101,10 @@ function DockHeader({ block, onOpen }: { block: DockBlock; onOpen: () => void })
       className="vp-control w-full justify-between px-3"
     >
       <span className="flex min-w-0 items-center gap-1.5">
-        <Icon size={12} className="shrink-0" />
-        <span className="truncate text-vp-xs uppercase tracking-wide">{name}</span>
+        <Icon size={12} className="shrink-0 text-ink-3" />
+        <span className="truncate text-vp-xs font-semibold tracking-wide text-ink-2 uppercase">{name}</span>
       </span>
-      {/* Shape, not only a hover colour: the chevron is what says the row is a
-          way in rather than a heading. */}
-      <ChevronsUpDown size={12} className="shrink-0" />
+      <ChevronsUpDown size={12} className="shrink-0 text-ink-3" />
     </button>
   )
 }

@@ -107,7 +107,7 @@ export function ApiTokens() {
               onClick={() => {
                 copyTextInGesture(fresh, setCopied)
               }}
-              className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-outline shrink-0 text-vp-sm"
             >
               {copied ? t('tok.copied') : t('tok.copy')}
             </button>
@@ -115,8 +115,7 @@ export function ApiTokens() {
               type="button"
               data-testid="token-dismiss"
               onClick={() => setFresh(null)}
-              className="shrink-0 rounded-vp px-2.5 py-1.5 text-vp-base"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              className="vp-primary shrink-0 text-vp-sm"
             >
               {t('tok.done')}
             </button>
@@ -132,14 +131,13 @@ export function ApiTokens() {
             }}
             placeholder={t('tok.name')}
             data-testid="token-name"
-            className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
+            className="h-7 min-w-0 flex-1 rounded-md border border-hairline-strong bg-bg px-2 text-vp-base text-ink outline-none focus:border-accent"
           />
           <button
             type="button"
             onClick={() => void create()}
             data-testid="token-create"
-            className="shrink-0 rounded-vp px-3 py-1.5 text-vp-base"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary shrink-0 text-vp-sm"
           >
             {t('tok.create')}
           </button>

@@ -475,8 +475,7 @@ export function PagePreview({
           data-testid="page-publish-open"
           disabled={!draft?.ok}
           onClick={() => setPanel(panel === 'publish' ? '' : 'publish')}
-          className="vp-press flex items-center gap-1 rounded-vp px-2 py-1 text-vp-sm disabled:opacity-40"
-          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          className="vp-primary px-2.5 text-vp-xs"
         >
           <Upload size={12} />
           {t('page.publish')}
@@ -564,8 +563,7 @@ export function PagePreview({
             data-testid="page-trial-keep"
             disabled={busy}
             onClick={() => void settleTrial(true)}
-            className="vp-press rounded-vp px-2 py-0.5"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary px-2 text-vp-xs"
           >
             {t('page.trialKeep')}
           </button>
@@ -574,7 +572,7 @@ export function PagePreview({
             data-testid="page-trial-end"
             disabled={busy}
             onClick={() => void settleTrial(false)}
-            className="vp-press rounded-vp px-2 py-0.5 text-ink-2"
+            className="vp-outline px-2 text-vp-xs"
           >
             {t('page.trialEnd')}
           </button>
@@ -601,8 +599,7 @@ export function PagePreview({
               data-testid="page-publish-confirm"
               disabled={busy}
               onClick={() => void publish()}
-              className="vp-press rounded-vp px-2 py-1"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              className="vp-primary px-2.5 text-vp-xs"
             >
               {t('page.publishNow', { v: published + 1 })}
             </button>
@@ -642,8 +639,7 @@ export function PagePreview({
             data-testid="page-trial-start"
             disabled={busy || !draft?.ok}
             onClick={() => void startTrial()}
-            className="vp-press rounded-vp px-2 py-1"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary px-2.5 text-vp-xs"
           >
             {t('page.trialStart')}
           </button>

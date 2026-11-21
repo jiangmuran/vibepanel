@@ -28140,3 +28140,42 @@ Two things about how:
 
 Still not done from the mock-ups: serif titles and figures, the new state
 glyphs, the round-topped bars and the rearranged right panel.
+
+## 2026-11-21 — Visual overhaul: Graphite and Cotton Paper / Warm Obsidian
+
+The accumulated chrome had grown harsh and restless: `#2e90ff` primary pills
+with black text in dark mode, parallel 8px double borders around both
+terminals, unlayered `.vp-control` centering the dock's `justify-between`
+headers, `0.94` button squish plus `1.12` tab-icon zoom plus sideways tab-body
+slides, and `items-stretch` pulling a one-button WeChat card to 520px of empty
+space.
+
+What changed across the frontend:
+
+- **Two built-in pairs, four palettes.** `light` and `dark` are now Graphite
+  Light (`#f4f5f7` / `#ffffff`) and Graphite Dark (`#131417` / `#0d0e11`) with
+  monochrome primary fills (`--ui-accent-fill` / `--ui-accent-fill-ink`);
+  `porcelain` and `wujin` are rebuilt as Cotton Paper (`#f3f0ea` / `#fdfcfa`)
+  and Warm Obsidian (`#191816` / `#131210`) with terracotta-clay and sage
+  accents and the 4px waiting glow ring retired. Plugin themes (`ext-*`) fall
+  back `--ui-*` fills to `--vp-accent` / `--vp-accent-ink`, so `BaseTokens`
+  and `contract-v1.txt` stay untouched. `contrast.test.ts` pins all text,
+  primary-fill, badge and state-text pairs at 4.5:1 across all five blocks.
+- **Seamless single-hairline workbench and layered chrome.** Dropped the outer
+  `m-2` border around the main and bottom terminals, aligned the sidebar,
+  session and right-panel headers to one `--vp-chrome-h` row, and moved
+  `.vp-control`, `.vp-primary`, `.vp-outline` and `.vp-tab` into `@layer
+  components` so utility overrides (`justify-between`, `justify-start`, `px-*`)
+  take effect. Native checkboxes, radios and `.vp-switch` toggles are styled
+  via `appearance: none` with explicit check/dot shapes (red line 4), keeping
+  Playwright's `.check()` and `.isChecked()` intact.
+- **Restrained motion and typography.** Switched `--vp-ease` to a non-bouncy
+  fast-out curve (`cubic-bezier(0.2, 0, 0, 1)`), removed `.vp-control` scale
+  squish, `.vp-tab-icon` 1.12x puff-up and lateral `.vp-swap` translation, and
+  put `Inter Variable` / `Inter` ahead of `system-ui` in `--font-sans`.
+- **Settings, Chat and mobile.** Grouped hook rows with inline right-aligned
+  actions, added a direct swatch theme picker in Settings, switched the Chat
+  channel grid to `items-start`, and gave narrow screens a direct header button
+  to a bottom-sheet workspace switcher, a full-width terminal, a unified
+  compose pill with key-bar toggle, and keycap-styled keys.
+

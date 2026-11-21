@@ -292,6 +292,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // eighteen soft keys permanently across the bottom of a screen that does not
   // need them is worse than the missing Escape was.
   const [touchKeys, setTouchKeys] = useState(false)
+  const [mobileKeysHidden, setMobileKeysHidden] = useState(false)
 
   const [status, setStatus] = useState<SocketStatus>('closed')
   const [state, setState] = useState<PanelState>({
@@ -1493,9 +1494,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* vp-safe-top repeats h-11; the two have to move together. See the
-            class for why it is written that way rather than with box-sizing. */}
-        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline px-3 vp-blur vp-safe-top">
+        <header className="vp-chrome gap-2 border-b border-hairline px-3 vp-blur vp-safe-top">
           {narrow && (
             <button
               type="button"
@@ -1515,13 +1514,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               {waiting > 0 && (
                 <span
                   data-testid="waiting-badge"
-                  // Inside the button, not hanging off it. At -top-0.5 on a
-                  // phone the badge sat above the header's first pixel and was
-                  // sliced in half by the edge of the viewport -- the count of
-                  // things waiting for you, unreadable, in the corner the whole
-                  // product is about.
                   className="tabular absolute top-0 right-0 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-vp-xs font-semibold"
-                  style={{ background: 'var(--vp-state-waiting)', color: '#fff' }}
+                  style={{ background: 'var(--vp-state-waiting)', color: 'var(--ui-badge-ink)' }}
                 >
                   {waiting}
                 </span>
@@ -1536,36 +1530,22 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                 exitStatus={current.exitStatus}
                 onToggle={(st) => void guard(() => api.patchSession(current.id, { state: st }))}
               />
-              <span data-testid="session-title" className="truncate text-vp-md font-medium">
+              <span data-testid="session-title" className="min-w-0 truncate text-vp-base font-semibold tracking-tight">
                 {labelOf(current)}
               </span>
-              {!narrow && (
-                <span className="truncate text-vp-base text-ink-2">{currentProject?.name}</span>
+              {!narrow && currentProject && (
+                <>
+                  <span className="text-ink-3" aria-hidden="true">/</span>
+                  <span className="truncate text-vp-sm text-ink-2">{currentProject.name}</span>
+                </>
               )}
-              {/* Where you are when you find out. Reading a stack trace and
-                  then having to go hunting in the sidebar for the way to try
-                  again is the kind of small friction that sends people back to
-                  a real terminal. */}
               {current.exited && (
                 <button
                   type="button"
                   data-testid="restart-current"
                   onClick={() => restartSession(current)}
-                  className="vp-press ml-1 flex shrink-0 items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                  className="vp-outline ml-1 h-6 shrink-0 px-2 text-vp-xs"
                   title={
-                    // Two different actions behind one button, and the tooltip
-                    // is where the difference is said. A dead pane is respawned
-                    // in place; a session whose tmux session went with the
-                    // machine is rebuilt from the row, with its recorded
-                    // command and its archived scrollback.
-                    //
-                    // The same two strings the sidebar's restart control uses.
-                    // This one had an English sentence built from exitReason()
-                    // instead, so the panel's most prominent restart button was
-                    // the one that did not speak the user's language.
-                    // The status is in the tooltip because it is the one
-                    // fact that says whether restarting is likely to help. A
-                    // pane that vanished has none, so it gets the other string.
                     current.exitStatus === EXIT_VANISHED
                       ? t('restore.gone')
                       : t('app.restartHintStatus', { n: current.exitStatus })
@@ -1575,67 +1555,46 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   {t('app.restart')}
                 </button>
               )}
-              {/* The banner in the pane says the same thing and scrolls away.
-                  This does not: somebody who joins the session an hour later,
-                  or scrolls up past the separator, still has to be able to find
-                  out that everything above it belongs to a process that no
-                  longer exists. */}
               {current.restoredAt > 0 && !current.exited && (
                 <span
                   data-testid="restored-badge"
                   title={t('restore.badgeWhy', {
                     when: new Date(current.restoredAt * 1000).toLocaleString(),
                   })}
-                  className="shrink-0 rounded-full border border-hairline px-2 py-0.5 text-vp-xs text-ink-2"
+                  className="shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 text-vp-xs text-ink-2"
                 >
                   {t('restore.badge')}
                 </span>
               )}
-              {/* A chip, not loose text. Bare "130x46" floating between a
-                  session title and a row of icons reads as a debug print that
-                  nobody took out; the same characters in a token read as a
-                  readout, which is what it is. */}
-              <span
-                data-testid="grid-size"
-                title={t('app.gridSize')}
-                className="ml-auto shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 tabular text-vp-xs text-ink-2"
-              >
-                {current.cols}×{current.rows}
-              </span>
+              {!narrow && (
+                <span
+                  data-testid="grid-size"
+                  title={t('app.gridSize')}
+                  className="ml-auto shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 font-mono tabular text-vp-xs text-ink-2"
+                >
+                  {current.cols}×{current.rows}
+                </span>
+              )}
             </>
           ) : (
-            <span className="text-vp-md text-ink-2">{t('app.noSessionShort')}</span>
+            <span className="text-vp-base text-ink-2">{t('app.noSessionShort')}</span>
           )}
-          {/* One cluster with a rule in front of it, not four icons each
-              nudged along by ml-1. The rule is what says the left of this row
-              is which session you are looking at and the right of it is the
-              panel itself; without it the grid-size chip, the restart pill and
-              four buttons are one ragged line of unrelated things. */}
-          <span className="vp-divider ml-2" aria-hidden="true" />
-          <div className="ml-1 flex shrink-0 items-center gap-0.5">
-            {/* Always here, on and off, rather than appearing when the panel
-                closes.
-
-                It used to exist only while the panel was hidden, which is the
-                same defect as the split toggle that arrived on the notes tab:
-                the row rearranges itself under a pointer already moving, and
-                the button you were aiming at is now the one next to it. A
-                toggle that reports aria-pressed says more, in less space, and
-                stays still. */}
-            {!narrow && (
-              <button
-                type="button"
-                data-testid="right-show"
-                onClick={() =>
-                  compact ? setSheet((v) => (v === 'panel' ? null : 'panel')) : setRightOpen(rightWidth === 0)
-                }
-                aria-pressed={compact ? sheetShown === 'panel' : rightWidth > 0}
-                title={(compact ? sheetShown !== 'panel' : rightWidth === 0) ? t('app.showPanelShort') : t('app.hidePanel')}
-                className="vp-control"
-              >
-                <PanelRight size={15} />
-              </button>
-            )}
+          <span className={`vp-divider ${narrow || !current ? 'ml-auto' : 'ml-2'}`} aria-hidden="true" />
+          <div className="ml-0.5 flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              data-testid="right-show"
+              onClick={() =>
+                sheetLayout
+                  ? setSheet((v) => (v ? null : 'panel'))
+                  : setRightOpen(rightWidth === 0)
+              }
+              aria-pressed={sheetLayout ? sheetShown !== null : rightWidth > 0}
+              title={(sheetLayout ? sheetShown === null : rightWidth === 0) ? t('app.showPanelShort') : t('app.hidePanel')}
+              className="vp-control"
+            >
+              <PanelRight size={15} />
+            </button>
             {/* A touchscreen that is not a phone gets the two things the
                 desktop layout assumes a keyboard and a mouse provide. */}
             {!narrow && coarsePointer && (
@@ -1732,24 +1691,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
         {error && (
           <div
-            className="border-b border-hairline px-4 py-2 text-vp-base"
-            style={{ color: 'var(--vp-state-waiting)' }}
+            className="border-b border-hairline px-4 py-2 text-vp-base text-warn-ink"
           >
             {safeText(error)}
           </div>
         )}
 
-        {/* A panel that cannot write is the one failure with no symptom: the
-            terminals belong to tmux and keep working, so the only thing that
-            changes is that nothing is being recorded any more. Measured with
-            the database's writes capped — /api/health still said ok, and the
-            only person who found out was the one who happened to press a
-            button. */}
         {upgraded && (
           <div
             data-testid="upgrade-notice"
-            className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-4 py-2 text-vp-base"
-            style={{ background: 'var(--vp-surface-2)' }}
+            className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline bg-surface-2 px-4 py-2 text-vp-base"
           >
             <span className="font-semibold text-ink">{t('upgrade.title')}</span>
             <span className="min-w-0 flex-1 text-ink-2">{t('upgrade.body')}</span>
@@ -1757,15 +1708,14 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               type="button"
               data-testid="upgrade-reload"
               onClick={() => window.location.reload()}
-              className="shrink-0 rounded-vp px-2.5 py-1 text-vp-base"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              className="vp-primary shrink-0 text-vp-sm"
             >
               {t('upgrade.reload')}
             </button>
             <button
               type="button"
               onClick={() => setUpgraded(false)}
-              className="vp-press shrink-0 rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+              className="vp-outline shrink-0 text-vp-sm"
             >
               {t('upgrade.later')}
             </button>
@@ -1775,11 +1725,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {socketError && (
           <div
             data-testid="socket-error"
-            className="border-b border-hairline px-4 py-2 text-vp-base"
-            style={{ color: 'var(--vp-state-crashed)' }}
+            className="border-b border-hairline px-4 py-2 text-vp-base text-danger-ink"
           >
-            {/* And this one holds whatever the server put in an error frame,
-                including a message type echoed back from another client. */}
             {safeText(socketError.message)}
           </div>
         )}
@@ -1800,22 +1747,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {state.stale && (
           <div
             data-testid="stale-notice"
-            className="border-b border-hairline px-4 py-2 text-vp-base"
-            style={{ color: 'var(--vp-state-waiting)' }}
+            className="border-b border-hairline px-4 py-2 text-vp-base text-warn-ink"
           >
             {t('app.stale')} {safeText(state.stale)}
           </div>
         )}
 
-        {/* The one thing the panel had nothing to say about after a reboot.
-            Every row read "gone", the restart button on each of them started a
-            login shell, and there was no way to find out that was what it did
-            until you typed at it. */}
         {pendingRestorable.length > 0 && (
           <div
             data-testid="restore-notice"
-            className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-4 py-2 text-vp-base"
-            style={{ background: 'var(--vp-surface-2)' }}
+            className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline bg-surface-2 px-4 py-2 text-vp-base"
           >
             <span className="font-semibold text-ink">{t('restore.title')}</span>
             <span className="min-w-0 flex-1 text-ink-2">
@@ -1825,32 +1766,26 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               type="button"
               data-testid="restore-open"
               onClick={() => setRestoreOpen(true)}
-              className="shrink-0 rounded-vp px-2.5 py-1 text-vp-base"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              className="vp-primary shrink-0 text-vp-sm"
             >
               {t('restore.open')}
             </button>
             <button
               type="button"
               onClick={dismissRestore}
-              className="vp-press shrink-0 rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+              className="vp-outline shrink-0 text-vp-sm"
             >
               {t('restore.later')}
             </button>
           </div>
         )}
 
-        {/* The terminal is a surface set into the chrome, not a hole cut out of
-            it. Flush against the sidebar and the panel it read as an absence --
-            the same colour arriving where a wall stopped. A radius, a hairline
-            and a few pixels of chrome showing around it are what say "this is
-            the thing, that was the frame". */}
+        {/* Seamless full-bleed terminal canvas: no outer m-2 double-border
+            trench against the sidebar, header or bottom strip, and full screen
+            width for terminal columns on a phone. */}
         <div
-          // On a phone the terminal keeps a floor of a few rows: below it the
-          // keys give way instead (useViewportFit). It used to be the terminal
-          // that gave way, to 0px, under the keyboard.
           data-testid="terminal-area"
-          className={`vp-well relative m-2 flex-1 overflow-hidden rounded-vp border border-hairline ${narrow ? 'min-h-22' : 'min-h-0'} ${
+          className={`vp-well relative flex-1 overflow-hidden ${narrow ? 'min-h-22' : 'min-h-0'} ${
             disconnected ? 'vp-disconnected' : ''
           }`}
           data-disconnected={disconnected}
@@ -1967,11 +1902,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               sessionId={current.id}
               disconnected={disconnected}
               onPaste={pasteToCurrent}
-              // The same road a dropped or pasted file takes: into the project,
-              // then the path on the command line.
               onFiles={(files) => void uploadInto(files)}
+              keysShown={keyFit !== 'none' && !mobileKeysHidden}
+              onToggleKeys={keyFit !== 'none' ? () => setMobileKeysHidden((v) => !v) : undefined}
             />
-            {keyFit !== 'none' && (
+            {keyFit !== 'none' && !mobileKeysHidden && (
               <MobileKeyBar onSend={sendToCurrent} onPaste={pasteToCurrent} oneRow={keyFit === 'one'} />
             )}
           </>
@@ -2046,6 +1981,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           openAt={settingsAt}
           sessions={state.sessions}
           focusSession={focusSession}
+          theme={theme}
+          onThemeChange={setTheme}
           onClose={() => {
             setSettingsAt(null)
             setFocusSession(undefined)
@@ -2149,11 +2086,42 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {sheetShown === 'panel' && (
         <div
           data-testid="panel-sheet"
-          className={narrow ? 'absolute inset-0 z-30 flex flex-col vp-solid vp-safe-pad-top' : 'contents'}
+          className={
+            narrow
+              ? 'vp-sheet-up vp-safe-bottom absolute inset-x-0 top-10 bottom-0 z-30 flex flex-col overflow-hidden border-t border-hairline-strong bg-surface shadow-2xl'
+              : 'contents'
+          }
         >
+          {narrow && (
+            <div className="flex shrink-0 flex-col border-b border-hairline px-3 pt-2 pb-2">
+              <span aria-hidden="true" className="mx-auto mb-2 h-1 w-9 rounded-full bg-hairline-strong" />
+              <div className="vp-segmented vp-segmented-fill">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={true}
+                  className="vp-tab text-vp-sm"
+                  onClick={() => setSheet('panel')}
+                >
+                  {t('app.panelSheet')}
+                </button>
+                {current && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={false}
+                    className="vp-tab text-vp-sm"
+                    onClick={() => setSheet('terminals')}
+                  >
+                    {t('app.terminalsSheet')}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <RightPanel
             placement={narrow ? 'fill' : 'sheet'}
-          project={currentProject}
+            project={currentProject}
             sessions={state.sessions}
             socket={socket}
             layout={paneLayout}
@@ -2179,8 +2147,31 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {sheetShown === 'terminals' && current && (
         <div
           data-testid="terminals-sheet"
-          className="absolute inset-0 z-30 flex flex-col vp-solid vp-safe-pad-top"
+          className="vp-sheet-up vp-safe-bottom absolute inset-x-0 top-10 bottom-0 z-30 flex flex-col overflow-hidden border-t border-hairline-strong bg-surface shadow-2xl"
         >
+          <div className="flex shrink-0 flex-col border-b border-hairline px-3 pt-2 pb-2">
+            <span aria-hidden="true" className="mx-auto mb-2 h-1 w-9 rounded-full bg-hairline-strong" />
+            <div className="vp-segmented vp-segmented-fill">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={false}
+                className="vp-tab text-vp-sm"
+                onClick={() => setSheet('panel')}
+              >
+                {t('app.panelSheet')}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={true}
+                className="vp-tab text-vp-sm"
+                onClick={() => setSheet('terminals')}
+              >
+                {t('app.terminalsSheet')}
+              </button>
+            </div>
+          </div>
           <BottomTerminals
             fill
             key={current.projectId}

@@ -14,7 +14,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#0d0d10" />
+    <meta name="theme-color" content="#131417" />
     <link rel="apple-touch-icon" href="/icon-180.png" />
     <!-- Themes installed as plugins, as one stylesheet the panel serves
          (docs/plugins.md §5). A link rather than something React injects,
@@ -30,42 +30,42 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #e8eaed;
+        background: #f4f5f7;
       }
       .vp-boot-dot {
-        width: 2.5rem;
-        height: 2.5rem;
+        width: 2rem;
+        height: 2rem;
         border-radius: 999px;
-        border: 3px solid rgb(0 0 0 / 0.12);
-        border-top-color: #007aff;
-        animation: vp-boot-spin 900ms linear infinite;
+        border: 2px solid rgb(15 23 42 / 0.12);
+        border-top-color: #18191c;
+        animation: vp-boot-spin 800ms linear infinite;
       }
       @keyframes vp-boot-spin {
         to { transform: rotate(360deg); }
       }
       @media (prefers-color-scheme: dark) {
-        :root:not([data-theme='light']) .vp-boot { background: #0d0d10; }
+        :root:not([data-theme='light']) .vp-boot { background: #131417; }
         :root:not([data-theme='light']) .vp-boot-dot {
-          border-color: rgb(255 255 255 / 0.14);
-          border-top-color: #0a84ff;
+          border-color: rgb(255 255 255 / 0.12);
+          border-top-color: #eceef2;
         }
       }
-      :root[data-theme='dark'] .vp-boot { background: #0d0d10; }
+      :root[data-theme='dark'] .vp-boot { background: #131417; }
       :root[data-theme='dark'] .vp-boot-dot {
-        border-color: rgb(255 255 255 / 0.14);
-        border-top-color: #0a84ff;
+        border-color: rgb(255 255 255 / 0.12);
+        border-top-color: #eceef2;
       }
       /* After the media block on purpose: on a dark system that block matches
-         porcelain too, and the splash would be black before a white panel. */
-      :root[data-theme='porcelain'] .vp-boot { background: #ecebe8; }
+         porcelain too, and the splash would be black before a light panel. */
+      :root[data-theme='porcelain'] .vp-boot { background: #f3f0ea; }
       :root[data-theme='porcelain'] .vp-boot-dot {
-        border-color: rgb(32 30 28 / 0.12);
-        border-top-color: #201e1c;
+        border-color: rgb(42 36 28 / 0.14);
+        border-top-color: #292623;
       }
-      :root[data-theme='wujin'] .vp-boot { background: #131211; }
+      :root[data-theme='wujin'] .vp-boot { background: #191816; }
       :root[data-theme='wujin'] .vp-boot-dot {
-        border-color: rgb(240 238 234 / 0.14);
-        border-top-color: #f0eeea;
+        border-color: rgb(238 232 222 / 0.14);
+        border-top-color: #d97757;
       }
       /* Somebody who asked for no motion gets a dot rather than nothing: the
          point is "something is happening", and a still ring says that too. */

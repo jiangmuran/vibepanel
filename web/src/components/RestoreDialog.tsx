@@ -212,8 +212,7 @@ export function RestoreDialog({
           {failures.length > 0 && (
             <span
               data-testid="restore-failures"
-              className="min-w-0 flex-1 text-vp-base"
-              style={{ color: 'var(--vp-state-crashed)' }}
+              className="min-w-0 flex-1 text-vp-base text-danger-ink"
             >
               {t('restore.failed', { n: failures.length })}
             </span>
@@ -221,7 +220,7 @@ export function RestoreDialog({
           <button
             type="button"
             onClick={onClose}
-            className="vp-press ml-auto rounded-vp px-3 py-1.5 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+            className="vp-outline ml-auto text-vp-sm"
           >
             {t('restore.close')}
           </button>
@@ -230,8 +229,7 @@ export function RestoreDialog({
             data-testid="restore-go"
             disabled={busy || chosen.size === 0}
             onClick={() => void run()}
-            className="vp-press flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base disabled:opacity-50"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            className="vp-primary text-vp-sm"
           >
             {busy && <Loader2 size={13} className="animate-spin" />}
             {busy ? t('restore.working') : t('restore.go', { n: chosen.size })}

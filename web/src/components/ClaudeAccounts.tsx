@@ -122,8 +122,7 @@ export function ClaudeAccounts() {
           type="button"
           onClick={() => setCreating(true)}
           data-testid="claude-account-new"
-          className="vp-press mt-3 flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base"
-          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          className="vp-primary mt-3 text-vp-sm"
         >
           <Plus size={13} />
           {t('acct.new')}
@@ -227,7 +226,7 @@ function AccountRow({
       <div className="mt-1 pl-5 text-vp-sm leading-relaxed" data-testid="claude-account-status">
         <AccountStatusLine status={status} checking={checking} />
         {blocked.length > 0 && (
-          <p style={{ color: 'var(--vp-state-waiting)' }}>
+          <p className="text-warn-ink">
             {t('acct.blocked', { names: blocked.join(', ') })}
           </p>
         )}
@@ -264,7 +263,7 @@ function AccountStatusLine({
   if (checking || !status) return <p className="text-ink-3">{t('acct.checking')}</p>
   if (!status.status) {
     return (
-      <p style={{ color: 'var(--vp-state-crashed)' }}>
+      <p className="text-danger-ink">
         {t('acct.statusError', { error: safeText(status.error ?? '') })}
       </p>
     )
@@ -275,10 +274,8 @@ function AccountStatusLine({
     return <p className="text-ink">{t('acct.loggedIn', { who: safeText(who) })}</p>
   }
   if (s.loggedIn) {
-    // An API key or a token in the environment, which stands in for the login
-    // and bills something other than the account.
     return (
-      <p style={{ color: 'var(--vp-state-waiting)' }}>
+      <p className="text-warn-ink">
         {t('acct.otherAuth', { method: safeText(s.authMethod) })}
       </p>
     )
@@ -345,15 +342,14 @@ function NewAccount({
           disabled={busy || name.trim() === ''}
           onClick={() => void create()}
           data-testid="claude-account-create"
-          className="vp-press shrink-0 rounded-vp px-3 py-1.5 text-vp-base disabled:opacity-50"
-          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          className="vp-primary shrink-0 text-vp-sm"
         >
           {t('acct.create')}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="vp-press shrink-0 rounded-vp px-3 py-1.5 text-vp-base text-ink-2 hover:text-ink"
+          className="vp-outline shrink-0 text-vp-sm"
         >
           {t('acct.cancel')}
         </button>

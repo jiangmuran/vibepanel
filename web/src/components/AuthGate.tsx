@@ -99,35 +99,28 @@ export function AuthGate({ children }: { children: (state: AuthState, signOut: (
  * frame, in whichever palette is on.
  */
 export function Mark({ small }: { small?: boolean }) {
-  // Two sizes and one drawing: the sign-in card's mark, and the same mark at
-  // control height in the sharing page's header, where a 48px square would be
-  // the tallest thing on the line.
-  const box = small ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-vp shadow-lg'
+  const box = small ? 'h-6 w-6 rounded-md' : 'h-11 w-11 rounded-vp border border-hairline-strong shadow-sm'
   return (
-    <span className={`flex shrink-0 items-center justify-center bg-accent ${box}`}>
-      <svg viewBox="0 0 64 64" width={small ? 18 : 30} height={small ? 18 : 30} aria-hidden="true">
-        <g fill="var(--vp-accent-ink)">
+    <span
+      className={`flex shrink-0 items-center justify-center ${box}`}
+      style={{ background: 'var(--ui-accent-fill)' }}
+    >
+      <svg viewBox="0 0 64 64" width={small ? 15 : 26} height={small ? 15 : 26} aria-hidden="true">
+        <g fill="var(--ui-accent-fill-ink)">
           <rect x="13" y="17" width="26" height="6" rx="3" />
           <rect x="13" y="29" width="34" height="6" rx="3" />
           <rect x="13" y="41" width="20" height="6" rx="3" />
         </g>
-        {/* The waiting marker is a triangle here for the same reason it is one
-            in the sidebar: shape carries the meaning, never the hue alone. */}
         <path d="M50 15 L56 25.5 L44 25.5 Z" fill="var(--vp-state-waiting)" />
       </svg>
     </span>
   )
 }
 
-/* Two washes behind the card, in tokens so they follow the theme.
- *
- * A flat page behind a flat card is what made the old screen read as an
- * unstyled form: nothing on it had any depth, so the browser's own default
- * rendering and this were the same picture. Written as an array because the
- * untranslated-string check reads `name: 'text with spaces'` as prose. */
+/* Subtle top-edge ambient sheen rather than loud radial colour blobs, keeping
+   the sign-in screen in the same calm material language as the workbench. */
 const WASH = [
-  'radial-gradient(52rem 26rem at 50% -8rem, color-mix(in srgb, var(--vp-accent) 18%, transparent), transparent 68%)',
-  'radial-gradient(38rem 22rem at 108% 108%, color-mix(in srgb, var(--vp-state-waiting) 10%, transparent), transparent 70%)',
+  'radial-gradient(48rem 20rem at 50% -6rem, color-mix(in srgb, var(--vp-ink) 5%, transparent), transparent 72%)',
 ].join(', ')
 
 /**
@@ -239,12 +232,9 @@ function Field({
   )
 }
 
-// py-2.5 rather than a height: under a coarse pointer styles.css forces every
-// field to 16px so that iOS does not zoom the page on focus, and a fixed height
-// would then clip the text it was sized for.
 const INPUT =
-  'w-full rounded-vp border border-hairline bg-bg py-2.5 pr-3 pl-9 text-vp-md text-ink ' +
-  'outline-none transition-colors duration-200 ease-vp focus:border-accent focus:ring-2 focus:ring-accent/25'
+  'w-full rounded-vp border border-hairline-strong bg-bg py-2 pr-3 pl-9 text-vp-base text-ink ' +
+  'outline-none transition-colors duration-100 ease-vp focus:border-accent'
 
 /**
  * A step in the first run, numbered.
@@ -447,7 +437,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
               disabled={busy}
               onClick={() => void runSetup(true)}
               data-testid="origin-trust-add"
-              className="vp-press vp-primary flex items-center justify-center gap-2 rounded-vp bg-accent px-4 py-2.5 text-vp-md font-medium text-accent-ink shadow-sm disabled:opacity-50"
+              className="vp-primary h-9 px-4 text-vp-base"
             >
               {busy ? t('auth.working') : t('auth.originAdd')}
             </button>
@@ -455,7 +445,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
               type="button"
               disabled={busy}
               onClick={() => setAskOrigin(null)}
-              className="vp-press rounded-vp border border-hairline bg-surface-2 px-4 py-2.5 text-vp-md font-medium text-ink-2 disabled:opacity-50"
+              className="vp-outline h-9 px-4 text-vp-base"
             >
               {t('auth.originCancel')}
             </button>
@@ -561,7 +551,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           type="submit"
           disabled={busy}
           data-testid="auth-submit"
-          className="vp-press vp-primary mt-4 flex w-full items-center justify-center gap-2 rounded-vp bg-accent px-4 py-2.5 text-vp-md font-medium text-accent-ink shadow-sm disabled:opacity-50"
+          className="vp-primary mt-4 h-9 w-full text-vp-base"
         >
           {busy ? (
             <Loader2 size={14} className="animate-spin" />

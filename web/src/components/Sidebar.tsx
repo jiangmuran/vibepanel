@@ -8,6 +8,7 @@ import {
   Clock,
   GripVertical,
   ListOrdered,
+  PanelLeft,
   Pause,
   PanelRight,
   Pin,
@@ -207,16 +208,18 @@ export function Sidebar(props: SidebarProps) {
       // the same defect as the tab strip below and the key bar on a phone.
       <aside
         data-testid="sidebar-rail"
-        className="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-hairline py-2 vp-blur vp-safe-pad-top"
+        className="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-hairline pb-2 vp-blur"
       >
-        <button
-          type="button"
-          onClick={props.onToggle}
-          title={t('app.projects')}
-          className="vp-control mb-1"
-        >
-          <ChevronLeft size={15} className="rotate-180" />
-        </button>
+        <div className="vp-chrome w-full justify-center border-b border-hairline vp-safe-top">
+          <button
+            type="button"
+            onClick={props.onToggle}
+            title={t('app.projects')}
+            className="vp-control"
+          >
+            <PanelLeft size={15} />
+          </button>
+        </div>
         {projects.map((p) => {
           const list = byProject.get(p.id) ?? []
           const state = summarise(list)
@@ -328,25 +331,10 @@ export function Sidebar(props: SidebarProps) {
   // and there is no reason for it to be taller. Padding comes off the row and
   // the gap between groups, and nothing comes off the buttons.
   const pack = {
-    // Space *between* groups, none inside one. A project and its sessions are
-    // one thing; the gap that says so has to be bigger than the gap between
-    // two sessions, and it used to be the same.
-    section: overlay ? 'mb-1 mt-3 first:mt-0' : 'mb-1 mt-2.5 first:mt-0',
-    header: overlay ? 'px-2 py-0' : 'px-2 py-0.5',
-    // Indented, and that is the hierarchy. Once the project's name stopped
-    // being smaller and greyer than its sessions, the two read as one flat
-    // list: same size, same colour, same left edge, and the only difference a
-    // state glyph. The indent says which belongs to which and costs no height,
-    // which is the whole point of it rather than more space between groups.
-    // py-0.5 docked: the row's height is set by the 28px control boxes in it,
-    // not by the text, so padding on top of them is pure air. 「太松散了」.
+    section: overlay ? 'mb-1.5 mt-3 first:mt-0' : 'mb-1 mt-3 first:mt-0',
+    header: overlay ? 'px-2 py-0.5' : 'px-2 py-0.5',
     row: overlay ? 'px-2 py-1' : 'px-2 py-0.5',
-    // The connector. Once the project's name stopped being smaller and greyer
-    // than its sessions -- correctly, it is what you scan for -- the two read
-    // as one flat list of identical rows. A rule down the left of a project's
-    // sessions says which belong to which, and costs no height at all, which
-    // more space between groups would.
-    kids: overlay ? 'ml-4 border-l border-hairline pl-1' : 'ml-3 border-l border-hairline pl-1',
+    kids: overlay ? 'mt-0.5 space-y-0.5 pl-1' : 'mt-0.5 space-y-0.5 pl-0.5',
   }
 
   // On a touch screen the row controls live on the selected row only.
@@ -364,21 +352,20 @@ export function Sidebar(props: SidebarProps) {
   // and in landscape at 1194.
   const rowControls = (isSelected: boolean) => !(overlay || props.touch) || isSelected
 
-  // The overlay covers the terminal and must be opaque.
   const shell = overlay
-    ? 'vp-drawer-in absolute inset-y-0 left-0 z-20 w-72 border-r border-hairline shadow-2xl vp-solid'
+    ? 'vp-drawer-in absolute inset-y-0 left-0 z-20 w-72 border-r border-hairline-strong shadow-2xl vp-solid'
     : 'w-64 shrink-0 border-r border-hairline vp-blur'
 
   return (
     <aside data-testid="sidebar" data-overlay={overlay} className={`flex flex-col ${shell}`}>
-      <header className="flex items-center gap-1 px-3 py-2 vp-safe-pad-top">
+      <header className="vp-chrome gap-1.5 border-b border-hairline px-3 vp-safe-top">
         <button
           type="button"
           onClick={props.onToggle}
           title={overlay ? t('settings.close') : t('sidebar.collapse')}
-          className="vp-control"
+          className="vp-control -ml-1"
         >
-          <ChevronLeft size={15} />
+          {overlay ? <ChevronLeft size={15} /> : <PanelLeft size={15} />}
         </button>
         <span className={`${rank.head} font-semibold tracking-tight`}>{t('app.projects')}</span>
         {/* Two views of the same projects, and switching between them costs
@@ -423,7 +410,7 @@ export function Sidebar(props: SidebarProps) {
       {props.disconnected && overlay && <DisconnectedBar className="border-t" />}
       <nav
         data-disconnected={props.disconnected === true}
-        className={`flex-1 overflow-y-auto px-2 pb-3 ${props.disconnected ? 'vp-disconnected' : ''}`}
+        className={`flex-1 overflow-y-auto px-2 pt-2 pb-3 ${props.disconnected ? 'vp-disconnected' : ''}`}
       >
         {projects.length === 0 && (
           <p data-testid="sidebar-empty" className="px-2 py-6 text-vp-base leading-relaxed text-ink-2">
@@ -457,15 +444,12 @@ export function Sidebar(props: SidebarProps) {
               >
                 <GripVertical size={12} />
               </span>
-              <InlineName
-                value={projectLabel(p)}
-                onCommit={(next) => props.onRenameProject(p, next)}
-                // `text-ink`, and no extra tracking. It is a heading; the
-                // sessions under it are the detail. Tracking also widens CJK
-                // names for nothing, and this panel has them.
-                className={`${rank.group} min-w-0 flex-1 truncate font-semibold text-ink`}
-                title={p.path}
-              />
+                <InlineName
+                  value={projectLabel(p)}
+                  onCommit={(next) => props.onRenameProject(p, next)}
+                  className={`${rank.group} min-w-0 flex-1 truncate font-semibold text-ink-2`}
+                  title={p.path}
+                />
               <button
                 type="button"
                 onClick={() => props.onNewSession(p)}
@@ -535,8 +519,8 @@ export function Sidebar(props: SidebarProps) {
                   // Which one is on screen, said in words a screen reader and
                   // a check can both read rather than only as a background.
                   aria-current={isSelected ? 'true' : undefined}
-                  className={`group flex cursor-pointer items-center gap-2 rounded-vp ${pack.row} transition-colors duration-200 ease-vp ${
-                    isSelected ? 'vp-row-selected' : 'hover:bg-surface-2'
+                  className={`group flex cursor-pointer items-center gap-2 rounded-md ${pack.row} transition-colors duration-100 ease-vp ${
+                    isSelected ? 'vp-row-selected font-medium' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
                   }`}
                   onClick={() => props.onSelect(s.id)}
                   // Reachable and usable from the keyboard: it was a div with a
@@ -587,22 +571,18 @@ export function Sidebar(props: SidebarProps) {
                     <span
                       data-testid="session-frozen"
                       title={t('res.frozen')}
-                      className="inline-flex shrink-0 items-center gap-0.5 text-vp-xs"
-                      style={{ color: 'var(--vp-state-waiting)' }}
+                      className="inline-flex shrink-0 items-center gap-0.5 text-vp-xs text-warn-ink"
                     >
                       <Pause size={11} aria-hidden="true" />
                       <span className="sr-only">{t('res.frozen')}</span>
                     </span>
                   )}
-                  {/* The glyph says "gone" and this says how. A shape cannot
-                      carry an exit code, and 3 vs 0 is the difference between
-                      "it crashed" and "it finished and closed". */}
                   {s.exited && (
                     <span
                       className={`shrink-0 text-vp-xs tabular ${
                         s.exitStatus === 0 || s.exitStatus === EXIT_VANISHED
-                          ? 'text-ink-2'
-                          : 'text-state-crashed'
+                          ? 'text-ink-3'
+                          : 'text-danger-ink'
                       }`}
                     >
                       {s.exitStatus === EXIT_VANISHED
@@ -619,64 +599,56 @@ export function Sidebar(props: SidebarProps) {
                       (docs/plugins.md §7, host.slots.add): a placeholder the
                       host runtime fills, empty and sizeless otherwise. */}
                   <span data-host-slot="sidebar.sessionRow.trailing" data-session={s.id} className="contents" />
-                  {/* Always visible, unlike pin and kill: a dead session is a
-                      thing to act on, not an affordance to discover on hover —
-                      and hover does not exist on the phone. */}
-                  {s.exited && (
-                    <button
-                      type="button"
-                      data-testid="restart-session"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        props.onRestartSession(s)
-                      }}
-                      title={
-                        s.exitStatus === EXIT_VANISHED
+                  <span className="flex shrink-0 items-center">
+                    {s.exited && (
+                      <button
+                        type="button"
+                        data-testid="restart-session"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          props.onRestartSession(s)
+                        }}
+                        title={
+                          s.exitStatus === EXIT_VANISHED
                             ? t('restore.gone')
                             : t('app.restartHintStatus', { n: s.exitStatus })
-                      }
-                      className="vp-control vp-tap"
-                    >
-                      <RotateCcw size={12} />
-                    </button>
-                  )}
-                  {(rowControls(isSelected) || s.pinned) && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      props.onPinSession(s, !s.pinned)
-                    }}
-                    data-testid="pin-session"
-                    title={s.pinned ? t('session.unpin') : t('session.pin')}
-                    // Six rows, six buttons all called "Pin" to a screen reader.
-                    aria-label={`${s.pinned ? t('session.unpin') : t('session.pin')}: ${props.labels.get(s.id) ?? sessionLabel(s)}`}
-                    // Not vp-reveal while it is on. Being pinned is state you
-                    // have to be able to see without hovering, so the row used
-                    // to draw a second pin badge beside the name -- and on
-                    // hover both were on screen at once, which is the reported
-                    // 「按下后会出现两个icon」. One element: the control is the
-                    // badge, and it stops hiding once it has something to say.
-                    className={`vp-control vp-tap ${s.pinned ? 'text-accent' : 'vp-reveal'}`}
-                  >
-                    {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
-                  </button>
-                  )}
-                  {rowControls(isSelected) && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      props.onKillSession(s)
-                    }}
-                    data-testid="kill-session"
-                    title={t('session.kill')}
-                    aria-label={`${t('session.kill')}: ${props.labels.get(s.id) ?? sessionLabel(s)}`}
-                    className="vp-control vp-tap vp-reveal"
-                  >
-                    <X size={12} />
-                  </button>
-                  )}
+                        }
+                        className="vp-control vp-tap"
+                      >
+                        <RotateCcw size={12} />
+                      </button>
+                    )}
+                    {(rowControls(isSelected) || s.pinned) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          props.onPinSession(s, !s.pinned)
+                        }}
+                        data-testid="pin-session"
+                        title={s.pinned ? t('session.unpin') : t('session.pin')}
+                        aria-label={`${s.pinned ? t('session.unpin') : t('session.pin')}: ${props.labels.get(s.id) ?? sessionLabel(s)}`}
+                        className={`vp-control vp-tap ${s.pinned ? 'text-accent' : 'vp-reveal'}`}
+                      >
+                        {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
+                      </button>
+                    )}
+                    {rowControls(isSelected) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          props.onKillSession(s)
+                        }}
+                        data-testid="kill-session"
+                        title={t('session.kill')}
+                        aria-label={`${t('session.kill')}: ${props.labels.get(s.id) ?? sessionLabel(s)}`}
+                        className="vp-control vp-tap vp-reveal"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </span>
                 </div>
                 {/* What the session says about itself (`vibepanel me`): a
                     line, a figure and a few chips under the row. The figure

@@ -21,6 +21,7 @@ import {
   groupOf,
 } from './settings/groups'
 import type { SettingsGroup, SettingsSection } from './settings/groups'
+import type { ThemeChoice } from './theme'
 
 /** One glyph per rail item, so the rail is scannable before it is read. */
 const GROUP_ICON: Record<SettingsGroup, LucideIcon> = {
@@ -55,6 +56,8 @@ export function Settings({
   onClose,
   sessions,
   focusSession,
+  theme,
+  onThemeChange,
 }: {
   openAt: SettingsSection
   onClose: () => void
@@ -62,6 +65,8 @@ export function Settings({
   sessions: Session[]
   /** A session the resources page opens on, when the memory question sent somebody here. */
   focusSession?: string
+  theme?: ThemeChoice
+  onThemeChange?: (next: ThemeChoice) => void
 }) {
   // Subscribed to the language, so the switch in the header redraws every
   // string in this dialog and not only its own two.
@@ -123,7 +128,7 @@ export function Settings({
   }, [])
 
   return (
-    <div className="vp-backdrop absolute inset-0 z-30 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-8">
+    <div className="vp-backdrop absolute inset-0 z-30 flex items-end justify-center overflow-y-auto bg-black/45 p-0 @xl:items-start @xl:px-4 @xl:py-8" style={{ alignItems: 'center' }}>
       <div
         ref={dialogRef}
         data-testid="settings"
@@ -131,26 +136,10 @@ export function Settings({
         role="dialog"
         aria-modal="true"
         aria-labelledby="vp-settings-title"
-        // A reading measure. Every group is label/value lines and a handful
-        // of controls, which read badly past about seventy characters. The
-        // one surface that wanted more — sharing — is a page now.
-        //
-        // A container, and the rail below answers to this box rather than to
-        // the window: the dialog is never wider than 48rem, so a viewport
-        // variant fires by however much the window outgrows it.
-        className="vp-panel-in @container flex max-h-full w-full max-w-3xl flex-col rounded-vp-lg border border-hairline bg-surface shadow-xl"
+        className="vp-panel-in @container flex max-h-[90dvh] w-full max-w-3xl flex-col overflow-hidden rounded-vp-lg border border-hairline-strong bg-surface shadow-2xl mx-3"
       >
-        {/* The language switch is in the header rather than in a group, and it
-            is the one control here that is about the reading rather than about
-            the panel. Somebody who needs it cannot read the rail — which is
-            the whole reason they are looking for it — so it may not be behind
-            a word they would have to translate first.
-
-            A segmented pair rather than a dropdown: there are two, both fit,
-            and a select for two options is a click that buys nothing. Each
-            option is written in its own language. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-hairline px-5 py-3">
-          <h2 id="vp-settings-title" className="mr-auto text-vp-lg font-semibold tracking-tight text-ink">
+          <h2 id="vp-settings-title" className="mr-auto text-vp-md font-semibold tracking-tight text-ink">
             {t('settings.title')}
           </h2>
           <LanguageSwitch testid="settings" />
@@ -159,14 +148,14 @@ export function Settings({
             onClick={onClose}
             title={t('settings.close')}
             data-testid="settings-close"
-            className="vp-control"
+            className="vp-control vp-tap"
           >
             <X size={15} />
           </button>
         </div>
 
         {error && (
-          <p className="px-5 pt-3 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
+          <p className="px-5 pt-3 text-vp-base text-warn-ink">
             {error}
           </p>
         )}
@@ -274,7 +263,7 @@ export function Settings({
             {group === 'notify' && <NotificationsGroup />}
             {group === 'account' && <AccountGroup info={info} />}
             {group === 'resources' && <ResourcesGroup sessions={sessions} focus={focusSession} />}
-            {group === 'panel' && <PanelGroup info={info} />}
+            {group === 'panel' && <PanelGroup info={info} theme={theme} onThemeChange={onThemeChange} />}
             {/* What plugins add under this rail item: a frame per
                 settings.section entry whose group is this one, after the
                 panel's own sections. docs/plugins.md §5. */}

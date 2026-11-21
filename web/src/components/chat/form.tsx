@@ -11,7 +11,7 @@ import { useState } from 'react'
  */
 
 const FIELD =
-  'min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
+  'min-w-0 rounded-md border border-hairline-strong bg-bg px-2.5 py-1.5 text-vp-base text-ink outline-none transition-colors duration-100 ease-vp focus:border-accent'
 
 export const INPUT = `w-full ${FIELD}`
 export const INPUT_SHORT = FIELD
@@ -25,7 +25,7 @@ export function Secondary({
     <button
       type="button"
       {...rest}
-      className={`vp-press flex items-center gap-1.5 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink hover:border-accent disabled:opacity-40 ${rest.className ?? ''}`}
+      className={`vp-outline text-vp-sm ${rest.className ?? ''}`}
     >
       {children}
     </button>
@@ -40,8 +40,7 @@ export function Primary({
     <button
       type="button"
       {...rest}
-      className={`vp-press flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base disabled:opacity-40 ${rest.className ?? ''}`}
-      style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+      className={`vp-primary text-vp-sm ${rest.className ?? ''}`}
     >
       {children}
     </button>

@@ -178,8 +178,7 @@ export function PasskeysSection({ blocker, rpID }: { blocker: string; rpID: stri
         disabled={busy || blocker !== '' || !passkeysSupported()}
         onClick={() => void add()}
         data-testid="passkey-add"
-        className="mt-3 flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
-        style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+        className="vp-primary mt-3 text-vp-sm"
       >
         <Plus size={13} />
         {busy ? t('pk.waiting') : t('pk.add')}
