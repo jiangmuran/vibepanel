@@ -7,6 +7,7 @@ import type { Session, SettingsInfo } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 import { CHAT_PATH, PLUGINS_PATH, SHARING_PATH } from '../routes'
 import { useDialogFocus } from './useDialogFocus'
+import { useSlidingMarker } from './useSlidingMarker'
 import { LanguageSwitch } from './LanguageSwitch'
 import { PluginSections } from './plugins/slots'
 import { AccountGroup } from './settings/AccountGroup'
@@ -70,13 +71,24 @@ export function Settings({
 }) {
   // Subscribed to the language, so the switch in the header redraws every
   // string in this dialog and not only its own two.
-  useLang()
+  const lang = useLang()
   const [group, setGroup] = useState<SettingsGroup>(() => groupOf(openAt))
+  const [slide, setSlide] = useState<{ group: SettingsGroup; dir: 'none' | 'down' | 'up' }>(() => ({
+    group: groupOf(openAt),
+    dir: 'none',
+  }))
+  if (slide.group !== group) {
+    const from = SETTINGS_GROUPS.indexOf(slide.group)
+    const to = SETTINGS_GROUPS.indexOf(group)
+    setSlide({ group, dir: to >= from ? 'down' : 'up' })
+  }
   const [info, setInfo] = useState<SettingsInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const railRef = useRef<HTMLDivElement>(null)
+  const tablistRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const marker = useSlidingMarker(tablistRef, `${group}:${lang}`)
 
   // Polled while open, not fetched once.
   //
@@ -171,10 +183,23 @@ export function Settings({
             className="vp-scroll-x flex shrink-0 items-center gap-1 @xl:w-40 @xl:flex-col @xl:items-stretch @xl:overflow-visible"
           >
             <div
+              ref={tablistRef}
               role="tablist"
               aria-label={t('settings.groups')}
-              className="flex shrink-0 gap-1 @xl:flex-col"
+              data-marker={marker ? 'on' : 'off'}
+              className="relative flex shrink-0 gap-1 @xl:flex-col"
             >
+              {marker && (
+                <span
+                  aria-hidden="true"
+                  className="vp-marker-2d vp-marker-rail"
+                  style={{
+                    width: marker.width,
+                    height: marker.height,
+                    transform: `translate3d(${marker.left}px, ${marker.top}px, 0)`,
+                  }}
+                />
+              )}
               {SETTINGS_GROUPS.map((id) => {
                 const Icon = GROUP_ICON[id]
                 return (
@@ -257,7 +282,8 @@ export function Settings({
             aria-labelledby={`settings-tab-${group}`}
             data-testid="settings-body"
             data-group={group}
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+            data-slide={slide.dir}
+            className="vp-pane-slide min-h-0 min-w-0 flex-1 overflow-y-auto pr-1"
           >
             {group === 'sessions' && <SessionsGroup />}
             {group === 'notify' && <NotificationsGroup />}

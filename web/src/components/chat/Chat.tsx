@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bell, Bot, Cable, Gauge, ScrollText, Users, Waypoints } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -7,6 +7,7 @@ import type { ChatSettings } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
 import type { Key } from '../../i18n'
 import { safeText } from '../text'
+import { useSlidingMarker } from '../useSlidingMarker'
 import { errText } from './form'
 import { Alerts } from './Alerts'
 import { Assistant } from './Assistant'
@@ -92,10 +93,21 @@ function tabFromHash(): string {
  * peer paired in one tab show up as a destination in the next.
  */
 export function Chat() {
-  useLang()
+  const lang = useLang()
   const [data, setData] = useState<ChatSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState(tabFromHash)
+  const [slide, setSlide] = useState<{ tab: string; dir: 'none' | 'right' | 'left' }>(() => ({
+    tab: tabFromHash(),
+    dir: 'none',
+  }))
+  if (slide.tab !== tab) {
+    const from = TABS.findIndex((x) => x.id === slide.tab)
+    const to = TABS.findIndex((x) => x.id === tab)
+    setSlide({ tab, dir: to >= from ? 'right' : 'left' })
+  }
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const marker = useSlidingMarker(tabsRef, `${tab}:${lang}:${Boolean(data?.available)}`)
 
   // One fetch, used by the poll and by every section after a write. The
   // poll's copy is cancelled on unmount; a section's reload after the page
@@ -151,7 +163,24 @@ export function Chat() {
   return (
     <div data-testid="chat" className="@container">
       <div className="mb-5">
-        <div role="tablist" aria-label={t('grp.chat')} className="vp-segmented w-fit max-w-full">
+        <div
+          ref={tabsRef}
+          role="tablist"
+          aria-label={t('grp.chat')}
+          data-marker={marker ? 'on' : 'off'}
+          className="vp-segmented w-fit max-w-full"
+        >
+          {marker && (
+            <span
+              aria-hidden="true"
+              className="vp-marker-2d"
+              style={{
+                width: marker.width,
+                height: marker.height,
+                transform: `translate3d(${marker.left}px, ${marker.top}px, 0)`,
+              }}
+            />
+          )}
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -178,7 +207,7 @@ export function Chat() {
           ))}
         </div>
       </div>
-      <div role="tabpanel">
+      <div key={tab} role="tabpanel" data-slide={slide.dir} className="vp-pane-slide">
         {tab === 'channels' && <Channels data={data} onChange={reload} />}
         {tab === 'peers' && <Peers data={data} onChange={reload} />}
         {tab === 'routes' && <Routes data={data} onChange={reload} />}

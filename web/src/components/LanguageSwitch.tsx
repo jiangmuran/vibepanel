@@ -1,4 +1,6 @@
+import { useRef } from 'react'
 import { setLang, t, useLang } from '../i18n'
+import { useSlidingMarker } from './useSlidingMarker'
 
 /**
  * The two languages, each written in its own.
@@ -17,8 +19,21 @@ import { setLang, t, useLang } from '../i18n'
  */
 export function LanguageSwitch({ testid }: { testid: string }) {
   const lang = useLang()
+  const ref = useRef<HTMLDivElement>(null)
+  const marker = useSlidingMarker(ref, lang)
   return (
-    <div data-testid={`${testid}-language`} className="vp-segmented">
+    <div ref={ref} data-testid={`${testid}-language`} data-marker={marker ? 'on' : 'off'} className="vp-segmented">
+      {marker && (
+        <span
+          aria-hidden="true"
+          className="vp-marker-2d"
+          style={{
+            width: marker.width,
+            height: marker.height,
+            transform: `translate3d(${marker.left}px, ${marker.top}px, 0)`,
+          }}
+        />
+      )}
       {(['zh', 'en'] as const).map((code) => (
         <button
           key={code}

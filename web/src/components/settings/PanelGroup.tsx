@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { EnvSettings } from './EnvSettings'
 import { TimeZone } from './TimeZone'
 import { RestartPanel } from './RestartPanel'
@@ -6,10 +7,11 @@ import { KeyboardSettings } from './KeyboardSettings'
 import { RendererSettings } from './RendererSettings'
 import { LocalEchoSettings } from './LocalEchoSettings'
 import type { SettingsInfo } from '../../protocol/wire'
-import { t } from '../../i18n'
+import { t, useLang } from '../../i18n'
 import { safeText } from '../text'
 import { formatBytes } from '../bytes'
 import { UpdateSection } from '../UpdateSection'
+import { useSlidingMarker } from '../useSlidingMarker'
 import { Row, Section } from './parts'
 
 function duration(seconds: number): string {
@@ -69,13 +71,34 @@ export function PanelGroup({
   theme?: ThemeChoice
   onThemeChange?: (next: ThemeChoice) => void
 }) {
+  const lang = useLang()
   const choices = ['system', ...BUILT_IN_THEMES] as const
+  const themeRef = useRef<HTMLDivElement>(null)
+  const marker = useSlidingMarker(themeRef, `${theme ?? ''}:${lang}`)
   return (
     <>
       {theme !== undefined && onThemeChange && (
         <div className="mb-6">
           <h3 className="mb-2 text-vp-base font-semibold tracking-tight text-ink">{t('app.theme')}</h3>
-          <div className="vp-segmented w-fit max-w-full" role="radiogroup" aria-label={t('app.theme')} data-testid="settings-theme-picker">
+          <div
+            ref={themeRef}
+            className="vp-segmented w-fit max-w-full"
+            role="radiogroup"
+            aria-label={t('app.theme')}
+            data-testid="settings-theme-picker"
+            data-marker={marker ? 'on' : 'off'}
+          >
+            {marker && (
+              <span
+                aria-hidden="true"
+                className="vp-marker-2d"
+                style={{
+                  width: marker.width,
+                  height: marker.height,
+                  transform: `translate3d(${marker.left}px, ${marker.top}px, 0)`,
+                }}
+              />
+            )}
             {choices.map((c) => (
               <button
                 key={c}

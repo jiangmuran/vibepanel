@@ -28178,4 +28178,13 @@ What changed across the frontend:
   channel grid to `items-start`, and gave narrow screens a direct header button
   to a bottom-sheet workspace switcher, a full-width terminal, a unified
   compose pill with key-bar toggle, and keycap-styled keys.
+- **Sliding tab markers, directional panes and custom scrollbars.** Added a 2D
+  `useSlidingMarker` hook across the Settings rail, language switch, theme
+  picker, Chat tabs, Manage dialog and Token range strip, paired with a
+  directional fade-and-glide (`vp-pane-slide`, starting at 0.25 opacity so
+  first-frame controls stay visible to `findFadedControls`) on tab bodies; and
+  styled native scrollbars in `@layer base` as a 6px floating pill with no
+  gutter or arrow buttons (`scrollbar-width: thin` gated to engines without
+  `::-webkit-scrollbar` so Chromium keeps the custom pill).
+
 

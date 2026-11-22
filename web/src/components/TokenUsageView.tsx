@@ -20,6 +20,7 @@ import {
   type Ranked,
 } from './panels/spend'
 import { useDialogFocus } from './useDialogFocus'
+import { useSlidingMarker } from './useSlidingMarker'
 
 /** The range control's positions, in days. */
 const RANGES = [7, 30, 90, 365]
@@ -190,6 +191,9 @@ function Filters(props: {
   days: number
   onDays: (v: number) => void
 }) {
+  const lang = useLang()
+  const rangeRef = useRef<HTMLDivElement>(null)
+  const marker = useSlidingMarker(rangeRef, `${props.days}:${lang}`)
   const select =
     'h-7 min-w-0 max-w-[14rem] truncate rounded-md border border-hairline bg-surface px-2 text-vp-sm text-ink'
   return (
@@ -197,7 +201,24 @@ function Filters(props: {
       className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hairline px-5 py-2.5"
       data-testid="token-filters"
     >
-      <div className="vp-segmented w-fit" role="group" aria-label={t('spend.filterRange')}>
+      <div
+        ref={rangeRef}
+        className="vp-segmented w-fit"
+        role="group"
+        aria-label={t('spend.filterRange')}
+        data-marker={marker ? 'on' : 'off'}
+      >
+        {marker && (
+          <span
+            aria-hidden="true"
+            className="vp-marker-2d"
+            style={{
+              width: marker.width,
+              height: marker.height,
+              transform: `translate3d(${marker.left}px, ${marker.top}px, 0)`,
+            }}
+          />
+        )}
         {RANGES.map((n) => (
           <button
             key={n}

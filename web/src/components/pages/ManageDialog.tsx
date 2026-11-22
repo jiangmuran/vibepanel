@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { SlidersHorizontal, X } from 'lucide-react'
 
@@ -12,6 +12,7 @@ import type {
 } from '../../protocol/wire'
 import { t, useLang, type Key } from '../../i18n'
 import { safeText } from '../text'
+import { useSlidingMarker } from '../useSlidingMarker'
 import { DataForm } from './DataForm'
 import { BlockTitle } from './bits'
 
@@ -58,7 +59,7 @@ export function ManageDialog({
   capabilities: SharePageCapabilities
   onClose: () => void
 }) {
-  useLang()
+  const lang = useLang()
   const tabs = (['admin', 'data', 'sources', 'log'] as const).filter((tab) =>
     tab === 'admin'
       ? capabilities.admin
@@ -69,6 +70,17 @@ export function ManageDialog({
           : capabilities.server,
   )
   const [tab, setTab] = useState<Tab>(tabs[0] ?? 'data')
+  const [slide, setSlide] = useState<{ tab: Tab; dir: 'none' | 'right' | 'left' }>(() => ({
+    tab: tabs[0] ?? 'data',
+    dir: 'none',
+  }))
+  if (slide.tab !== tab) {
+    const from = tabs.indexOf(slide.tab)
+    const to = tabs.indexOf(tab)
+    setSlide({ tab, dir: to >= from ? 'right' : 'left' })
+  }
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const marker = useSlidingMarker(tabsRef, `${tab}:${lang}`)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -107,7 +119,24 @@ export function ManageDialog({
           <h2 className="min-w-0 flex-1 truncate text-vp-md font-medium text-ink">
             {t('manage.title', { name: safeText(page.name) })}
           </h2>
-          <div className="vp-segmented shrink-0" role="tablist" aria-label={t('manage.tabs')}>
+          <div
+            ref={tabsRef}
+            className="vp-segmented shrink-0"
+            role="tablist"
+            aria-label={t('manage.tabs')}
+            data-marker={marker ? 'on' : 'off'}
+          >
+            {marker && (
+              <span
+                aria-hidden="true"
+                className="vp-marker-2d"
+                style={{
+                  width: marker.width,
+                  height: marker.height,
+                  transform: `translate3d(${marker.left}px, ${marker.top}px, 0)`,
+                }}
+              />
+            )}
             {tabs.map((id) => (
               <button
                 key={id}
@@ -137,10 +166,12 @@ export function ManageDialog({
           </button>
         </header>
         <div
+          key={tab}
           id="page-manage-panel"
           role="tabpanel"
           aria-labelledby={`page-manage-tab-${tab}`}
-          className="min-h-0 flex-1 overflow-y-auto p-4"
+          data-slide={slide.dir}
+          className="vp-pane-slide min-h-0 flex-1 overflow-y-auto p-4"
         >
           {tab === 'admin' && <AdminFrame pageId={page.id} draft={false} />}
           {tab === 'data' && <DataForm pageId={page.id} ns="live" />}
