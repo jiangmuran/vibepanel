@@ -46,6 +46,9 @@ func TestExtractReadsEachAgentEvent(t *testing.T) {
 		{"a tool call carries only the transcript path",
 			`{"hook_event_name":"PreToolUse","transcript_path":"/t.jsonl","tool_name":"Read","tool_input":{}}`,
 			Report{Event: "PreToolUse", TranscriptPath: "/t.jsonl"}},
+		{"agy sends camelCase event and transcriptPath",
+			`{"conversationId":"461fc59a","hookEventName":"PreInvocation","transcriptPath":"/u/.gemini/antigravity-cli/brain/461fc59a/.system_generated/logs/transcript.jsonl"}`,
+			Report{Event: "PreInvocation", TranscriptPath: "/u/.gemini/antigravity-cli/brain/461fc59a/.system_generated/logs/transcript.jsonl"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

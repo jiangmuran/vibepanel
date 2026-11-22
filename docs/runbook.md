@@ -321,7 +321,7 @@ the settings page says out loud after every install.
 ## A session is named after its directory, and renaming it from inside does nothing
 
 The automatic name comes from the title the program in the pane set, and there
-are two ways for it to get here:
+are three ways for it to get here:
 
 - A plain `OSC 0/2`, which tmux records in `#{pane_title}`. The poller reads
   that every couple of seconds.
@@ -330,8 +330,13 @@ are two ways for it to get here:
   is looking at, not for tmux. tmux hands those bytes to its client without
   looking inside, so `pane_title` never moves and the panel's own PTY is the
   only place the title exists.
+- For `agy` (Antigravity CLI), which never sends `OSC 0/2`, the conversation
+  title it writes to `~/.gemini/antigravity-cli/annotations/<id>.pbtxt`,
+  matched to the pane through the `presence/<id>.lock` descriptor the `agy`
+  process holds open in `/proc` (or, where `/proc` does not exist, the
+  `transcriptPath` its lifecycle hooks report).
 
-The panel reads both. Check which one you are looking at before changing
+The panel reads all three. Check which one you are looking at before changing
 anything:
 
 ```sh
