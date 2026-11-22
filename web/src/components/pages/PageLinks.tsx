@@ -416,9 +416,9 @@ export function PageLinks({
           sessions={sessions}
           onCancel={() => setAdding(false)}
           visitorWrites={visitorWrites}
-          onMade={(token) => {
+          onMade={(url) => {
             setAdding(false)
-            setFresh({ url: shareURL(token), kind: 'new' })
+            setFresh({ url, kind: 'new' })
             setCopied(false)
             onChanged()
           }}
@@ -507,7 +507,7 @@ function NewLink({
   sessions: Session[]
   visitorWrites: boolean
   onCancel: () => void
-  onMade: (token: string) => void
+  onMade: (url: string) => void
   onError: (message: string) => void
 }) {
   const [name, setName] = useState('')
@@ -538,7 +538,9 @@ function NewLink({
         pageId: page.id,
         params,
       })
-      onMade(made.token)
+      // Use the server's URL rather than location.origin so a dedicated share
+      // origin configured in Settings → Sharing applies immediately on creation.
+      onMade(made.url || shareURL(made.token))
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e))
     } finally {

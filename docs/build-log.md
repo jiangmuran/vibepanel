@@ -28188,3 +28188,39 @@ What changed across the frontend:
   `::-webkit-scrollbar` so Chromium keeps the custom pill).
 
 
+## Dedicated share origin (`sharing.origin`)
+
+Handing out `https://<panel>/share/<token>/` worked safely inside the CSP
+sandbox, but still revealed the panel's own hostname to anyone holding the link:
+stripping the path landed directly on the panel's sign-in screen. Operators who
+wanted to serve share pages from a separate public domain (`https://share.example.com`)
+had no way to make the panel mint links on that domain, and pointing a reverse
+proxy for the second domain at the panel exposed `/`, `/api/auth/*`, `/api/health`
+and `/ws` on the public domain as well.
+
+Added an optional `shareOrigin` (`scheme://host[:port]`) setting on
+`GET`/`PUT /api/settings/sharing` (stored in `settings` as `sharing.origin`,
+editable from **Settings → Sharing** and `vibepanel settings share-origin`):
+
+- **Address rewriting**: `shareAddress` emits `<shareOrigin>/share/<token>/`
+  across create, copy (`/url`) and rotate; `PageLinks.tsx` now uses `made.url`
+  from `POST /api/settings/shares` instead of rebuilding from `location.origin`.
+  Draft preview iframes and owner peek links stay on the panel origin so they
+  always work before external DNS/proxy routing is ready.
+- **Host-level isolation (`shareHostOnly`)**: Mounted at the top of `Routes()`
+  behind an `RWMutex`-cached lookup so normal traffic pays no SQLite read. When
+  a request arrives on the dedicated share host, only `/share/{token}*` and
+  `/api/share/{token}/*` for handed-out links (`purpose == ""`) are served;
+  every other path answers `404` (static sandboxed gone page for navigations,
+  JSON 404 for `/api/*` and `/ws`), and internal preview/peek tokens are refused
+  on that host.
+- **CSP behind TLS-terminating proxies**: On the share host, `handleSharePage`
+  feeds the configured `shareOrigin` into `sharePageCSP` rather than
+  `requestOrigin(r)`. Without this, a proxy terminating TLS without
+  `VIBEPANEL_TRUSTED_PROXIES` produces `http://` in `script-src`/`connect-src`
+  for a browser on `https://`, blocking `vibepanel.js` and `/v1/snapshot`.
+- **Two-layer self-lockout guard**: `PUT /api/settings/sharing` rejects any
+  origin whose `host[:port]` matches the current request host, `VIBEPANEL_DOMAIN`,
+  `VIBEPANEL_ADDR` or `VIBEPANEL_PUBLIC_ORIGINS`; at runtime `isShareHost` also
+  yields false if a stored share host later collides with a configured panel
+  host.

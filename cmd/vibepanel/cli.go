@@ -918,10 +918,11 @@ func cmdAudit(args []string) error {
 	return tw.Flush()
 }
 
-const settingsUsage = `usage: vibepanel settings <archive-idle|timezone> <value>
+const settingsUsage = `usage: vibepanel settings <archive-idle|timezone|share-origin> <value>
 
-  archive-idle <days>   archive a project idle for that many days; 0 never
-  timezone <zone>       the panel's time zone, e.g. Asia/Shanghai`
+  archive-idle <days>          archive a project idle for that many days; 0 never
+  timezone <zone>              the panel's time zone, e.g. Asia/Shanghai
+  share-origin <origin|clear>  dedicated origin for share links, e.g. https://share.example.com`
 
 func cmdSettings(args []string) error {
 	if wantsHelp(args) {
@@ -952,6 +953,23 @@ func cmdSettings(args []string) error {
 			return err
 		}
 		fmt.Printf("time zone: %s\n", args[1])
+		return nil
+	case "share-origin":
+		val := strings.TrimSpace(args[1])
+		if val == "clear" {
+			val = ""
+		}
+		var out struct {
+			ShareOrigin string `json:"shareOrigin"`
+		}
+		if err := c.do(ctx, http.MethodPut, "/api/settings/sharing", map[string]any{"shareOrigin": val}, &out); err != nil {
+			return err
+		}
+		if out.ShareOrigin == "" {
+			fmt.Println("share origin: (panel address)")
+		} else {
+			fmt.Printf("share origin: %s\n", out.ShareOrigin)
+		}
 		return nil
 	}
 	return errors.New(settingsUsage)

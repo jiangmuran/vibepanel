@@ -6,6 +6,7 @@ import {
   FolderCog,
   FolderOpen,
   GitFork,
+  Globe,
   History,
   PanelsTopLeft,
   Plus,
@@ -233,16 +234,25 @@ export function Sharing({
       </header>
 
       {(catalogue?.pagesRootInfo || sharing) && (
-        <div className="mb-4 flex flex-col gap-2 rounded-vp border border-hairline bg-surface px-3 py-2 @2xl:flex-row @2xl:items-center @2xl:gap-4">
-          <PagesRootLine
-            root={catalogue?.pagesRootInfo ?? null}
-            onChanged={(next) => setCatalogue((c) => (c ? { ...c, pagesRoot: next.dir, pagesRootInfo: next } : c))}
-            onError={fail}
-          />
-          {catalogue?.pagesRootInfo && sharing && (
-            <span className="hidden h-4 w-px shrink-0 bg-hairline @2xl:block" aria-hidden="true" />
+        <div className="mb-4 divide-y divide-hairline rounded-vp border border-hairline bg-surface px-3">
+          {(catalogue?.pagesRootInfo || sharing) && (
+            <div className="flex flex-col gap-2 py-2 @2xl:flex-row @2xl:items-center @2xl:gap-4">
+              <PagesRootLine
+                root={catalogue?.pagesRootInfo ?? null}
+                onChanged={(next) => setCatalogue((c) => (c ? { ...c, pagesRoot: next.dir, pagesRootInfo: next } : c))}
+                onError={fail}
+              />
+              {catalogue?.pagesRootInfo && sharing && (
+                <span className="hidden h-4 w-px shrink-0 bg-hairline @2xl:block" aria-hidden="true" />
+              )}
+              <VisitorWritesLine settings={sharing} onChanged={setSharing} onError={fail} />
+            </div>
           )}
-          <VisitorWritesLine settings={sharing} onChanged={setSharing} onError={fail} />
+          {sharing && (
+            <div className="py-2">
+              <ShareOriginLine settings={sharing} onChanged={setSharing} onError={fail} />
+            </div>
+          )}
         </div>
       )}
 
@@ -462,6 +472,120 @@ function VisitorWritesLine({
       <span data-testid="visitor-writes-state" data-on={settings.visitorWrites}>
         {settings.visitorWrites ? t('sharing.visitorWritesOn') : t('sharing.visitorWritesOff')}
       </span>
+    </div>
+  )
+}
+
+/**
+ * Optional dedicated origin for handed-out share links, in one line.
+ *
+ * Mirrors PagesRootLine: empty means links use the panel's own origin; set to
+ * a separate `scheme://host[:port]` (proxied to the panel with Host preserved),
+ * all generated/copied/rotated share URLs use that origin and requests arriving
+ * on it reach only the share surface.
+ */
+function ShareOriginLine({
+  settings,
+  onChanged,
+  onError,
+}: {
+  settings: SharingSettings
+  onChanged: (next: SharingSettings) => void
+  onError: (e: unknown) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const save = async (shareOrigin: string) => {
+    setBusy(true)
+    try {
+      onChanged(await api.setSharingSettings({ shareOrigin }))
+      setEditing(false)
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div data-testid="share-origin" className="min-w-0 text-vp-sm text-ink-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Globe size={12} className="shrink-0" />
+        <span>{t('sharing.origin')}</span>
+        {settings.shareOrigin ? (
+          <>
+            <code className="min-w-0 truncate font-mono text-ink-2" data-testid="share-origin-value">
+              {safeText(settings.shareOrigin)}
+            </code>
+            <span data-testid="share-origin-mode" data-custom="true">
+              {t('sharing.originCustom')}
+            </span>
+          </>
+        ) : (
+          <span data-testid="share-origin-mode" data-custom="false">
+            {t('sharing.originSameAsPanel')}
+          </span>
+        )}
+        {!editing && (
+          <button
+            type="button"
+            data-testid="share-origin-change"
+            onClick={() => {
+              setValue(settings.shareOrigin)
+              setEditing(true)
+            }}
+            className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+          >
+            {t('sharing.originChange')}
+          </button>
+        )}
+      </div>
+      {editing && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              data-testid="share-origin-input"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (isEnter(e)) void save(value.trim())
+              }}
+              placeholder={t('sharing.originPlaceholder')}
+              className={`${INPUT} min-w-0 flex-1 font-mono @md:max-w-xl`}
+            />
+            <button
+              type="button"
+              disabled={busy}
+              data-testid="share-origin-save"
+              onClick={() => void save(value.trim())}
+              className="vp-primary text-vp-sm"
+            >
+              {t('sharing.originSave')}
+            </button>
+            {settings.shareOrigin !== '' && (
+              <button
+                type="button"
+                disabled={busy}
+                data-testid="share-origin-reset"
+                onClick={() => void save('')}
+                className="vp-outline text-vp-sm"
+              >
+                {t('sharing.originReset')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="vp-outline text-vp-sm"
+            >
+              {t('share.cancel')}
+            </button>
+          </div>
+          <p className="text-vp-xs text-ink-3">{t('sharing.originWhy')}</p>
+        </div>
+      )}
     </div>
   )
 }

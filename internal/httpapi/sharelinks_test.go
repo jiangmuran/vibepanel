@@ -161,9 +161,9 @@ func TestInteractiveIsAnAuditedOwnerSwitch(t *testing.T) {
 
 func TestVisitorWritesIsAPanelWideAuditedSwitch(t *testing.T) {
 	ts, srv := newTestServer(t)
-	got := getJSON[map[string]bool](t, ts, "/api/settings/sharing")
-	if !got["visitorWrites"] {
-		t.Errorf("visitor writes default = %v, want on", got)
+	got := getJSON[sharingSettingsResponse](t, ts, "/api/settings/sharing")
+	if !got.VisitorWrites || got.ShareOrigin != "" {
+		t.Errorf("sharing defaults = %+v, want visitorWrites=true shareOrigin=''", got)
 	}
 	code, _, _ := sendRaw(t, ts, http.MethodPut, "/api/settings/sharing", "application/json", []byte(`{"visitorWrites":false}`))
 	if code != http.StatusOK || srv.visitorWritesAllowed(context.Background()) {
@@ -174,5 +174,209 @@ func TestVisitorWritesIsAPanelWideAuditedSwitch(t *testing.T) {
 	}
 	if code, _, _ := sendRaw(t, ts, http.MethodPut, "/api/settings/sharing", "application/json", []byte(`{}`)); code != http.StatusBadRequest {
 		t.Errorf("an empty body = %d, want 400", code)
+	}
+}
+
+func TestShareOriginValidationAndLockoutGuard(t *testing.T) {
+	ts, srv := newTestServer(t)
+	srv.Cfg.Domain = "panel.example.com"
+	srv.Cfg.PublicOrigins = []string{"https://alias.example.com:8443"}
+
+	bad := []string{
+		"share.example.com",
+		"ftp://share.example.com",
+		"https://share.example.com/subpath",
+		"https://share.example.com?a=1",
+		"https://share.example.com#frag",
+		"https://user:pass@share.example.com",
+		"https://share.example.com:",
+		"https://share.example.com:99999",
+		"https://share.example.com/ extra",
+		// Self-lockout attempts: current request host, configured domain, public origin.
+		ts.URL,
+		"https://panel.example.com",
+		"https://panel.example.com:443",
+		"https://alias.example.com:8443",
+	}
+	for _, raw := range bad {
+		body, _ := json.Marshal(map[string]string{"shareOrigin": raw})
+		code, resp, _ := sendRaw(t, ts, http.MethodPut, "/api/settings/sharing", "application/json", body)
+		if code != http.StatusBadRequest {
+			t.Errorf("shareOrigin=%q → %d (%s), want 400", raw, code, resp)
+		}
+	}
+
+	// Normalization: trailing slash, uppercase, default port stripped, visitorWrites preserved.
+	code, body, _ := sendRaw(t, ts, http.MethodPut, "/api/settings/sharing", "application/json",
+		[]byte(`{"shareOrigin":"  HTTPS://Share.Example.COM:443/  "}`))
+	if code != http.StatusOK {
+		t.Fatalf("set valid shareOrigin = %d: %s", code, body)
+	}
+	var got sharingSettingsResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ShareOrigin != "https://share.example.com" || !got.VisitorWrites {
+		t.Errorf("got = %+v, want https://share.example.com and visitorWrites=true", got)
+	}
+	if !auditHas(t, srv, "sharing.origin_changed", "https://share.example.com") {
+		t.Error("setting shareOrigin left no audit row")
+	}
+
+	// Clearing resets to default and audits (default).
+	code, body, _ = sendRaw(t, ts, http.MethodPut, "/api/settings/sharing", "application/json",
+		[]byte(`{"shareOrigin":""}`))
+	if code != http.StatusOK {
+		t.Fatalf("clear shareOrigin = %d: %s", code, body)
+	}
+	_ = json.Unmarshal(body, &got)
+	if got.ShareOrigin != "" {
+		t.Errorf("cleared shareOrigin = %q, want empty", got.ShareOrigin)
+	}
+	if !auditHas(t, srv, "sharing.origin_changed", "(default)") {
+		t.Error("clearing shareOrigin left no audit row")
+	}
+}
+
+func TestShareOriginRewritesAddressesAndIsolatesShareHost(t *testing.T) {
+	ts, srv := newTestServer(t)
+	srv.Cfg.Domain = "panel.example.com"
+
+	// Publish a page with a visitor action so we test HTML, SDK, snapshot and action POST.
+	manifest := `{"sdk":1,"name":"Board","sections":["sessions"],
+		"data":{"votes":{"type":"counter"}},
+		"actions":{"vote":{"who":"visitor","label":"Vote","effect":{"increment":"votes"},"rate":"10/min"}}}`
+	p := newPublishedPage(t, ts, manifest, nil)
+
+	code, body, _ := sendRaw(t, ts, http.MethodPut, "/api/settings/sharing", "application/json",
+		[]byte(`{"shareOrigin":"https://share.example.com"}`))
+	if code != http.StatusOK {
+		t.Fatalf("set shareOrigin = %d: %s", code, body)
+	}
+
+	// 1. Handed-out create / url / rotate all emit the dedicated share origin.
+	created := postJSON[struct {
+		ID, Token, URL string
+	}](t, ts, "/api/settings/shares", `{"name":"wall","detail":"counts","interactive":true,"pageId":"`+p.page.ID+`"}`)
+	wantURL := "https://share.example.com/share/" + created.Token + "/"
+	if created.URL != wantURL {
+		t.Errorf("create url = %q, want %q", created.URL, wantURL)
+	}
+
+	copied := getJSON[struct{ URL, Token string }](t, ts, "/api/settings/shares/"+created.ID+"/url")
+	if copied.URL != wantURL {
+		t.Errorf("copy url = %q, want %q", copied.URL, wantURL)
+	}
+
+	rotated := postJSON[struct{ URL, Token string }](t, ts, "/api/settings/shares/"+created.ID+"/rotate", "")
+	wantRotated := "https://share.example.com/share/" + rotated.Token + "/"
+	if rotated.URL != wantRotated {
+		t.Errorf("rotate url = %q, want %q", rotated.URL, wantRotated)
+	}
+
+	// Mint a preview link and a peek link: neither may be served on the share host.
+	preview := postJSON[struct{ ID, Token string }](t, ts, "/api/settings/pages/"+p.page.ID+"/preview", `{"detail":"counts"}`)
+	peek := postJSON[struct{ Token string }](t, ts, "/api/settings/shares/"+created.ID+"/view", "")
+
+	// Helper sending a request to ts with Host: share.example.com (simulating
+	// a TLS-terminating reverse proxy with NO X-Forwarded-Proto / TrustedProxies).
+	onShareHost := func(method, reqPath, body string) (*http.Response, []byte) {
+		t.Helper()
+		req, err := http.NewRequest(method, ts.URL+reqPath, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = "share.example.com"
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		client := anonymousClient(t)
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s on share host: %v", method, reqPath, err)
+		}
+		defer res.Body.Close()
+		var buf bytes.Buffer
+		_, _ = buf.ReadFrom(res.Body)
+		return res, buf.Bytes()
+	}
+
+	// 2. Handed-out share page, SDK, snapshot and visitor action work on the share host,
+	//    and CSP uses the configured https:// share origin even over plaintext loopback.
+	res, html := onShareHost(http.MethodGet, "/share/"+rotated.Token+"/", "")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("share page on share host = %d: %s", res.StatusCode, html)
+	}
+	csp := res.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "https://share.example.com/share/"+rotated.Token+"/") ||
+		!strings.Contains(csp, "https://share.example.com/api/share/"+rotated.Token+"/v1/") {
+		t.Errorf("CSP on share host did not use configured https share origin: %s", csp)
+	}
+	if !strings.Contains(csp, "sandbox allow-scripts") || !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Errorf("CSP lost sandbox/frame-ancestors on share host: %s", csp)
+	}
+
+	if res, _ := onShareHost(http.MethodGet, "/share/"+rotated.Token+"/vibepanel.js", ""); res.StatusCode != http.StatusOK {
+		t.Errorf("vibepanel.js on share host = %d, want 200", res.StatusCode)
+	}
+	if res, _ := onShareHost(http.MethodGet, "/api/share/"+rotated.Token+"/v1/snapshot", ""); res.StatusCode != http.StatusOK {
+		t.Errorf("snapshot on share host = %d, want 200", res.StatusCode)
+	}
+	if res, actBody := onShareHost(http.MethodPost, "/api/share/"+rotated.Token+"/v1/actions/vote", `{}`); res.StatusCode != http.StatusOK || !strings.Contains(string(actBody), `"ok":true`) {
+		t.Errorf("visitor action on share host = %d %s, want 200 ok", res.StatusCode, actBody)
+	}
+
+	// 3. Preview and peek links are refused on the share host, while still working on the panel host.
+	for _, internalTok := range []string{preview.Token, peek.Token} {
+		if res, _ := onShareHost(http.MethodGet, "/share/"+internalTok+"/", ""); res.StatusCode != http.StatusNotFound {
+			t.Errorf("internal token page on share host = %d, want 404", res.StatusCode)
+		}
+		if res, _ := onShareHost(http.MethodGet, "/api/share/"+internalTok+"/v1/snapshot", ""); res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("internal token snapshot on share host = %d, want 401", res.StatusCode)
+		}
+		if res, _ := anonGET(t, ts, "/share/"+internalTok+"/"); res.StatusCode != http.StatusOK {
+			t.Errorf("internal token page on panel host = %d, want 200", res.StatusCode)
+		}
+	}
+
+	// 4. Every non-share route on the share host answers 404 and never serves the panel SPA or auth.
+	blocked := []struct {
+		method, path string
+	}{
+		{http.MethodGet, "/"},
+		{http.MethodGet, "/sharing"},
+		{http.MethodGet, "/api/health"},
+		{http.MethodGet, "/api/auth/status"},
+		{http.MethodPost, "/api/auth/login"},
+		{http.MethodGet, "/api/state"},
+		{http.MethodGet, "/api/settings/sharing"},
+		{http.MethodGet, "/ws"},
+		{http.MethodGet, "/preview/anything/"},
+		{http.MethodGet, "/pages/" + p.page.ID + "/admin/"},
+		{http.MethodGet, "/page-admin/anything/"},
+		{http.MethodGet, "/share/"},
+		{http.MethodGet, "/share/../api/health"},
+	}
+	for _, tc := range blocked {
+		res, b := onShareHost(tc.method, tc.path, "")
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("%s %s on share host = %d (%s), want 404", tc.method, tc.path, res.StatusCode, b)
+		}
+		if strings.Contains(string(b), "<div id=\"root\">") {
+			t.Errorf("%s %s on share host served the panel SPA bundle", tc.method, tc.path)
+		}
+	}
+
+	// 5. Panel host remains fully usable.
+	if res, _ := anonGET(t, ts, "/api/health"); res.StatusCode != http.StatusOK {
+		t.Errorf("panel /api/health = %d, want 200", res.StatusCode)
+	}
+
+	// 6. Runtime lockout guard: if Cfg.Domain is later changed to match the
+	//    stored share origin, the panel refuses to lock itself out.
+	srv.Cfg.Domain = "share.example.com"
+	if res, _ := onShareHost(http.MethodGet, "/api/health", ""); res.StatusCode != http.StatusOK {
+		t.Errorf("panel host matching stored share origin locked out /api/health: %d", res.StatusCode)
 	}
 }

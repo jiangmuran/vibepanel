@@ -434,6 +434,11 @@ func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(securityHeaders)
+	// When a dedicated share origin is configured, requests arriving on its
+	// host reach only `/share/{token}*` and `/api/share/{token}/*`. Mounted at
+	// the top so `/ws`, `/api/auth/*`, `/api/health` and the SPA catch-all are
+	// never reachable on the public share domain.
+	r.Use(s.shareHostOnly)
 	// Deliberately NOT middleware.RealIP.
 	//
 	// It overwrites r.RemoteAddr from X-Forwarded-For or X-Real-IP with no

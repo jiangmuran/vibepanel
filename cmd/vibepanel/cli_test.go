@@ -233,6 +233,12 @@ func TestTheCLIOperatesTheRunningPanel(t *testing.T) {
 		t.Error("the file outlived the revocation")
 	}
 	mustRun(t, "settings", "archive-idle", "14")
+	if out := mustRun(t, "settings", "share-origin", "https://share.example.com"); !strings.Contains(out, "https://share.example.com") {
+		t.Errorf("settings share-origin set: %s", out)
+	}
+	if out := mustRun(t, "settings", "share-origin", "clear"); !strings.Contains(out, "panel address") {
+		t.Errorf("settings share-origin clear: %s", out)
+	}
 	tokens, _ = p.db.ListAPITokens(ctx)
 	names := []string{}
 	for _, tk := range tokens {

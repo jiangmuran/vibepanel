@@ -2,8 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
+	"net/url"
+	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +64,9 @@ func (s *Server) sealShareToken(linkID, token string) []byte {
 }
 
 func (s *Server) shareAddress(r *http.Request, token string) string {
+	if origin, _, _ := s.shareOrigin(r.Context()); origin != "" {
+		return origin + "/share/" + token + "/"
+	}
 	return s.requestOrigin(r) + "/share/" + token + "/"
 }
 
@@ -139,9 +148,231 @@ func (s *Server) linkMayAct(ctx context.Context, link store.ShareLink) bool {
 	return s.visitorWritesAllowed(ctx)
 }
 
-// ─── the panel-wide switch ────────────────────────────────────────────────
+// ─── panel-wide sharing settings ──────────────────────────────────────────
 
-const visitorWritesKey = "sharing.visitor_writes"
+const (
+	visitorWritesKey = "sharing.visitor_writes"
+	shareOriginKey   = "sharing.origin"
+)
+
+type sharingSettingsResponse struct {
+	VisitorWrites bool   `json:"visitorWrites"`
+	ShareOrigin   string `json:"shareOrigin"`
+}
+
+// shareOriginCache holds the parsed dedicated origin for share links.
+//
+// Cached because shareHostOnly runs on every HTTP request, and reading SQLite
+// per request would add a lock round-trip to static assets and API calls.
+// Invalidated on PUT /api/settings/sharing, the only writer.
+type shareOriginCache struct {
+	mu     sync.RWMutex
+	loaded bool
+	origin string
+	scheme string
+	host   string
+}
+
+func (c *shareOriginCache) get(ctx context.Context, read func(context.Context) string) (origin, scheme, host string) {
+	c.mu.RLock()
+	if c.loaded {
+		origin, scheme, host = c.origin, c.scheme, c.host
+		c.mu.RUnlock()
+		return origin, scheme, host
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.loaded {
+		return c.origin, c.scheme, c.host
+	}
+	raw := read(ctx)
+	if o, sc, h, err := parseShareOrigin(raw); err == nil {
+		c.origin, c.scheme, c.host = o, sc, h
+	}
+	c.loaded = true
+	return c.origin, c.scheme, c.host
+}
+
+func (c *shareOriginCache) forget() {
+	c.mu.Lock()
+	c.loaded = false
+	c.origin, c.scheme, c.host = "", "", ""
+	c.mu.Unlock()
+}
+
+// parseShareOrigin validates and normalizes an optional share origin of the
+// form `scheme://host[:port]`. Empty input clears the setting.
+//
+// Paths, queries, fragments and userinfo are refused: vibepanel.js builds its
+// API URL from `url.protocol + '//' + url.host + '/api/share/...'`, so a
+// subpath would point the SDK at a different path than the page was served
+// from.
+func parseShareOrigin(raw string) (origin, scheme, host string, err error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", "", "", nil
+	}
+	if strings.ContainsAny(s, " \t\r\n") {
+		return "", "", "", errors.New("share origin cannot contain whitespace")
+	}
+	if strings.ContainsAny(s, "?#") {
+		return "", "", "", errors.New("share origin must be scheme://host[:port] with no query or fragment")
+	}
+	s = strings.TrimRight(s, "/")
+	u, perr := url.Parse(s)
+	if perr != nil {
+		return "", "", "", errors.New("share origin must be a valid URL such as https://share.example.com")
+	}
+	scheme = strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", "", "", errors.New("share origin must start with http:// or https://")
+	}
+	if u.User != nil || u.Opaque != "" {
+		return "", "", "", errors.New("share origin must be scheme://host[:port]")
+	}
+	if u.Path != "" {
+		return "", "", "", errors.New("share origin must be scheme://host[:port] with no path")
+	}
+	if u.Host == "" || strings.HasSuffix(u.Host, ":") || u.Hostname() == "" {
+		return "", "", "", errors.New("share origin needs a host name")
+	}
+	if p := u.Port(); p != "" {
+		n, aerr := strconv.Atoi(p)
+		if aerr != nil || n < 1 || n > 65535 {
+			return "", "", "", errors.New("share origin has an invalid port")
+		}
+	}
+	host = normalizeHostPort(u.Host, scheme)
+	return scheme + "://" + host, scheme, host, nil
+}
+
+// normalizeHostPort lower-cases a `host[:port]` and drops the default port for
+// scheme (:80 for http, :443 for https), so `Host: share.example.com:443` and
+// `Host: share.example.com` compare equal.
+func normalizeHostPort(rawHost, scheme string) string {
+	rawHost = strings.ToLower(strings.TrimSpace(rawHost))
+	if rawHost == "" {
+		return ""
+	}
+	host, port, err := net.SplitHostPort(rawHost)
+	if err != nil {
+		return rawHost
+	}
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		if strings.Contains(host, ":") {
+			return "[" + host + "]"
+		}
+		return host
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func (s *Server) shareOrigin(ctx context.Context) (origin, scheme, host string) {
+	return s.pb.origin.get(ctx, func(ctx context.Context) string {
+		if s.DB == nil {
+			return ""
+		}
+		v, err := s.DB.GetSetting(ctx, shareOriginKey, "")
+		if err != nil {
+			return ""
+		}
+		return v
+	})
+}
+
+// panelConfiguredHosts returns every normalized `host[:port]` known to belong
+// to the panel itself from configuration and setup-approved origins.
+func (s *Server) panelConfiguredHosts() map[string]bool {
+	hosts := map[string]bool{}
+	add := func(h string) {
+		if h != "" {
+			hosts[strings.ToLower(h)] = true
+		}
+	}
+	if dom := strings.ToLower(strings.TrimSpace(s.Cfg.Domain)); dom != "" {
+		add(dom)
+		if s.Cfg.PublicPort > 0 && s.Cfg.PublicPort != 80 && s.Cfg.PublicPort != 443 {
+			add(net.JoinHostPort(dom, strconv.Itoa(s.Cfg.PublicPort)))
+		}
+		if p := s.Cfg.Port(); p > 0 && p != 80 && p != 443 {
+			add(net.JoinHostPort(dom, strconv.Itoa(p)))
+		}
+	}
+	if h, p, err := net.SplitHostPort(s.Cfg.Addr); err == nil && h != "" && h != "0.0.0.0" && h != "::" {
+		joined := net.JoinHostPort(h, p)
+		add(normalizeHostPort(joined, "http"))
+		add(normalizeHostPort(joined, "https"))
+	}
+	for _, o := range append(append([]string(nil), s.Cfg.PublicOrigins...), s.approvedOrigins()...) {
+		if _, _, h, err := parseShareOrigin(o); err == nil && h != "" {
+			add(h)
+		}
+	}
+	return hosts
+}
+
+// isShareHost reports whether r arrived on the configured dedicated share
+// origin, returning that origin.
+//
+// Never true when the stored share host collides with any configured panel
+// host: if the panel's domain is later changed to match it (or the setting was
+// edited directly in SQLite), the panel must not lock itself out on its own
+// address.
+func (s *Server) isShareHost(ctx context.Context, r *http.Request) (string, bool) {
+	origin, scheme, host := s.shareOrigin(ctx)
+	if host == "" {
+		return "", false
+	}
+	if !strings.EqualFold(normalizeHostPort(r.Host, scheme), host) {
+		return "", false
+	}
+	if s.panelConfiguredHosts()[host] {
+		return "", false
+	}
+	return origin, true
+}
+
+// shareHostOnly restricts requests arriving on the configured dedicated share
+// host to the share surface (`/share/{token}*` and `/api/share/{token}/*`).
+//
+// Without this, pointing a second public domain at the panel for sharing also
+// puts the panel's sign-in screen, `/api/health`, `/api/auth/*` and `/ws` on
+// that public domain. Everything outside the share surface answers 404 — a
+// static sandboxed page for navigations, JSON 404 for `/api/*` and `/ws` —
+// so the panel bundle is never served on the share host.
+func (s *Server) shareHostOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := s.isShareHost(r.Context(), r); !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if isShareHostPath(r.Method, r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(path.Clean(r.URL.Path), "/api/") || path.Clean(r.URL.Path) == "/ws" {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeGonePage(w, false)
+	})
+}
+
+func isShareHostPath(method, rawPath string) bool {
+	clean := path.Clean(rawPath)
+	if strings.HasPrefix(clean, "/share/") && len(clean) > len("/share/") {
+		return method == http.MethodGet || method == http.MethodHead
+	}
+	if strings.HasPrefix(clean, "/api/share/") && len(clean) > len("/api/share/") {
+		switch method {
+		case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodOptions:
+			return true
+		}
+	}
+	return false
+}
 
 // visitorWritesAllowed is read on every visitor action, from the database, so
 // turning it off stops the next action rather than the next restart.
@@ -153,36 +384,87 @@ func (s *Server) visitorWritesAllowed(ctx context.Context) bool {
 }
 
 func (s *Server) handleGetSharing(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{"visitorWrites": s.visitorWritesAllowed(r.Context())})
+	ctx := r.Context()
+	origin, _, _ := s.shareOrigin(ctx)
+	writeJSON(w, http.StatusOK, sharingSettingsResponse{
+		VisitorWrites: s.visitorWritesAllowed(ctx),
+		ShareOrigin:   origin,
+	})
 }
 
 func (s *Server) handlePutSharing(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		VisitorWrites *bool `json:"visitorWrites"`
+		VisitorWrites *bool   `json:"visitorWrites"`
+		ShareOrigin   *string `json:"shareOrigin"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if req.VisitorWrites == nil {
-		writeErr(w, http.StatusBadRequest, "visitorWrites is required")
+	if req.VisitorWrites == nil && req.ShareOrigin == nil {
+		writeErr(w, http.StatusBadRequest, "visitorWrites or shareOrigin is required")
 		return
 	}
-	v := "0"
-	if *req.VisitorWrites {
-		v = "1"
-	}
-	if err := s.DB.SetSetting(r.Context(), visitorWritesKey, v); err != nil {
-		s.writeStoreErr(w, err)
-		return
-	}
-	if u, ok := currentUserFrom(r); ok {
-		state := "off"
-		if *req.VisitorWrites {
-			state = "on"
+
+	// Validate shareOrigin before writing anything, so a request carrying both
+	// fields never applies half of itself.
+	var nextOrigin string
+	if req.ShareOrigin != nil {
+		origin, scheme, host, err := parseShareOrigin(*req.ShareOrigin)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
 		}
-		s.audit(r.Context(), "sharing.visitor_writes", u.Username, s.clientIP(r), state)
+		if host != "" {
+			panelHosts := s.panelConfiguredHosts()
+			reqScheme := requestScheme(r, s.trustedProxies())
+			if panelHosts[host] ||
+				strings.EqualFold(host, normalizeHostPort(r.Host, reqScheme)) ||
+				strings.EqualFold(host, normalizeHostPort(r.Host, scheme)) {
+				writeErr(w, http.StatusBadRequest,
+					"share origin must be different from the panel's own address; leave it empty to use the panel's address")
+				return
+			}
+		}
+		nextOrigin = origin
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"visitorWrites": *req.VisitorWrites})
+
+	ctx := r.Context()
+	if req.VisitorWrites != nil {
+		v := "0"
+		if *req.VisitorWrites {
+			v = "1"
+		}
+		if err := s.DB.SetSetting(ctx, visitorWritesKey, v); err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+		if u, ok := currentUserFrom(r); ok {
+			state := "off"
+			if *req.VisitorWrites {
+				state = "on"
+			}
+			s.audit(ctx, "sharing.visitor_writes", u.Username, s.clientIP(r), state)
+		}
+	}
+	if req.ShareOrigin != nil {
+		if err := s.DB.SetSetting(ctx, shareOriginKey, nextOrigin); err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+		s.pb.origin.forget()
+		if u, ok := currentUserFrom(r); ok {
+			detail := nextOrigin
+			if detail == "" {
+				detail = "(default)"
+			}
+			s.audit(ctx, "sharing.origin_changed", u.Username, s.clientIP(r), detail)
+		}
+	}
+	origin, _, _ := s.shareOrigin(ctx)
+	writeJSON(w, http.StatusOK, sharingSettingsResponse{
+		VisitorWrites: s.visitorWritesAllowed(ctx),
+		ShareOrigin:   origin,
+	})
 }
 
 // ─── counting actions ─────────────────────────────────────────────────────

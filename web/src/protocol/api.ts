@@ -742,6 +742,7 @@ export const api = {
       scope: string
       remark: string
       locked: boolean
+      url: string
       expiresAt: number
       createdAt: number
     }>('/api/settings/shares', {
@@ -856,7 +857,7 @@ export const api = {
 
   sharingSettings: () => request<SharingSettings>('/api/settings/sharing'),
 
-  setSharingSettings: (s: SharingSettings) =>
+  setSharingSettings: (s: Partial<SharingSettings>) =>
     request<SharingSettings>('/api/settings/sharing', { method: 'PUT', body: JSON.stringify(s) }),
 
   pageData: (id: string, ns: SharePageDataNamespace = 'live') =>

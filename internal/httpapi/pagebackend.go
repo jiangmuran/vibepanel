@@ -6,6 +6,7 @@ package httpapi
 // working.
 type pageBackend struct {
 	secrets secrets
+	origin  shareOriginCache
 	actions actionDay
 	data    pageDataState
 	rates   rateBook

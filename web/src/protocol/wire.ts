@@ -1307,9 +1307,11 @@ export interface SharePageServerLogLine {
   text: string
 }
 
-/** Panel-wide sharing switches. */
+/** Panel-wide sharing settings. */
 export interface SharingSettings {
   visitorWrites: boolean
+  /** Optional dedicated origin (scheme://host[:port]) for handed-out share links; '' uses the panel's own address. */
+  shareOrigin: string
 }
 
 export interface SharePageParam {

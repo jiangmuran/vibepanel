@@ -1456,9 +1456,23 @@ as `share.rotated`.
 ### `GET /api/settings/sharing`
 ### `PUT /api/settings/sharing`
 
-`{"visitorWrites": true}`: whether any visitor action on any link may run. On by
-default; turning it off refuses the next action on every interactive link.
-`PUT` requires the field and is audited as `sharing.visitor_writes`.
+`{"visitorWrites": true, "shareOrigin": ""}`: panel-wide sharing settings.
+
+- `visitorWrites` (default `true`): whether any visitor action on any link may
+  run. Turning it off refuses the next action on every interactive link. Audited
+  as `sharing.visitor_writes`.
+- `shareOrigin` (default `""`): an optional dedicated `scheme://host[:port]`
+  origin (such as `https://share.example.com`) for handed-out share links.
+  When set, `POST /api/settings/shares`, `GET /api/settings/shares/{id}/url` and
+  `POST /api/settings/shares/{id}/rotate` build `url` under this origin, and
+  requests arriving on its host reach only `/share/{token}*` and
+  `/api/share/{token}/*` for handed-out links — every other path (including `/`,
+  `/api/health`, `/api/auth/*`, `/ws`, previews and admin pages) answers `404`
+  so the panel's sign-in screen is never exposed on the share domain. Setting it
+  to the panel's own address is refused with `400`; setting `""` returns to the
+  panel's own address. Audited as `sharing.origin_changed`.
+
+`PUT` accepts either or both fields and refuses an empty `{}` with `400`.
 
 ### `POST /api/settings/shares/{shareID}/view`
 

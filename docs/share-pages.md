@@ -363,10 +363,21 @@ framing the panel, being framed), the workflow through the UI end to end, and
 every template on a TV, a laptop and a phone against `busy`, `counts`, `hostile`
 and `empty`. It is in `make verify`.
 
-## 9. What was not built
+## 9. Optional dedicated share origin
 
-- **A separate origin for pages.** The response-header sandbox on the panel's
-  origin is the boundary, as it is for directory previews.
+The response-header sandbox on the panel's own origin remains the default
+boundary, as it is for directory previews, so single-domain deployments need no
+extra DNS or TLS setup.
+
+Operators who want to keep the panel's hostname off handed-out links can set a
+dedicated `shareOrigin` (`scheme://host[:port]`, e.g. `https://share.example.com`)
+in **Settings → Sharing** (`PUT /api/settings/sharing`) or via
+`vibepanel settings share-origin` and point a reverse proxy for that host at
+the panel (forwarding `Host`). Handed-out create/copy/rotate addresses then use
+that origin, and `shareHostOnly` restricts requests arriving on that host to
+`/share/{token}*` and `/api/share/{token}/*` for handed-out links — every other
+path (including `/`, `/api/health`, `/api/auth/*`, `/ws`, previews and admin
+pages) answers `404`.
 
 ## 10. Decisions taken
 
