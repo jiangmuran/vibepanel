@@ -403,6 +403,60 @@ func TestEnsureServerAdvertisesTruecolorToARunningServer(t *testing.T) {
 	}
 }
 
+func TestEnsureServerAdvertisesSyncToARunningServer(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	out, err := c.run(ctx, "show-options", "-s", "terminal-features")
+	if err != nil {
+		t.Fatalf("show-options terminal-features: %v", err)
+	}
+	if !hasWildcardSync(out) {
+		t.Fatalf("fresh server missing *:sync in terminal-features:\n%s", out)
+	}
+
+	// Simulate a long-running server started by an older panel whose config
+	// had `*:RGB` without `sync`.
+	if _, err := c.run(ctx, "set-option", "-s", "-u", "terminal-features"); err != nil {
+		t.Fatalf("unset terminal-features: %v", err)
+	}
+	if _, err := c.run(ctx, "set-option", "-as", "terminal-features", ",*:RGB"); err != nil {
+		t.Fatalf("seed legacy terminal-features: %v", err)
+	}
+	before, err := c.run(ctx, "show-options", "-s", "terminal-features")
+	if err != nil || hasWildcardSync(before) {
+		t.Fatalf("precondition: legacy server already has *:sync (%v):\n%s", err, before)
+	}
+
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("first EnsureServer on running server: %v", err)
+	}
+	afterFirst, err := c.run(ctx, "show-options", "-s", "terminal-features")
+	if err != nil {
+		t.Fatalf("show-options after first EnsureServer: %v", err)
+	}
+	if !hasWildcardSync(afterFirst) {
+		t.Fatalf("running server was not given *:sync:\n%s", afterFirst)
+	}
+
+	// Calling EnsureServer again on the next panel restart must not append a
+	// second duplicate `*:sync` entry to the array option.
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("second EnsureServer on running server: %v", err)
+	}
+	afterSecond, err := c.run(ctx, "show-options", "-s", "terminal-features")
+	if err != nil {
+		t.Fatalf("show-options after second EnsureServer: %v", err)
+	}
+	if afterSecond != afterFirst {
+		t.Fatalf("EnsureServer duplicated terminal-features across restarts:\nfirst:\n%s\nsecond:\n%s",
+			afterFirst, afterSecond)
+	}
+}
+
 // What the variable is for: a program in a new pane can see it.
 //
 // On tmux 3.6 and later this cannot fail, because tmux gives panes

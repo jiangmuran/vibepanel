@@ -225,12 +225,14 @@ export class PanelSocket {
       this.backoff = 500
       this.lastSeenAt = Date.now()
       this.setStatus('open')
-      // Re-subscribe everything. After a reconnect the server has no memory of
-      // this client, and each subscription replays from the ring buffer, so the
-      // terminals repaint themselves rather than sitting frozen.
-      for (const stream of this.streams.values()) {
-        stream.ref = null
-        this.sendSubscribe(stream)
+      // Re-subscribe everything, visible terminals ahead of off-screen ones so
+      // the pane on screen never waits behind multi-megabyte hidden replays.
+      for (const hidden of [false, true]) {
+        for (const stream of this.streams.values()) {
+          if (stream.hidden !== hidden) continue
+          stream.ref = null
+          this.sendSubscribe(stream)
+        }
       }
       this.startPing()
     }

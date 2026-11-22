@@ -23,13 +23,22 @@ const (
 	// EventExit means the attachment ended: the tmux session is gone, or the
 	// panel detached. Viewers show the session as no longer live.
 	EventExit
+
+	// EventCatchUp carries the ring slice a hidden terminal missed while it
+	// was off-screen, sent when SetHidden brings it back on screen.
+	EventCatchUp
 )
 
 // Event is one thing that happened in a session.
 type Event struct {
-	Kind EventKind
-	Data []byte // EventOutput
-	Text string // EventClipboard, EventTitle
-	Cols int    // EventSize
-	Rows int    // EventSize
+	Kind   EventKind
+	Data   []byte // EventOutput
+	Replay Replay // EventCatchUp
+	Text   string // EventClipboard, EventTitle
+	Cols   int    // EventSize, EventCatchUp
+	Rows   int    // EventSize, EventCatchUp
+}
+
+func (e Event) byteLen() int {
+	return len(e.Data) + len(e.Replay.Data)
 }
