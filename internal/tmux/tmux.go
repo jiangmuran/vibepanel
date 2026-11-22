@@ -608,6 +608,7 @@ func LaunchArgv(command []string) []string {
 	if len(command) == 0 {
 		return command
 	}
+	command = codexInlineArgv(command)
 	// Nothing to fix, so nothing to wrap.
 	//
 	// LookPath searches *this process's* PATH, and this process's PATH is
@@ -630,6 +631,89 @@ func LaunchArgv(command []string) []string {
 		return command
 	}
 	return []string{sh, "-l", "-c", "exec " + shellJoin(command)}
+}
+
+// codexValueFlags are top-level codex options that consume the next argument
+// when written as two words (`-m gpt-5` rather than `--model=gpt-5`). Used to
+// locate the subcommand, if any, without mistaking an option's argument for
+// one.
+var codexValueFlags = map[string]bool{
+	"-c": true, "--config": true,
+	"--enable": true, "--disable": true,
+	"--remote": true, "--remote-auth-token-env": true,
+	"-i": true, "--image": true,
+	"-m": true, "--model": true,
+	"--local-provider": true,
+	"-p":               true, "--profile": true,
+	"-s": true, "--sandbox": true,
+	"-C": true, "--cd": true,
+	"--add-dir": true,
+	"-a":        true, "--ask-for-approval": true,
+}
+
+// codexNonTUISubcommands are the codex subcommands that do not run the
+// interactive TUI (`resume` and `fork` do, and accept `--no-alt-screen`).
+var codexNonTUISubcommands = map[string]bool{
+	"agents": true, "exec": true, "e": true, "review": true,
+	"login": true, "logout": true, "mcp": true, "plugin": true,
+	"app-server": true, "remote-control": true, "completion": true,
+	"update": true, "doctor": true, "sandbox": true, "debug": true,
+	"apply": true, "a": true, "queue": true, "archive": true,
+	"delete": true, "migrate-rollouts": true, "unarchive": true,
+	"cloud": true, "exec-server": true, "features": true, "help": true,
+}
+
+// codexInlineArgv adds `--no-alt-screen` to interactive Codex launches that did
+// not ask for an alternate-screen mode of their own.
+//
+// Codex 0.163+ defaults to `fullscreen_transcript` (`ESC[?1049h`), and when it
+// sees `$TMUX_PANE` it queries `#{mouse}` on the tmux server and disables SGR
+// mouse capture whenever `mouse` is off -- which vibepanel.conf sets so
+// xterm.js owns drag-select. That leaves zero lines in tmux's scrollback while
+// wheel events become Up/Down arrows in Codex's prompt composer. Running in
+// inline mode (`--no-alt-screen`) keeps the transcript on the primary screen so
+// tmux and xterm.js hold the scrollback.
+//
+// Applied here as well as in store.builtinProfiles because editing the Codex
+// built-in in Settings -- to set OPENAI_API_KEY or add `--yolo` -- saves an
+// override row with the argv the form had at the time, and a restored session
+// re-runs its recorded LaunchCommand through LaunchArgv.
+func codexInlineArgv(command []string) []string {
+	if len(command) == 0 || filepath.Base(command[0]) != "codex" {
+		return command
+	}
+	sub := ""
+	skipNext := false
+	for _, arg := range command[1:] {
+		if arg == "--no-alt-screen" || arg == "--alt-screen" ||
+			arg == "-h" || arg == "--help" || arg == "-V" || arg == "--version" ||
+			strings.Contains(arg, "alternate_screen") || strings.Contains(arg, "fullscreen_transcript") {
+			return command
+		}
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "-") {
+			if codexValueFlags[arg] {
+				skipNext = true
+			}
+			continue
+		}
+		if sub == "" {
+			sub = arg
+		}
+	}
+	if codexNonTUISubcommands[sub] {
+		return command
+	}
+	out := make([]string, 0, len(command)+1)
+	out = append(out, command[0], "--no-alt-screen")
+	out = append(out, command[1:]...)
+	return out
 }
 
 // startServerWithProfile starts the server through a login shell.
@@ -932,6 +1016,87 @@ func (c *Client) CaptureLines(ctx context.Context, name string, lines int) (stri
 	}
 	return c.run(ctx, "capture-pane", "-p", "-e", "-J",
 		"-S", "-"+strconv.Itoa(lines), "-t", target(name))
+}
+
+// Snapshot is a pane's scrollback, visible screen and cursor geometry at one
+// moment, used to rebuild a viewer's terminal after Live's ring buffer has
+// wrapped and evicted earlier output.
+type Snapshot struct {
+	History     string
+	Screen      string
+	PaneHeight  int
+	CursorX     int
+	CursorY     int
+	ScrollUpper int
+	ScrollLower int
+}
+
+// CaptureSnapshot reads up to maxHistoryLines of scrollback above the pane,
+// the visible screen with SGR attributes, and the cursor and scroll-region
+// geometry needed to leave a fresh terminal where tmux's own client stream will
+// carry on from.
+//
+// Bounded by maxHistoryLines for the cost table on CaptureLines: xterm.js caps
+// its own scrollback at 10,000 lines, so capturing past that would spend tmux
+// CPU on lines the browser immediately discards. When the pane is on its
+// alternate screen, the saved normal screen (`capture-pane -a`) is appended to
+// the window's scrollback so history from before the full-screen program
+// started remains reachable above it.
+func (c *Client) CaptureSnapshot(ctx context.Context, name string, maxHistoryLines int) (Snapshot, error) {
+	meta, err := c.run(ctx, "display-message", "-p", "-t", target(name),
+		"#{alternate_on} #{pane_height} #{history_size} #{cursor_x} #{cursor_y} #{scroll_region_upper} #{scroll_region_lower}")
+	if err != nil {
+		return Snapshot{}, err
+	}
+	fields := strings.Fields(meta)
+	if len(fields) < 7 {
+		return Snapshot{}, fmt.Errorf("tmux: unexpected snapshot metadata %q", meta)
+	}
+	nums := make([]int, 7)
+	for i := range nums {
+		v, perr := strconv.Atoi(fields[i])
+		if perr != nil {
+			return Snapshot{}, fmt.Errorf("tmux: invalid snapshot metadata %q: %w", meta, perr)
+		}
+		nums[i] = v
+	}
+	altOn, paneHeight, histSize, cx, cy, sru, srl := nums[0], nums[1], nums[2], nums[3], nums[4], nums[5], nums[6]
+
+	var history string
+	if histSize > 0 {
+		start := "-"
+		if maxHistoryLines > 0 {
+			start = "-" + strconv.Itoa(maxHistoryLines)
+		}
+		h, herr := c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", start, "-E", "-1", "-t", target(name))
+		if herr != nil {
+			return Snapshot{}, herr
+		}
+		history = h
+	}
+	if altOn == 1 {
+		if saved, serr := c.run(ctx, "capture-pane", "-a", "-p", "-e", "-J", "-S", "0", "-t", target(name)); serr == nil && saved != "" {
+			if history != "" {
+				history += "\n" + saved
+			} else {
+				history = saved
+			}
+		}
+	}
+
+	screen, err := c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "0", "-t", target(name))
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{
+		History:     history,
+		Screen:      screen,
+		PaneHeight:  paneHeight,
+		CursorX:     cx,
+		CursorY:     cy,
+		ScrollUpper: sru,
+		ScrollLower: srl,
+	}, nil
 }
 
 // Respawn restarts the process in a session's pane, reusing the command it was
