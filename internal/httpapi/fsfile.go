@@ -16,14 +16,18 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
-// Server-wide file preview routes for paths an agent prints in a terminal.
+// Server-wide file routes for paths an agent prints in a terminal.
 //
 // Agents routinely write artifacts outside the project root (~/.gemini,
-// ~/.claude, /tmp), so clicking a file link in the terminal needs to open the
-// viewer wherever that regular file sits on the server. Folders stay confined
-// to the project's working directory: there is no directory-listing route under
-// /fs, and handleResolveFS answers "outside_dir" for any directory outside the
-// project so the side panel's FileTree never leaves the workspace.
+// ~/.claude, /tmp), so clicking a file link in the terminal opens the viewer
+// wherever that regular file sits on the host, and the viewer can save it back.
+// That is the whole filesystem as far as the panel's user can see it, accepted
+// on purpose: whoever is signed in already has a shell (docs/design.md, "The
+// viewer outside a project"). It is not unrecorded: fsaudit.go says what is
+// written to the audit log. Directories are a separate matter: there is no
+// directory-listing route under /fs, and handleResolveFS answers "outside_dir"
+// for any directory outside the project so the side panel's FileTree never
+// leaves the workspace.
 func (s *Server) registerFSFileRoutes(r chi.Router) {
 	r.Get("/fs/resolve", s.handleResolveFS)
 	r.Get("/fs/preview", s.handleFSPreview)
@@ -315,16 +319,20 @@ func resolveServerFilePath(w http.ResponseWriter, r *http.Request) (string, bool
 	return abs, true
 }
 
-func openServerFile(w http.ResponseWriter, r *http.Request) (*os.File, os.FileInfo, bool) {
+func (s *Server) openServerFile(w http.ResponseWriter, r *http.Request, how fsAccess) (*os.File, os.FileInfo, bool) {
 	abs, ok := resolveServerFilePath(w, r)
 	if !ok {
 		return nil, nil, false
 	}
-	return openRegularFile(w, abs)
+	f, info, ok := openRegularFile(w, abs)
+	if ok {
+		s.auditFSRead(r, abs, how)
+	}
+	return f, info, ok
 }
 
 func (s *Server) handleFSPreview(w http.ResponseWriter, r *http.Request) {
-	f, info, ok := openServerFile(w, r)
+	f, info, ok := s.openServerFile(w, r, fsPreview)
 	if !ok {
 		return
 	}
@@ -337,11 +345,15 @@ func (s *Server) handleFSRenderPreview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Audited on the way in, before the file is judged: render is the route
+	// a page is opened by, and a refusal (too large, not regular) has still
+	// shown somebody a path.
+	s.auditFSRead(r, abs, fsRender)
 	serveRenderPreviewAt(w, r, abs)
 }
 
 func (s *Server) handleFSInline(w http.ResponseWriter, r *http.Request) {
-	f, info, ok := openServerFile(w, r)
+	f, info, ok := s.openServerFile(w, r, fsInline)
 	if !ok {
 		return
 	}
@@ -350,7 +362,7 @@ func (s *Server) handleFSInline(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFSDownload(w http.ResponseWriter, r *http.Request) {
-	f, info, ok := openServerFile(w, r)
+	f, info, ok := s.openServerFile(w, r, fsDownload)
 	if !ok {
 		return
 	}
@@ -359,7 +371,7 @@ func (s *Server) handleFSDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFSArchiveEntries(w http.ResponseWriter, r *http.Request) {
-	f, info, ok := openServerFile(w, r)
+	f, info, ok := s.openServerFile(w, r, fsArchive)
 	if !ok {
 		return
 	}
@@ -368,7 +380,7 @@ func (s *Server) handleFSArchiveEntries(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleFSSQLite(w http.ResponseWriter, r *http.Request) {
-	f, _, ok := openServerFile(w, r)
+	f, _, ok := s.openServerFile(w, r, fsSQLite)
 	if !ok {
 		return
 	}
@@ -380,7 +392,9 @@ func (s *Server) handleFSWriteFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Every write is a row, inside a project or not; the detail says when the
+	// file is outside every project and when it holds credentials.
 	s.serveWriteFile(w, r, abs, func(n int) string {
-		return fmt.Sprintf("%s, %d bytes", abs, n)
+		return fmt.Sprintf("%s, %d bytes", s.pathDetail(abs, !s.insideAProject(r, abs)), n)
 	})
 }

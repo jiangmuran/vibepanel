@@ -47,7 +47,11 @@ import (
 
 // Server holds everything the HTTP layer needs.
 type Server struct {
-	Cfg      config.Config
+	Cfg config.Config
+
+	// fsReads coalesces the audit rows of /api/fs reads (fsaudit.go).
+	fsReads fsReadAudit
+
 	DB       *store.DB
 	Tmux     *tmux.Client
 	Manager  *session.Manager

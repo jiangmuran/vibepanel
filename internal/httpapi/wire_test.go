@@ -563,6 +563,10 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"project.archive_idle":  true,
 		// A text file saved from the viewer's editor.
 		"files.write": true,
+		// The whole-host routes under /api/fs: a read of a file outside every
+		// project, and a download of one, coalesced per file per minute.
+		"files.read":     true,
+		"files.download": true,
 	}
 
 	files, err := filepath.Glob("*.go")
