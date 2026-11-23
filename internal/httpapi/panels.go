@@ -43,6 +43,7 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/projects/{id}/preview/render", s.handleRenderPreview)
 	r.Post("/projects/{id}/upload", s.handleUpload)
 	r.Post("/projects/{id}/mkdir", s.handleProjectMkdir)
+	s.registerFSFileRoutes(r)
 	r.Post("/clipboard", s.handleClipboard)
 	r.Get("/projects/{id}/notes", s.handleGetNote)
 	r.Put("/projects/{id}/notes", s.handlePutNote)
@@ -222,6 +223,10 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	serveDownload(w, r, f, info)
+}
+
+func serveDownload(w http.ResponseWriter, r *http.Request, f *os.File, info os.FileInfo) {
 	name := filepath.Base(f.Name())
 	setAttachmentHeaders(w, name)
 	http.ServeContent(w, r, name, info.ModTime(), f)
@@ -241,6 +246,12 @@ func (s *Server) openProjectFile(w http.ResponseWriter, r *http.Request) (*os.Fi
 		writeBrowseErr(w, err)
 		return nil, nil, false
 	}
+	return openRegularFile(w, abs)
+}
+
+// openRegularFile checks that abs is an existing regular file and opens it,
+// writing the refusal when it is not.
+func openRegularFile(w http.ResponseWriter, abs string) (*os.File, os.FileInfo, bool) {
 	info, err := os.Stat(abs)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "no such file")
@@ -303,6 +314,10 @@ func (s *Server) handleInline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	serveInline(w, r, f, info)
+}
+
+func serveInline(w http.ResponseWriter, r *http.Request, f *os.File, info os.FileInfo) {
 	name := filepath.Base(f.Name())
 	head := make([]byte, 512)
 	n, _ := f.ReadAt(head, 0)
@@ -380,40 +395,15 @@ func setAttachmentHeaders(w http.ResponseWriter, name string) {
 // Base64 in a JSON envelope was the alternative, and it is a third larger for
 // the only two kinds that need it.
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
-	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		s.writeStoreErr(w, err)
-		return
-	}
-	abs, err := browse.Resolve(p.Path, r.URL.Query().Get("path"))
-	if err != nil {
-		writeBrowseErr(w, err)
-		return
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "no such file")
-		return
-	}
-	if info.IsDir() {
-		writeErr(w, http.StatusBadRequest, "that is a directory")
-		return
-	}
-	// Regular files only, for the reason spelled out on handleDownload: opening
-	// a FIFO with no writer never returns, and it takes the request goroutine
-	// and graceful shutdown with it. A preview is reached by clicking a row
-	// rather than a download button, so it is the easier of the two to trip
-	// over by accident.
-	if !info.Mode().IsRegular() {
-		writeErr(w, http.StatusBadRequest, "not a regular file")
-		return
-	}
-	f, err := os.Open(abs)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, "cannot read that file")
+	f, info, ok := s.openProjectFile(w, r)
+	if !ok {
 		return
 	}
 	defer f.Close()
+	servePreview(w, r, f.Name(), f, info)
+}
+
+func servePreview(w http.ResponseWriter, r *http.Request, abs string, f *os.File, info os.FileInfo) {
 
 	head := make([]byte, 512)
 	n, err := io.ReadFull(f, head)

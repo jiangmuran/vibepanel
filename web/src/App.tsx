@@ -1,5 +1,5 @@
 import { Tour } from './components/Tour'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronUp,
   LogOut,
@@ -9,12 +9,13 @@ import {
   Settings as SettingsIcon,
 } from 'lucide-react'
 
-import { api, UnauthorizedError } from './protocol/api'
+import { api, SERVER_FILES, UnauthorizedError } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
 import type { SocketStatus } from './protocol/socket'
 import type {
   ArchivedProject,
   AuthState,
+  FileEntry,
   PanelState,
   Project,
   ResourceAlert,
@@ -43,6 +44,7 @@ import { useViewportFit } from './components/mobile/viewport'
 import { TouchControls, TouchKeys } from './components/mobile/TouchControls'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
 import {
+  activate,
   defaultLayout,
   layoutStorageKey,
   parseLayout,
@@ -83,6 +85,7 @@ import { notePluginsRev } from './components/plugins/rev'
 import { withKnown } from './components/panes'
 import { PANEL_TABS } from './components/chrome'
 import { echoAgent } from './components/localEcho'
+import { LazyFileViewer } from './components/viewer/lazy'
 
 /**
  * Safety net only.
@@ -1084,6 +1087,83 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // agent does anything else.
   const pagePrompt = useRef<{ projectId: string; text: string } | null>(null)
   const [previewAsk, setPreviewAsk] = useState(0)
+  const [revealDir, setRevealDir] = useState<{ projectId: string; path: string; seq: number } | null>(null)
+  const [linkedFile, setLinkedFile] = useState<{
+    projectId: string
+    projectName: string
+    entry: FileEntry
+    initialLine?: number
+    seq: number
+  } | null>(null)
+
+  const openProjectDir = (projectId: string, dirPath: string) => {
+    setLinkedFile(null)
+    if (current?.projectId !== projectId) {
+      const match = state.sessions.find((s) => s.projectId === projectId && !s.scratch)
+      if (match) setSelected(match.id)
+    }
+    setPaneLayout((cur) => activate(cur, 'files'))
+    if (sheetLayout) {
+      setDrawerOpen(false)
+      setSheet('panel')
+    } else {
+      setRightOpen(true)
+    }
+    setRevealDir((prev) => ({ projectId, path: dirPath, seq: (prev?.seq ?? 0) + 1 }))
+  }
+
+  const openTerminalPath = async (sessionId: string, target: string, fallback?: string) => {
+    try {
+      const sess = state.sessions.find((s) => s.id === sessionId) ?? current
+      const pid = sess?.projectId ?? currentProject?.id ?? ''
+      const resolved = await api.resolvePath({
+        target,
+        fallback,
+        sessionId,
+        projectId: pid,
+      })
+      if (resolved.kind === 'file') {
+        const inProj = resolved.inProject && resolved.projectId !== ''
+        const proj = inProj ? state.projects.find((p) => p.id === resolved.projectId) : null
+        setLinkedFile((prev) => ({
+          projectId: inProj ? resolved.projectId : SERVER_FILES,
+          projectName: proj ? projectLabel(proj) : resolved.projectName || '/',
+          entry: {
+            name: resolved.name,
+            path: resolved.path,
+            isDir: false,
+            size: resolved.size,
+            modTime: resolved.modTime,
+            symlink: false,
+            readable: true,
+            escapes: false,
+          },
+          initialLine: resolved.line > 0 ? resolved.line : undefined,
+          seq: (prev?.seq ?? 0) + 1,
+        }))
+        return
+      }
+      if (resolved.kind === 'dir' && resolved.inProject && resolved.projectId) {
+        openProjectDir(resolved.projectId, resolved.path)
+        return
+      }
+      if (resolved.kind === 'outside_dir') {
+        showToast({ kind: 'info', key: 'term.dirOutside' })
+        return
+      }
+      if (resolved.kind === 'not_regular') {
+        showToast({ kind: 'info', key: 'term.notRegular' })
+        return
+      }
+      showToast({ kind: 'info', key: 'term.linkMissing' })
+    } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        onSignOut()
+        return
+      }
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
   const openPage = async (pageId: string, fresh: boolean) => {
     try {
       const opened = await api.openPage(pageId)
@@ -1877,6 +1957,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   // their cursor says. The predictor checks the cursor instead.
                   predictEcho={echoAgent(state.sessions.find((x) => x.id === id))}
                   onSelectionChange={setSelection}
+                  onOpenPath={(target, fallback) => void openTerminalPath(id, target, fallback)}
                   onClipboard={(text, ok) => setBlockedClip(ok ? '' : text)}
                   className="h-full w-full py-2 pr-1 pl-2"
                 />
@@ -1938,6 +2019,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             onNew={newBottomTerminal}
             onClose={(t) => void guard(() => api.deleteSession(t.id))}
             onRename={(t, title) => void guard(() => api.patchSession(t.id, { title }))}
+            onOpenPath={(sid, target, fallback) => void openTerminalPath(sid, target, fallback)}
           />
         )}
 
@@ -2068,6 +2150,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           currentSession={current}
           onPaste={pasteToSession}
           previewAsk={previewAsk}
+          revealDir={revealDir}
         />
       )}
 
@@ -2141,6 +2224,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             currentSession={current}
             onPaste={pasteToSession}
             previewAsk={previewAsk}
+            revealDir={revealDir}
           />
         </div>
       )}
@@ -2187,11 +2271,34 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             onNew={newBottomTerminal}
             onClose={(t) => void guard(() => api.deleteSession(t.id))}
             onRename={(t, title) => void guard(() => api.patchSession(t.id, { title }))}
+            onOpenPath={(sid, target, fallback) => void openTerminalPath(sid, target, fallback)}
           />
         </div>
       )}
 
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
+
+      {linkedFile && (
+        <Suspense fallback={null}>
+          <LazyFileViewer
+            key={linkedFile.seq}
+            projectId={linkedFile.projectId}
+            projectName={linkedFile.projectName}
+            entry={linkedFile.entry}
+            initialLine={linkedFile.initialLine}
+            files={[]}
+            onOpen={(entry) =>
+              setLinkedFile((prev) =>
+                prev ? { ...prev, entry, initialLine: undefined, seq: prev.seq + 1 } : null,
+              )
+            }
+            onReveal={(dir) => {
+              if (linkedFile.projectId !== SERVER_FILES) openProjectDir(linkedFile.projectId, dir)
+            }}
+            onClose={() => setLinkedFile(null)}
+          />
+        </Suspense>
+      )}
 
       {/* A portal on <body> when a question is asked, so it is over whatever
           dialog asked it: the settings, the file viewer. */}

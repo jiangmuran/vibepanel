@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isMarkdown, linkKind, projectImage, safeHref, slugger } from './mdlinks'
+import { isMarkdown, linkKind, projectImage, safeHref, serverImage, slugger } from './mdlinks'
 
 describe('safeHref', () => {
   it('refuses every scheme but http, https and mailto', () => {
@@ -81,6 +81,19 @@ describe('projectImage', () => {
     // Encoded, the same climb.
     expect(projectImage('README.md', '%2e%2e/outside.png')).toBeNull()
     expect(projectImage('README.md', '..%2foutside.png')).toBeNull()
+  })
+})
+
+describe('serverImage', () => {
+  it('resolves relative and absolute host paths while refusing remote URLs', () => {
+    expect(serverImage('/root/.gemini/brain/id/walkthrough.md', 'shot.png')).toBe(
+      '/root/.gemini/brain/id/shot.png',
+    )
+    expect(serverImage('/root/.gemini/brain/id/walkthrough.md', '/root/.gemini/brain/id/hero.png')).toBe(
+      '/root/.gemini/brain/id/hero.png',
+    )
+    expect(serverImage('/root/.gemini/brain/id/walkthrough.md', 'https://example.com/a.png')).toBeNull()
+    expect(serverImage('/root/.gemini/brain/id/walkthrough.md', '//example.com/a.png')).toBeNull()
   })
 })
 

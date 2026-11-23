@@ -309,6 +309,7 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 	if c.ServerRunning(ctx) {
 		c.advertiseTruecolor(ctx)
 		c.advertiseSync(ctx)
+		c.advertiseHyperlinks(ctx)
 		c.watchBells(ctx)
 		return nil
 	}
@@ -322,6 +323,7 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 	}
 	c.advertiseTruecolor(ctx)
 	c.advertiseSync(ctx)
+	c.advertiseHyperlinks(ctx)
 	c.watchBells(ctx)
 	// Stamp what the server was started with.
 	//
@@ -414,16 +416,29 @@ func (c *Client) advertiseTruecolor(ctx context.Context) {
 // Here as well as in vibepanel.conf for the reason advertiseTruecolor gives:
 // `-f` is read once at start-server, so an upgraded panel attaching new
 // clients to a weeks-old tmux server would otherwise keep drawing without DEC
-// mode 2026 until the host rebooted. Checked before appending because
-// `set-option -as` grows an array option on every call.
+// mode 2026 until the host rebooted.
 func (c *Client) advertiseSync(ctx context.Context) {
-	if out, err := c.run(ctx, "show-options", "-s", "terminal-features"); err == nil && hasWildcardSync(out) {
-		return
-	}
-	_, _ = c.run(ctx, "set-option", "-as", "terminal-features", ",*:sync")
+	c.advertiseFeature(ctx, "sync")
 }
 
-func hasWildcardSync(out string) bool {
+// advertiseHyperlinks adds OSC 8 hyperlink forwarding on a server started
+// before vibepanel.conf carried `*:hyperlinks`, for the same reason.
+func (c *Client) advertiseHyperlinks(ctx context.Context) {
+	c.advertiseFeature(ctx, "hyperlinks")
+}
+
+// advertiseFeature appends `*:<feature>` to terminal-features. Checked before
+// appending because `set-option -as` grows an array option on every call.
+func (c *Client) advertiseFeature(ctx context.Context, feature string) {
+	if out, err := c.run(ctx, "show-options", "-s", "terminal-features"); err == nil && hasWildcardFeature(out, feature) {
+		return
+	}
+	_, _ = c.run(ctx, "set-option", "-as", "terminal-features", ",*:"+feature)
+}
+
+func hasWildcardSync(out string) bool { return hasWildcardFeature(out, "sync") }
+
+func hasWildcardFeature(out, want string) bool {
 	for _, line := range strings.Split(out, "\n") {
 		_, val, ok := strings.Cut(strings.TrimSpace(line), " ")
 		if !ok {
@@ -435,7 +450,7 @@ func hasWildcardSync(out string) bool {
 			continue
 		}
 		for _, feat := range strings.Split(rest, ":") {
-			if feat == "sync" {
+			if feat == want {
 				return true
 			}
 		}

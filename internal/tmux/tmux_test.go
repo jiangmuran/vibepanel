@@ -2075,3 +2075,17 @@ func TestAnUnreadableLineIsSkippedAndSaidOnce(t *testing.T) {
 		t.Errorf("the unreadable line was logged %d times, want once with its text:\n%s", n, log.String())
 	}
 }
+func TestEnsureServerAdvertisesHyperlinks(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	out, err := c.run(ctx, "show-options", "-s", "terminal-features")
+	if err != nil {
+		t.Fatalf("show-options terminal-features: %v", err)
+	}
+	if !hasWildcardFeature(out, "hyperlinks") {
+		t.Errorf("terminal-features missing *:hyperlinks:\n%s", out)
+	}
+}

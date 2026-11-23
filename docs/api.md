@@ -908,10 +908,20 @@ timestamp.
 
 ### `GET /api/browse?path=`
 ### `POST /api/browse/mkdir`
+### `GET /api/fs/resolve?target=&fallback=&sessionId=&projectId=`
+### `GET /api/fs/preview?path=&meta=`
+### `GET /api/fs/preview/render?path=&scripts=`
+### `GET /api/fs/inline?path=`
+### `GET /api/fs/download?path=`
+### `GET /api/fs/archive-entries?path=`
+### `GET /api/fs/sqlite?path=&table=`
+### `PUT /api/fs/file?path=`
 
-Directories only, rooted at the home directory, for choosing where a project
+Directories only on `/api/browse`, rooted at `/` and opening at the home directory, for choosing where a project
 should live. `mkdir` takes `{"path": "...", "name": "..."}` where `name` is one
 element, not a path.
+
+`/api/fs/resolve` resolves a file path or `file://` link clicked in a terminal against the session's `cwd` and project root (`~` expands to the panel user's home). Files resolve anywhere on the host (`inProject: false` returns the resolved absolute path for `/api/fs/{preview,inline,download,archive-entries,sqlite,file}` and `/api/fs/preview/render`); directories resolve only inside the project root (`kind: "dir"` with a project-relative `path`, or `kind: "outside_dir"` when outside). No `/api/fs` route lists directories.
 
 ## Settings
 

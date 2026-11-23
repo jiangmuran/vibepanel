@@ -52,6 +52,7 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"Todo", store.Todo{}},
 		{"AuditEntry", store.AuditEntry{}},
 		{"FileEntry", browse.Entry{}},
+		{"ResolvedPath", resolvedPathResponse{}},
 		// The largest surface and the last one to be covered. This is what the
 		// socket pushes on every change, and it lived in a package the old
 		// home of this test could not import without a cycle — so the rows

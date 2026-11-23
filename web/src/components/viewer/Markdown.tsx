@@ -5,11 +5,11 @@ import { gfm } from 'micromark-extension-gfm'
 import type { Nodes, Parents, Root, Table, TableCell } from 'mdast'
 import { ImageOff } from 'lucide-react'
 
-import { api } from '../../protocol/api'
+import { api, SERVER_FILES } from '../../protocol/api'
 import { safeBody } from '../text'
 import { t } from '../../i18n'
 import { Code } from './CodeBlock'
-import { linkKind, projectImage, safeHref, slugger } from './mdlinks'
+import { linkKind, projectImage, safeHref, serverImage, slugger } from './mdlinks'
 
 /**
  * A Markdown document as React elements, through mdast with GitHub's
@@ -331,7 +331,8 @@ function link(url: string, title: string | null | undefined, body: ReactNode[], 
 }
 
 function image(url: string, alt: string, ctx: Ctx, key: string): ReactNode {
-  const inProject = projectImage(ctx.path, url)
+  const inProject =
+    ctx.projectId === SERVER_FILES ? serverImage(ctx.path, url) : projectImage(ctx.path, url)
   if (inProject === null) {
     // A remote image is never requested: a document should not be able to
     // tell somebody's server that it was opened, and when. Its address is

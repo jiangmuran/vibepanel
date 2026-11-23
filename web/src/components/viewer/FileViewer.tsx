@@ -19,7 +19,7 @@ import {
   Zap,
 } from 'lucide-react'
 
-import { api } from '../../protocol/api'
+import { api, SERVER_FILES } from '../../protocol/api'
 import type { Markup } from '../../protocol/api'
 import type { ArchiveListing, DBListing } from '../../protocol/listings'
 import type { ArchiveFooter as ArchiveFooterT } from './ArchiveView'
@@ -191,6 +191,8 @@ interface ViewerProps {
   /** The breadcrumb's root. */
   projectName: string
   entry: FileEntry
+  /** 1-based line to jump to when opened from a `#L` or `:line` terminal link. */
+  initialLine?: number
   /** The files of the directory on screen, in the tree's order. */
   files: readonly FileEntry[]
   /** Previous and next: opens another file in the viewer. */
@@ -275,6 +277,7 @@ function FileContent({
   projectId,
   projectName,
   entry,
+  initialLine,
   files,
   onOpen,
   onReveal,
@@ -331,6 +334,18 @@ function FileContent({
         if (p.kind === 'text' || p.kind === 'binary' || p.kind === 'tooBig' || p.kind === 'none') {
           setView(p)
           setReads((n) => n + 1)
+          if (p.kind === 'text' && initialLine && initialLine > 0) {
+            if (
+              canRender(p.markup) ||
+              isMarkdown(entry.name) ||
+              isJson(entry.name) ||
+              isDelimited(entry.name) ||
+              isNotebook(entry.name)
+            ) {
+              setSource(true)
+            }
+            setScrollTo({ line: Math.max(0, initialLine - 1), seq: ++scrollSeq.current })
+          }
           return
         }
         // Read on the server, by the route of its own kind.
@@ -353,7 +368,7 @@ function FileContent({
     return () => {
       cancelled = true
     }
-  }, [projectId, entry.path, reload])
+  }, [projectId, entry.path, entry.name, initialLine, reload])
 
   // Editing (docs/file-preview.md, "Editing"). A text file the server sent
   // whole, as UTF-8, with one kind of line ending: a cut file would be saved
@@ -729,7 +744,8 @@ function FileContent({
     return t('viewer.highlighted')
   }
 
-  const trail = crumbs(entry.path, projectName)
+  const externalFile = projectId === SERVER_FILES
+  const trail = crumbs(externalFile ? entry.path.replace(/^\/+/, '') : entry.path, externalFile ? '/' : projectName)
 
   return (
     <div data-testid="viewer-content" data-kind={view.kind} className="contents">
@@ -758,16 +774,20 @@ function FileContent({
                         : 'flex'
                 }`}
               >
-                <button
-                  type="button"
-                  onClick={() => onReveal(c.path)}
-                  data-testid="viewer-crumb"
-                  data-path={c.path}
-                  title={t('viewer.reveal', { name: safeText(c.name) })}
-                  className="vp-press min-w-0 truncate rounded-md px-1 hover:bg-surface-2 hover:text-ink"
-                >
-                  {safeText(c.name)}
-                </button>
+                {externalFile ? (
+                  <span className="min-w-0 truncate px-1">{safeText(c.name === '/' ? '' : c.name)}</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onReveal(c.path)}
+                    data-testid="viewer-crumb"
+                    data-path={c.path}
+                    title={t('viewer.reveal', { name: safeText(c.name) })}
+                    className="vp-press min-w-0 truncate rounded-md px-1 hover:bg-surface-2 hover:text-ink"
+                  >
+                    {safeText(c.name)}
+                  </button>
+                )}
                 <span aria-hidden="true">/</span>
               </span>
             ))}
