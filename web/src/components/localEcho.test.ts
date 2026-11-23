@@ -153,6 +153,7 @@ describe('EchoPredictor', () => {
       ['claude', claude],
       ['codex', codex],
       ['opencode', opencode],
+      ['agy', agy],
     ] as const) {
       const p = new EchoPredictor(agent)
       p.output(300)
@@ -357,6 +358,46 @@ describe('EchoPredictor with Codex', () => {
   })
 })
 
+/**
+ * Antigravity CLI's input line: "> " at column 0 across the full row.
+ */
+function agy(typed = '') {
+  const s = claude(typed)
+  const row = s.cursorY
+  return {
+    ...s,
+    cell: (x: number, y: number) => {
+      const c = s.cell(x, y)
+      return y === row && x === 0 ? { ...c!, chars: '>' } : c
+    },
+  } satisfies EchoScreen
+}
+
+describe('EchoPredictor with Antigravity CLI', () => {
+  it('predicts on ">" at column 0 and leaves "!" and "?" on an empty prompt', () => {
+    const p = new EchoPredictor('agy')
+    expect(p.input('hi', agy(), 0)).toBe(true)
+    expect(p.view()?.chars.map((c) => c.x)).toEqual([2, 3])
+    expect(new EchoPredictor('agy').input('!', agy(), 0)).toBe(false)
+    expect(new EchoPredictor('agy').input('?', agy(), 0)).toBe(false)
+    expect(new EchoPredictor('agy').input('/', agy(), 0)).toBe(true)
+  })
+
+  it('does not mistake a typed ">" inside the prompt for the prompt marker', () => {
+    const p = new EchoPredictor('agy')
+    // "!"" after "a > " is typed text, not a mode key on an empty prompt.
+    expect(p.input('!', agy('a > '), 0)).toBe(true)
+    expect(shown(p, agy('a > '))).toBe('a > !')
+
+    // Held backspace erases right past the typed ">" back to column 2.
+    const del = new EchoPredictor('agy')
+    let now = 0
+    for (let i = 0; i < 6; i++) del.input('\x7f', agy('a > b'), (now += 30))
+    expect(shown(del, agy('a > b'))).toBe('')
+    expect(del.view()?.cursorX).toBe(2)
+  })
+})
+
 describe('EchoPredictor with opencode', () => {
   it('treats the grey hint as a hint because the input is empty, not because it is dim', () => {
     const p = new EchoPredictor('opencode')
@@ -403,9 +444,12 @@ describe('echoAgent', () => {
 
   it('knows each agent by its built-in profile, its launch command or its process', () => {
     expect(echoAgent(s({ launchProfileId: 'builtin:codex' }))).toBe('codex')
+    expect(echoAgent(s({ launchProfileId: 'builtin:agy' }))).toBe('agy')
     expect(echoAgent(s({ launchCommand: ['/opt/bin/opencode'] }))).toBe('opencode')
+    expect(echoAgent(s({ launchCommand: ['/root/.local/bin/agy'] }))).toBe('agy')
     expect(echoAgent(s({ command: 'codex' }))).toBe('codex')
     expect(echoAgent(s({ command: 'opencode' }))).toBe('opencode')
+    expect(echoAgent(s({ command: 'agy' }))).toBe('agy')
     expect(echoAgent(s({ command: '2.1.283' }))).toBe('claude')
   })
 

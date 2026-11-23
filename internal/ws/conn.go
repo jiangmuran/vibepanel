@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -735,8 +736,177 @@ func replayFrames(ref uint32, replay []byte) [][]byte {
 	return frames
 }
 
+// outputQuietWait and outputMaxWait bound how long pumpStream holds an
+// in-progress TUI redraw so that its PTY slices travel in one WebSocket frame.
+//
+// Linux's PTY line buffer hands tmux at most 4095 bytes per read, so an inline
+// primary-screen TUI redrawing 50 rows (Antigravity CLI's BubbleTea renderer
+// writes 12-25 KB per spinner tick: CSI ?25l, CSI J erasing to the bottom of
+// the pane, 50 rows of text, CSI ?25h) arrives on the client PTY as four to
+// six reads spread across ~0.8 ms, with tmux 3.4 closing CSI ?2026l after the
+// first 4095 bytes. Sent one read per WebSocket frame, TCP splits the CSI J
+// erase from the rows that refill it and xterm.js paints a half-blank screen
+// whenever requestAnimationFrame lands in between.
+//
+// Short interactive echoes (< outputBurstFloor, cursor visible, sync closed)
+// skip the timer altogether and leave with zero delay and zero allocation.
+const (
+	outputQuietWait  = 2 * time.Millisecond
+	outputMaxWait    = 12 * time.Millisecond
+	outputBurstFloor = 1024
+)
+
+func frameOpen(b []byte) bool {
+	if bytes.LastIndex(b, []byte("\x1b[?25l")) > bytes.LastIndex(b, []byte("\x1b[?25h")) {
+		return true
+	}
+	if bytes.LastIndex(b, []byte("\x1b[?2026h")) > bytes.LastIndex(b, []byte("\x1b[?2026l")) {
+		return true
+	}
+	return false
+}
+
+func readOutputBatch(ctx context.Context, sub *session.Subscriber, first []byte) (batch []byte, next *session.Event, open bool) {
+	batch = first
+	lastLen := len(first)
+	open = true
+	copied := false
+	appendOut := func(data []byte) {
+		if !copied {
+			buf := make([]byte, len(batch), max(len(batch)+len(data), 8<<10))
+			copy(buf, batch)
+			batch = buf
+			copied = true
+		}
+		batch = append(batch, data...)
+		lastLen = len(data)
+	}
+	drainReady := func() bool {
+		for len(batch) < replayChunk {
+			select {
+			case ev, ok := <-sub.Events:
+				if !ok {
+					open = false
+					return true
+				}
+				sub.Took(ev)
+				if ev.Kind != session.EventOutput {
+					next = &ev
+					return true
+				}
+				appendOut(ev.Data)
+			default:
+				return false
+			}
+		}
+		return true
+	}
+
+	if drainReady() || (!frameOpen(batch) && lastLen < outputBurstFloor) {
+		return batch, next, open
+	}
+
+	deadline := time.Now().Add(outputMaxWait)
+	initialWait := outputQuietWait
+	if frameOpen(batch) {
+		initialWait = outputMaxWait
+	}
+	timer := time.NewTimer(initialWait)
+	defer timer.Stop()
+	for len(batch) < replayChunk {
+		select {
+		case <-ctx.Done():
+			return nil, nil, true
+		case <-timer.C:
+			return batch, nil, true
+		case ev, ok := <-sub.Events:
+			if !ok {
+				return batch, nil, false
+			}
+			sub.Took(ev)
+			if ev.Kind != session.EventOutput {
+				return batch, &ev, true
+			}
+			appendOut(ev.Data)
+			if drainReady() || (!frameOpen(batch) && lastLen < outputBurstFloor) {
+				return batch, next, open
+			}
+			rem := time.Until(deadline)
+			if rem <= 0 {
+				return batch, nil, true
+			}
+			wait := min(outputQuietWait, rem)
+			if frameOpen(batch) {
+				wait = rem
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(wait)
+		}
+	}
+	return batch, nil, true
+}
+
 // pumpStream forwards one session's events to the browser.
 func (c *Conn) pumpStream(ctx context.Context, s *stream) {
+	finish := func() {
+		// Deregister first, and only then tell the client.
+		//
+		// The client answers "dropped" by resubscribing, and subscribe
+		// short-circuits when this session is already registered on this
+		// connection. Leaving the entry in place meant that resubscribe was
+		// silently accepted and ignored: no snapshot, no new ref, no further
+		// output. The terminal stayed frozen until the page was reloaded —
+		// which is exactly the state the message exists to get out of.
+		//
+		// The order matters and is not incidental. Doing it here means
+		// deregistration has already happened before the client can possibly
+		// have heard about the drop, so no resubscribe can race ahead of it.
+		c.deregister(s)
+		if msg, ok := endOfStream(ctx, s.sub.Dropped(), s.sessionID, s.ref); ok {
+			c.sendJSON(msg)
+		}
+	}
+	sendOutput := func(data []byte) {
+		for start := 0; start < len(data); start += replayChunk {
+			end := min(start+replayChunk, len(data))
+			c.sendBinary(EncodeData(s.ref, data[start:end]))
+		}
+	}
+	sendControl := func(ev session.Event) {
+		switch ev.Kind {
+		case session.EventCatchUp:
+			r := ev.Replay
+			frames := replayFrames(s.ref, r.Data)
+			c.sendJSON(ServerMessage{
+				Type: MsgSubscribed, SessionID: s.sessionID, Ref: s.ref,
+				Cols: ev.Cols, Rows: ev.Rows,
+				ReplayBytes: len(r.Data), ReplayChunks: len(frames),
+				ReplayStream: r.Stream, ReplayOffset: r.Offset, Resumed: r.Continued,
+				Controlling: s.live.Controller() == c.clientID,
+			})
+			for _, frame := range frames {
+				c.sendBinary(frame)
+			}
+		case session.EventSize:
+			c.sendJSON(ServerMessage{
+				Type: MsgSize, SessionID: s.sessionID, Ref: s.ref,
+				Cols: ev.Cols, Rows: ev.Rows,
+				Controlling: s.live.Controller() == c.clientID,
+			})
+		case session.EventClipboard:
+			c.sendJSON(ServerMessage{Type: MsgClipboard, SessionID: s.sessionID, Text: ev.Text})
+		case session.EventTitle:
+			c.sendJSON(ServerMessage{Type: MsgTitle, SessionID: s.sessionID, Text: ev.Text})
+		case session.EventExit:
+			c.sendJSON(ServerMessage{Type: MsgExit, SessionID: s.sessionID, Ref: s.ref})
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -749,41 +919,24 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 				s.sub.Took(ev)
 			}
 			if !ok {
-				// Deregister first, and only then tell the client.
-				//
-				// The client answers "dropped" by resubscribing, and subscribe
-				// short-circuits when this session is already registered on
-				// this connection. Leaving the entry in place meant that
-				// resubscribe was silently accepted and ignored: no snapshot,
-				// no new ref, no further output. The terminal stayed frozen
-				// until the page was reloaded — which is exactly the state the
-				// message exists to get out of.
-				//
-				// The order matters and is not incidental. Doing it here means
-				// deregistration has already happened before the client can
-				// possibly have heard about the drop, so no resubscribe can
-				// race ahead of it.
-				c.deregister(s)
-				if msg, ok := endOfStream(ctx, s.sub.Dropped(), s.sessionID, s.ref); ok {
-					c.sendJSON(msg)
-				}
+				finish()
 				return
 			}
-			switch ev.Kind {
-			case session.EventOutput:
-				c.sendBinary(EncodeData(s.ref, ev.Data))
-			case session.EventSize:
-				c.sendJSON(ServerMessage{
-					Type: MsgSize, SessionID: s.sessionID, Ref: s.ref,
-					Cols: ev.Cols, Rows: ev.Rows,
-					Controlling: s.live.Controller() == c.clientID,
-				})
-			case session.EventClipboard:
-				c.sendJSON(ServerMessage{Type: MsgClipboard, SessionID: s.sessionID, Text: ev.Text})
-			case session.EventTitle:
-				c.sendJSON(ServerMessage{Type: MsgTitle, SessionID: s.sessionID, Text: ev.Text})
-			case session.EventExit:
-				c.sendJSON(ServerMessage{Type: MsgExit, SessionID: s.sessionID, Ref: s.ref})
+			if ev.Kind != session.EventOutput {
+				sendControl(ev)
+				continue
+			}
+			batch, next, open := readOutputBatch(ctx, s.sub, ev.Data)
+			if ctx.Err() != nil {
+				return
+			}
+			sendOutput(batch)
+			if next != nil {
+				sendControl(*next)
+			}
+			if !open {
+				finish()
+				return
 			}
 		}
 	}

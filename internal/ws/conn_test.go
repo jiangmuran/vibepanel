@@ -599,3 +599,45 @@ func TestAnUnsubscribedStreamEndsWithoutAnExit(t *testing.T) {
 		}
 	}
 }
+
+func TestReadOutputBatchLeavesInteractiveEchoImmediateAndCoalescesRedrawBursts(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Single-character echo: leaves without waiting out outputQuietWait.
+	sub := &session.Subscriber{Events: make(chan session.Event, 8)}
+	t0 := time.Now()
+	batch, next, open := readOutputBatch(ctx, sub, []byte("a"))
+	if elapsed := time.Since(t0); elapsed >= outputQuietWait {
+		t.Errorf("interactive echo waited %v (>= %v)", elapsed, outputQuietWait)
+	}
+	if string(batch) != "a" || next != nil || !open {
+		t.Fatalf("interactive echo = (%q, %v, %v), want (\"a\", nil, true)", batch, next, open)
+	}
+
+	// 2. Multi-slice TUI redraw: CSI ?25l + CSI J erase in slice 1, rows +
+	// CSI ?25h arriving sub-millisecond later, followed by a title event.
+	sub2 := &session.Subscriber{Events: make(chan session.Event, 8)}
+	first := []byte("\x1b[?25l\x1b[10;1H\x1b[Jrow-1\r\n")
+	go func() {
+		time.Sleep(400 * time.Microsecond)
+		sub2.Events <- session.Event{Kind: session.EventOutput, Data: []byte("row-2\r\n")}
+		time.Sleep(400 * time.Microsecond)
+		sub2.Events <- session.Event{Kind: session.EventOutput, Data: []byte("row-3\x1b[?25h")}
+		sub2.Events <- session.Event{Kind: session.EventTitle, Text: "done"}
+	}()
+	batch, next, open = readOutputBatch(ctx, sub2, first)
+	want := "\x1b[?25l\x1b[10;1H\x1b[Jrow-1\r\nrow-2\r\nrow-3\x1b[?25h"
+	if string(batch) != want {
+		t.Fatalf("coalesced redraw = %q, want %q", batch, want)
+	}
+	if next == nil {
+		select {
+		case ev := <-sub2.Events:
+			next = &ev
+		case <-time.After(time.Second):
+		}
+	}
+	if next == nil || next.Kind != session.EventTitle || next.Text != "done" || !open {
+		t.Fatalf("trailing control event = (%+v, open=%v), want EventTitle \"done\"", next, open)
+	}
+}

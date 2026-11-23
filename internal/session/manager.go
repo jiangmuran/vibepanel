@@ -82,9 +82,11 @@ type Subscriber struct {
 
 	// hidden is a viewer still subscribed and not being looked at: a terminal
 	// the browser keeps mounted off-screen so that switching back to it is
-	// instant. It keeps receiving output and does not hold the grid. Guarded by
-	// Live.mu. See SetHidden.
-	hidden bool
+	// instant. While hidden it neither holds the grid nor receives live
+	// EventOutput frames; sentUntil remembers where it stopped so SetHidden
+	// can catch it up from the ring when shown again. Guarded by Live.mu.
+	hidden    bool
+	sentUntil int64
 
 	dropped atomic.Bool
 
@@ -100,7 +102,7 @@ type Subscriber struct {
 // that forgets costs this viewer its subscription and nothing else: the count
 // only ever rises, and the pump drops the viewer, which reconnects.
 func (s *Subscriber) Took(ev Event) {
-	if n := len(ev.Data); n > 0 {
+	if n := ev.byteLen(); n > 0 {
 		s.queued.Add(-int64(n))
 	}
 }
@@ -952,20 +954,30 @@ func (l *Live) subscribe(clientID string, hidden bool, from Resume) (*Subscriber
 	}
 	var replay Replay
 	replay.Stream = l.stream
-	if from.Stream != "" && from.Stream == l.stream {
-		replay.Data, replay.Offset, replay.Continued = l.ring.SnapshotFrom(from.Since)
+	if hidden && from.Stream != "" && from.Stream == l.stream && from.Since >= 0 && from.Since <= l.ring.Total() {
+		// Reconnecting a terminal that is still off-screen on the same stream:
+		// keep its offset and send nothing until SetHidden brings it back on
+		// screen, rather than pushing megabytes for a pane nobody can see.
+		replay.Offset = from.Since
+		replay.Continued = true
+		sub.sentUntil = from.Since
 	} else {
-		replay.Data, replay.Offset, _ = l.ring.SnapshotFrom(-1)
-	}
-	if !replay.Continued {
-		// The modes first, then the screen. Offset moves back by the same
-		// amount: the viewer counts every byte it receives from Offset to find
-		// its resume point, and these bytes are not in the stream, so without
-		// the shift its next resume would skip that many real ones.
-		if prefix := l.modes.prefix(); len(prefix) > 0 {
-			replay.Data = append(prefix, replay.Data...)
-			replay.Offset -= int64(len(prefix))
+		if from.Stream != "" && from.Stream == l.stream {
+			replay.Data, replay.Offset, replay.Continued = l.ring.SnapshotFrom(from.Since)
+		} else {
+			replay.Data, replay.Offset, _ = l.ring.SnapshotFrom(-1)
 		}
+		if !replay.Continued {
+			// The modes first, then the screen. Offset moves back by the same
+			// amount: the viewer counts every byte it receives from Offset to find
+			// its resume point, and these bytes are not in the stream, so without
+			// the shift its next resume would skip that many real ones.
+			if prefix := l.modes.prefix(); len(prefix) > 0 {
+				replay.Data = append(prefix, replay.Data...)
+				replay.Offset -= int64(len(prefix))
+			}
+		}
+		sub.sentUntil = l.ring.Total()
 	}
 	l.subs[sub] = struct{}{}
 
@@ -1084,16 +1096,23 @@ func (l *Live) releaseControlLocked(sub *Subscriber) {
 // SetHidden records whether a viewer's terminal is on screen.
 //
 // The browser keeps a few recently viewed terminals mounted and subscribed, so
-// that switching back to one is a visibility change rather than a replay. That
-// made a subscription stop meaning "somebody is looking", which is exactly what
-// control is decided on. Measured before this existed: a desktop that had
-// merely visited a session held its grid indefinitely, and a viewer opening it
-// long after the grace period was still told it was passive, 144x46 frozen for
-// a terminal nobody could see, where the build before handed it over.
+// that switching back to one is a visibility change rather than a cold mount.
+// Two consequences had to be separated from "somebody is looking":
 //
-// So hiding is leaving and showing is arriving, under the same rules and with
-// the same freeze in between. The subscription is untouched: output keeps
-// flowing, which is the reason for keeping it.
+//  1. Control. Measured before this existed: a desktop that had merely visited
+//     a session held its grid indefinitely, and a viewer opening it long after
+//     the grace period was still told it was passive, 144x46 frozen for a
+//     terminal nobody could see. So hiding is leaving and showing is arriving,
+//     under the same rules and with the same freeze in between.
+//
+//  2. Output. Keeping live output flowing to off-screen terminals meant two
+//     hidden Antigravity CLI sessions spinning at ~33 KB/s each pushed 66 KB/s
+//     over the viewer's single WebSocket and ran xterm.write() on the UI
+//     thread continuously for panes with display:none. While hidden,
+//     broadcastLocked withholds EventOutput and leaves sentUntil where the
+//     viewer stopped; showing sends the missed ring slice (or the latest
+//     snapshot if the ring wrapped past it) as EventCatchUp before live output
+//     resumes.
 //
 // A value that has not changed does nothing. Repeating "I am on screen" is not
 // arriving, and a subscriber that has already gone cannot claim anything.
@@ -1106,8 +1125,43 @@ func (l *Live) SetHidden(sub *Subscriber, hidden bool) {
 	sub.hidden = hidden
 	if hidden {
 		l.releaseControlLocked(sub)
-	} else {
-		l.claimControlLocked(sub)
+		return
+	}
+	l.claimControlLocked(sub)
+	if l.closed || sub.sentUntil >= l.ring.Total() {
+		return
+	}
+	var replay Replay
+	replay.Stream = l.stream
+	replay.Data, replay.Offset, replay.Continued = l.ring.SnapshotFrom(sub.sentUntil)
+	if !replay.Continued {
+		if prefix := l.modes.prefix(); len(prefix) > 0 {
+			replay.Data = append(prefix, replay.Data...)
+			replay.Offset -= int64(len(prefix))
+		}
+	}
+	ev := Event{
+		Kind:   EventCatchUp,
+		Replay: replay,
+		Cols:   l.cols,
+		Rows:   l.rows,
+	}
+	if sub.queued.Load() > subscriberBytes {
+		sub.dropped.Store(true)
+		delete(l.subs, sub)
+		close(sub.Events)
+		l.releaseControlLocked(sub)
+		return
+	}
+	select {
+	case sub.Events <- ev:
+		sub.sentUntil = l.ring.Total()
+		sub.queued.Add(int64(ev.byteLen()))
+	default:
+		sub.dropped.Store(true)
+		delete(l.subs, sub)
+		close(sub.Events)
+		l.releaseControlLocked(sub)
 	}
 }
 
@@ -1137,9 +1191,12 @@ func (l *Live) broadcast(ev Event) {
 // which has to write the ring and deliver in one critical section.
 func (l *Live) broadcastLocked(ev Event) {
 	for sub := range l.subs {
+		if sub.hidden && ev.Kind == EventOutput {
+			continue
+		}
 		// The byte bound, checked before the queue is offered the event: a
 		// viewer under the event count can still be holding megabytes.
-		n := int64(len(ev.Data))
+		n := int64(ev.byteLen())
 		if sub.queued.Load()+n > subscriberBytes {
 			sub.dropped.Store(true)
 			delete(l.subs, sub)
@@ -1149,6 +1206,9 @@ func (l *Live) broadcastLocked(ev Event) {
 		}
 		select {
 		case sub.Events <- ev:
+			if ev.Kind == EventOutput {
+				sub.sentUntil = l.ring.Total()
+			}
 			sub.queued.Add(n)
 		default:
 			// Full queue: this viewer cannot keep up. Cut it loose rather than

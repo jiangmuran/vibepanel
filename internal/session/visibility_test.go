@@ -167,3 +167,121 @@ func TestAVisibilityChangeThatChangesNothingClaimsNothing(t *testing.T) {
 		t.Errorf("controller = %q, claimed by a subscriber that no longer exists", got)
 	}
 }
+
+func TestAHiddenTerminalReceivesNoLiveOutputUntilShown(t *testing.T) {
+	live := attachedFor(t, "vp_vis_quiet")
+
+	sub, initial := live.Subscribe("desktop")
+	defer live.Unsubscribe(sub)
+	// Drain initial EventSize queued on subscribe.
+	drainNonOutput := func() {
+		for {
+			select {
+			case ev := <-sub.Events:
+				sub.Took(ev)
+				if ev.Kind == EventOutput || ev.Kind == EventCatchUp {
+					t.Fatalf("unexpected output event %v while draining control events", ev.Kind)
+				}
+			default:
+				return
+			}
+		}
+	}
+	drainNonOutput()
+	_ = initial
+
+	live.SetHidden(sub, true)
+
+	// Simulate an off-screen TUI spinning while the viewer is on another
+	// session: write into the ring and broadcast under the same lock, as the
+	// pump does.
+	chunks := [][]byte{
+		[]byte("spinner-frame-1\r\n"),
+		[]byte("spinner-frame-2\r\n"),
+		[]byte("spinner-frame-3\r\n"),
+	}
+	for _, c := range chunks {
+		live.mu.Lock()
+		_, _ = live.ring.Write(c)
+		live.broadcastLocked(Event{Kind: EventOutput, Data: c})
+		live.mu.Unlock()
+	}
+
+	select {
+	case ev := <-sub.Events:
+		t.Fatalf("hidden subscriber received %+v while off-screen; live output should wait until shown", ev)
+	default:
+	}
+
+	// Bring the terminal back on screen: the missed slice arrives in one
+	// EventCatchUp, continuing the stream without clearing the screen.
+	live.SetHidden(sub, false)
+
+	select {
+	case ev := <-sub.Events:
+		sub.Took(ev)
+		if ev.Kind != EventCatchUp {
+			t.Fatalf("first event on show = %v, want EventCatchUp", ev.Kind)
+		}
+		if !ev.Replay.Continued {
+			t.Errorf("Replay.Continued = false, want true when the ring still holds the gap")
+		}
+		want := "spinner-frame-1\r\nspinner-frame-2\r\nspinner-frame-3\r\n"
+		if got := string(ev.Replay.Data); got != want {
+			t.Errorf("catch-up data = %q, want %q", got, want)
+		}
+	default:
+		t.Fatal("showing a hidden terminal that missed output sent no EventCatchUp")
+	}
+
+	// Subsequent live output flows normally again.
+	after := []byte("live-again\r\n")
+	live.mu.Lock()
+	_, _ = live.ring.Write(after)
+	live.broadcastLocked(Event{Kind: EventOutput, Data: after})
+	live.mu.Unlock()
+
+	select {
+	case ev := <-sub.Events:
+		sub.Took(ev)
+		if ev.Kind != EventOutput || string(ev.Data) != string(after) {
+			t.Fatalf("after show, got %+v, want live EventOutput %q", ev, after)
+		}
+	default:
+		t.Fatal("live output did not resume after SetHidden(false)")
+	}
+}
+
+func TestAHiddenReconnectDefersCatchUpUntilShown(t *testing.T) {
+	live := attachedFor(t, "vp_vis_defer_resub")
+
+	first, snap := live.SubscribeFrom("desktop", false, Resume{})
+	since := snap.Offset + int64(len(snap.Data))
+	live.SetHidden(first, true)
+
+	missed := []byte("written-while-disconnected\r\n")
+	live.mu.Lock()
+	_, _ = live.ring.Write(missed)
+	live.broadcastLocked(Event{Kind: EventOutput, Data: missed})
+	live.mu.Unlock()
+	live.Unsubscribe(first)
+
+	// Reconnect while still off-screen: send nothing now, remember where the
+	// viewer stopped, and catch up only when shown.
+	again, resub := live.SubscribeFrom("desktop", true, Resume{Stream: snap.Stream, Since: since})
+	defer live.Unsubscribe(again)
+	if len(resub.Data) != 0 || !resub.Continued || resub.Offset != since {
+		t.Fatalf("hidden reconnect returned len=%d continued=%v offset=%d, want 0 bytes continuing from %d",
+			len(resub.Data), resub.Continued, resub.Offset, since)
+	}
+	// Drain initial EventSize.
+	<-again.Events
+
+	live.SetHidden(again, false)
+	ev := <-again.Events
+	again.Took(ev)
+	if ev.Kind != EventCatchUp || !ev.Replay.Continued || string(ev.Replay.Data) != string(missed) {
+		t.Fatalf("catch-up after hidden reconnect = %+v (%q), want Continued %q",
+			ev.Kind, ev.Replay.Data, missed)
+	}
+}

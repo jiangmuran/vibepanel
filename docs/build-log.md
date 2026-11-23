@@ -28219,5 +28219,46 @@ deliberate `:` vs `: ` space randomisation and nested fields handled). Where
 annotation file when hooks are installed. A finished `remain-on-exit` pane keeps
 the title it earned after `/proc/<pid>` disappears.
 
+## 2026-11-22 — Antigravity CLI flicker, hidden-terminal flood and local echo
+
+Measured on a live deployment running eight Antigravity CLI (`agy`) sessions
+alongside Claude Code and Codex over two weeks of `VIBEPANEL_DEBUG_TIMING`
+logs: `agy` full loads took a median of 3,434 ms (p90 31,480 ms, p50 replay
+2,048 KB — 100% ring saturation) against Claude Code's 1,091 ms (p50 replay
+903 KB), resumed loads hit p90 9,119 ms against Claude Code's 0 ms, and visible
+subscribes stalled up to 20,426 ms waiting for `MsgSubscribed` while server
+attach+replay took 9 ms. Four causes:
+
+- **No synchronized output (`DEC ?2026`), and split primary-screen redraws.**
+  `agy` renders inline on the primary screen (`alt=0`, BubbleTea v2's
+  conservative renderer under `$TMUX`), erasing from the cursor to the bottom
+  of a 298x65 pane with `CSI J` and reprinting 12-25 KB ~10 times a second
+  (~33 KB/s per working session). `vibepanel.conf` set `terminal-features
+  ",*:RGB"` without `sync`, so tmux stripped `CSI ?2026h/l` and sent the erase
+  unbracketed; and Linux's 4095-byte PTY buffer split each 12-25 KB frame into
+  four to six reads over ~0.8 ms, with tmux 3.4 closing `CSI ?2026l` after the
+  first 4095 bytes while the bottom 35 rows were still blank. `vibepanel.conf`
+  now sets `,*:RGB:sync`, `EnsureServer` adds `*:sync` idempotently onto
+  already-running tmux servers (`advertiseSync`), and `ws.pumpStream` coalesces
+  in-progress redraw bursts (`>= 1 KiB` or an unclosed `CSI ?25l` / `CSI
+  ?2026h`, up to 12 ms / 64 KiB and flushing as soon as the closing short slice
+  arrives) so xterm.js parses the whole frame before `requestAnimationFrame`
+  can paint; single-keystroke echoes leave with zero wait and zero allocation.
+- **Off-screen terminals streamed live output and resubscribed ahead of the
+  visible one.** Desktop keeps `KEEP_TERMINALS = 3` mounted; two hidden `agy`
+  sessions spinning in the background pushed ~66 KB/s over the single WebSocket
+  and ran `xterm.write()` continuously on `display:none` terminals, and on
+  reconnect `PanelSocket` iterated `this.streams` in insertion order so up to
+  4 MiB of hidden replays queued ahead of the terminal on screen. `Live` now
+  withholds `EventOutput` while `sub.hidden` is true, records `sentUntil`,
+  defers hidden reconnect catch-up, and sends `EventCatchUp` (`SnapshotFrom`
+  from `sentUntil`) when `SetHidden(false)` brings the terminal back; and
+  `PanelSocket` subscribes `!hidden` streams before `hidden` ones on open.
+- **No local echo for `agy`.** `localEcho.ts` predicted keystrokes for `claude`,
+  `codex` and `opencode`, leaving every `agy` keystroke to pay the network
+  round trip plus a full TUI redraw. Added `agy` (`>` anchored at column 0 so a
+  typed `>` inside `a > b` is never mistaken for the prompt marker; `!` and `?`
+  left to shell and shortcuts on an empty prompt).
+
 
 

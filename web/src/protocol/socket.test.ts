@@ -174,6 +174,43 @@ describe('hidden terminals', () => {
       delete g.location
     }
   })
+
+  it('subscribes the visible terminal before hidden ones on reconnect', () => {
+    const sock = newSocket()
+    ;(sock as unknown as { dark: () => boolean }).dark = () => false
+    const g = globalThis as unknown as Record<string, unknown>
+    const realWebSocket = g.WebSocket
+    const sent: ClientMessage[] = []
+    class FakeWebSocket {
+      static OPEN = 1
+      readyState = 1
+      onopen: (() => void) | null = null
+      send(s: string) {
+        sent.push(JSON.parse(s) as ClientMessage)
+      }
+      close() {}
+    }
+    g.WebSocket = FakeWebSocket
+    g.location = { protocol: 'http:', host: 'panel.test' }
+    Object.assign(g.window as object, { setInterval: () => 0, clearInterval: () => {} })
+    try {
+      sock.subscribe('older-hidden-1', 80, 24, handlers, true)
+      sock.subscribe('older-hidden-2', 80, 24, handlers, true)
+      sock.subscribe('active-visible', 80, 24, handlers, false)
+      sent.length = 0
+      sock.connect()
+      ;(sock as unknown as { ws: FakeWebSocket }).ws.onopen?.()
+
+      expect(sent.filter((m) => m.t === 'subscribe').map((m) => [m.sessionId, m.hidden])).toEqual([
+        ['active-visible', false],
+        ['older-hidden-1', true],
+        ['older-hidden-2', true],
+      ])
+    } finally {
+      g.WebSocket = realWebSocket
+      delete g.location
+    }
+  })
 })
 
 describe('replay metadata', () => {

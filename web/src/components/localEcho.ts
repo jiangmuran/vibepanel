@@ -87,11 +87,19 @@ const INITIAL_RTT_MS = 300
  *   opencode's input is a box in the middle of the screen with padding inside
  *   it; the other two use the whole row.
  */
-export const AGENTS = {
+export const AGENTS: Record<
+  'claude' | 'codex' | 'opencode' | 'agy',
+  { marker: string; pad: number; modeKeys: string; margin: number; col?: number }
+> = {
   claude: { marker: '❯', pad: 1, modeKeys: '!#?', margin: 1 },
   codex: { marker: '›', pad: 1, modeKeys: '!?', margin: 1 },
   opencode: { marker: '┃', pad: 2, modeKeys: '!', margin: 3 },
-} as const
+  // Antigravity CLI draws `> ` at column 0 between two full-width horizontal
+  // rules (`! ` enters shell mode, `?` opens shortcuts on an empty prompt).
+  // Anchoring `col: 0` distinguishes the prompt's `>` from an ASCII `>` typed
+  // inside the input (`a > b`).
+  agy: { marker: '>', pad: 1, modeKeys: '!?', margin: 1, col: 0 },
+}
 
 export type EchoAgent = keyof typeof AGENTS
 
@@ -312,10 +320,10 @@ export class EchoPredictor {
   /** Whether the input is empty: nothing but blanks between the agent's
    *  marker and the cursor. */
   private emptyInput(screen: EchoScreen, x: number, y: number): boolean {
-    const marker = AGENTS[this.agent].marker
+    const { marker, col } = AGENTS[this.agent]
     for (let i = x - 1; i >= 0 && i >= x - 4; i--) {
       const c = screen.cell(i, y)
-      if (c?.chars === marker) return true
+      if (c?.chars === marker && (col === undefined || i === col)) return true
       if (!blankish(c) || c?.dim) return false
     }
     return false
@@ -363,9 +371,13 @@ export class EchoPredictor {
   }
 
   /** The column the input starts at: the nearest marker to the left of the
-   *  cursor, and the agent's padding after it. -1 if there is none. */
+   *  cursor (or at `col` when fixed), and the agent's padding after it. -1 if
+   *  there is none. */
   private findStart(screen: EchoScreen, x: number, y: number): number {
-    const { marker, pad } = AGENTS[this.agent]
+    const { marker, pad, col } = AGENTS[this.agent]
+    if (col !== undefined) {
+      return x > col && screen.cell(col, y)?.chars === marker ? col + 1 + pad : -1
+    }
     for (let i = x - 1; i >= 0; i--) {
       if (screen.cell(i, y)?.chars === marker) return i + 1 + pad
     }
@@ -532,13 +544,13 @@ type Launch = Pick<Session, 'launchProfileId' | 'launchCommand' | 'command'>
  */
 export function echoAgent(s: Launch | undefined): EchoAgent | null {
   if (!s) return null
-  for (const agent of ['claude', 'codex', 'opencode'] as const) {
+  for (const agent of ['claude', 'codex', 'opencode', 'agy'] as const) {
     if (s.launchProfileId === `builtin:${agent}`) return agent
   }
   const argv0 = (s.launchCommand[0] ?? '').split('/').pop()
-  if (argv0 === 'claude' || argv0 === 'codex' || argv0 === 'opencode') return argv0
+  if (argv0 === 'claude' || argv0 === 'codex' || argv0 === 'opencode' || argv0 === 'agy') return argv0
   if (s.command === 'claude' || /^\d+\.\d+\.\d+$/.test(s.command)) return 'claude'
-  if (s.command === 'codex' || s.command === 'opencode') return s.command
+  if (s.command === 'codex' || s.command === 'opencode' || s.command === 'agy') return s.command
   return null
 }
 

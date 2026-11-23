@@ -308,6 +308,7 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 	}
 	if c.ServerRunning(ctx) {
 		c.advertiseTruecolor(ctx)
+		c.advertiseSync(ctx)
 		c.watchBells(ctx)
 		return nil
 	}
@@ -320,6 +321,7 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 		}
 	}
 	c.advertiseTruecolor(ctx)
+	c.advertiseSync(ctx)
 	c.watchBells(ctx)
 	// Stamp what the server was started with.
 	//
@@ -404,6 +406,41 @@ func (c *Client) RunningConfigStamp(ctx context.Context) string {
 // panel over a colour capability would trade every session for one box.
 func (c *Client) advertiseTruecolor(ctx context.Context) {
 	_, _ = c.run(ctx, "set-environment", "-g", "COLORTERM", "truecolor")
+}
+
+// advertiseSync adds the sync terminal feature on a server that may predate
+// the vibepanel.conf change.
+//
+// Here as well as in vibepanel.conf for the reason advertiseTruecolor gives:
+// `-f` is read once at start-server, so an upgraded panel attaching new
+// clients to a weeks-old tmux server would otherwise keep drawing without DEC
+// mode 2026 until the host rebooted. Checked before appending because
+// `set-option -as` grows an array option on every call.
+func (c *Client) advertiseSync(ctx context.Context) {
+	if out, err := c.run(ctx, "show-options", "-s", "terminal-features"); err == nil && hasWildcardSync(out) {
+		return
+	}
+	_, _ = c.run(ctx, "set-option", "-as", "terminal-features", ",*:sync")
+}
+
+func hasWildcardSync(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		_, val, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		val = strings.Trim(strings.TrimSpace(val), `"`)
+		term, rest, ok := strings.Cut(val, ":")
+		if !ok || term != "*" {
+			continue
+		}
+		for _, feat := range strings.Split(rest, ":") {
+			if feat == "sync" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // watchBells installs the alert-bell hook on a server that may predate it.
