@@ -343,6 +343,12 @@ const DICT = {
     zh: '这个链接指向项目外面，面板不会打开它。',
     en: 'This link points outside the project. The panel will not open it.',
   },
+  'term.linkMissing': { zh: '找不到这个文件或目录', en: 'File or folder not found' },
+  'term.dirOutside': {
+    zh: '右侧文件栏仅打开当前工作目录内的文件夹',
+    en: 'Only folders inside this project open in the side panel',
+  },
+  'term.notRegular': { zh: '不是普通文件，无法预览', en: 'Not a regular file' },
   'err.tryAgain': { zh: '再试一次', en: 'Try again' },
   'settings.passwordChanged': {
     zh: '已修改。其他浏览器都已被登出。',

@@ -148,6 +148,41 @@ and rendering one on the panel's own origin would run it there. Drawing HTML and
 SVG came later and is a separate route, which serves them into a frame with an
 opaque origin, no scripts and a policy that allows it no network.
 
+## The viewer outside a project: any path a terminal prints, with a record
+
+Agents print paths, and many are not in the project: `~/.claude/plans`,
+`~/.gemini`, `/tmp/report.html`. Clicking one in a terminal opens the viewer on
+it (`/api/fs/*`, `internal/httpapi/fsfile.go`), and a text file can be saved back
+(`PUT /api/fs/file`). So these routes are rooted at `/`, not at a project: they
+read and write any file the panel's user can. A symlink resolving anywhere is
+followed.
+
+That is accepted, and deliberately not narrowed. Everything behind the session
+cookie already runs a shell as that user, so a path allow-list would be a
+fence around an open gate that breaks the one case the feature exists for. It is
+still the widest file surface in the panel, so it is not silent:
+
+- Every write through `PUT /api/fs/file` is a `files.write` row with the
+  absolute path and size, and the words "outside any project" when it is.
+- Every read through `preview`, `preview/render`, `inline`, `archive-entries`
+  and `sqlite` of a file outside every registered project (archived ones
+  included) is `files.read`; `download` is `files.download`. One click is
+  several requests, so the rows coalesce: one per user, path and kind a minute,
+  held in a bounded map in process memory. Reads inside a project are not
+  audited, as they never were. `resolve` only stats and is not audited.
+- A row for the panel's data dir (the database and `secrets.key`) or for
+  `~/.ssh`, `~/.gnupg` or an agent's config directory starts with
+  `[credentials]`. The list is `sensitiveRoots` in `fsaudit.go` and is short on
+  purpose; a path outside it is audited and not marked.
+
+What stays confined: directories. No `/api/fs` route lists one, and `resolve`
+answers `outside_dir` for a directory outside the project, so the file tree
+never leaves the workspace. A rendered HTML page outside a project gets the
+same sandbox and CSP as one inside (`TestRenderOutsideAProjectCarriesTheSameSandbox`).
+Share tokens, admin grants and plugin credentials do not reach these routes
+(red line 8 and 10: they sit behind `RequireAuth`, which `currentUser` answers
+for the owner's session and API tokens only).
+
 ## A read-only share token is narrowed by its route, never by a flag
 
 Share links live in their own table, and `currentUser` does not consult it. That

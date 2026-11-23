@@ -2200,3 +2200,18 @@ func TestTheFlagNamedOnlyInAnErrorIsNotSupport(t *testing.T) {
 		t.Fatal("a codex that does not exist was taken to accept the flag")
 	}
 }
+
+func TestEnsureServerAdvertisesHyperlinks(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	out, err := c.run(ctx, "show-options", "-s", "terminal-features")
+	if err != nil {
+		t.Fatalf("show-options terminal-features: %v", err)
+	}
+	if !hasWildcardFeature(out, "hyperlinks") {
+		t.Errorf("terminal-features missing *:hyperlinks:\n%s", out)
+	}
+}

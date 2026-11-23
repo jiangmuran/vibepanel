@@ -14,6 +14,7 @@ import { attachLocalEcho } from './localEchoLayer'
 import { rendererPreference } from './renderer'
 import { TerminalReplay } from './terminalReplay'
 import { LoadTimer, formatLoadBytes, loadPercents } from './terminalLoad'
+import { classifyOscUri, linkActionAtCell, provideTerminalFileLinks } from './terminalLinks'
 import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -67,6 +68,8 @@ interface Props {
   fullscreen?: boolean
   /** Fires with the selected text, or '' when the selection is dropped. */
   onSelectionChange?: (text: string) => void
+  /** Opens a file or workspace directory clicked in the terminal output. */
+  onOpenPath?: (target: string, fallback?: string) => void
   className?: string
   /**
    * Stops xterm capturing keystrokes.
@@ -134,6 +137,7 @@ export function TerminalView({
   touchSelect = false,
   fullscreen = false,
   onSelectionChange,
+  onOpenPath,
   onClipboard,
 }: Props) {
   useLang()
@@ -162,6 +166,7 @@ export function TerminalView({
   // Held in a ref for the same reason onTitle/onExit are not in the effect's
   // deps: a new callback identity must not rebuild the terminal.
   const onSelectionRef = useRef(onSelectionChange)
+  const onOpenPathRef = useRef(onOpenPath)
   const onClipboardRef = useRef(onClipboard)
   // Read at subscribe rather than being a dependency of the terminal: flipping
   // it must not rebuild anything, which is the reason the terminal stays
@@ -179,6 +184,7 @@ export function TerminalView({
   const predictEchoRef = useRef(predictEcho)
   useEffect(() => {
     onSelectionRef.current = onSelectionChange
+    onOpenPathRef.current = onOpenPath
     onClipboardRef.current = onClipboard
     hiddenRef.current = hidden
     predictEchoRef.current = predictEcho
@@ -192,6 +198,20 @@ export function TerminalView({
     const host = hostRef.current
     if (!host) return
 
+    let gestureSeq = 0
+    let lastLinkSeq = -1
+    const openExternal = (url: string) => {
+      const w = window.open()
+      if (w) {
+        try {
+          w.opener = null
+        } catch {
+          /* cross-origin window handle */
+        }
+        w.location.href = url
+      }
+    }
+
     const term = new Xterm({
       allowProposedApi: true,
       disableStdin: readOnly,
@@ -200,6 +220,17 @@ export function TerminalView({
       cursorStyle: 'bar',
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
       fontSize: 13,
+      linkHandler: {
+        allowNonHttpProtocols: true,
+        activate: (ev, uri) => {
+          if (ev.button !== 0 || term.hasSelection() || lastLinkSeq === gestureSeq) return
+          const hit = classifyOscUri(uri)
+          if (!hit) return
+          lastLinkSeq = gestureSeq
+          if (hit.kind === 'path') onOpenPathRef.current?.(hit.target)
+          else openExternal(hit.url)
+        },
+      },
       // 1.0, not 1.2.
       //
       // xterm paints the background per cell, so any leading shows up as a
@@ -233,6 +264,17 @@ export function TerminalView({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.loadAddon(new WebLinksAddon())
+    const fileLinksSub = term.registerLinkProvider({
+      provideLinks: (bufferLineNumber, callback) => {
+        callback(
+          provideTerminalFileLinks(term, bufferLineNumber, (target, fallback) => {
+            if (lastLinkSeq === gestureSeq) return
+            lastLinkSeq = gestureSeq
+            onOpenPathRef.current?.(target, fallback)
+          }),
+        )
+      },
+    })
 
     const unicode = new Unicode11Addon()
     term.loadAddon(unicode)
@@ -773,7 +815,85 @@ export function TerminalView({
       if (!term.hasSelection()) return
       copySelection()
     }
+
+    // Direct cell-resolved activation for every single click or tap.
+    //
+    // xterm's built-in Linkifier cannot carry this alone for three reasons:
+    //   1. It clears `_currentLink` on every `onRenderedViewportChange`, so an
+    //      agent redrawing a spinner or status line between mousedown and
+    //      mouseup silently drops the click.
+    //   2. On a mouse click whose pointer jitters 1px across a half-cell
+    //      boundary, xterm's SelectionService snaps `selectionEnd` to the next
+    //      column (`term.getSelection().length === 1`), which makes
+    //      `term.hasSelection()` true, aborts link activation and overwrites
+    //      the clipboard with one stray character.
+    //   3. Passive scaled viewers (`scale(x)`) and touch/trackpad taps either
+    //      divide pointer coordinates by the unscaled cell width or never ran a
+    //      hover pass before mousedown.
+    //
+    // Registered ahead of `copyOnSelect` on `pointerup` (which precedes
+    // `mouseup`), so an accidental 1-cell click jitter on a link is cleared
+    // before `copyOnSelect` sees it and `lastLinkSeq` deduplicates xterm's own
+    // `mouseup` callback.
+    let linkTapStart: { x: number; y: number; t: number; pointerType: string; seq: number } | null = null
+    const onLinkPointerDown = (ev: PointerEvent) => {
+      gestureSeq += 1
+      if ((ev.button !== 0 && ev.pointerType !== 'touch') || ev.detail > 1) {
+        linkTapStart = null
+        return
+      }
+      linkTapStart = {
+        x: ev.clientX,
+        y: ev.clientY,
+        t: performance.now(),
+        pointerType: ev.pointerType,
+        seq: gestureSeq,
+      }
+    }
+    const onLinkPointerUp = (ev: PointerEvent) => {
+      const start = linkTapStart
+      linkTapStart = null
+      if (!start || lastLinkSeq === start.seq) return
+      const slop = start.pointerType === 'touch' ? 10 : 6
+      if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > slop) return
+      // Hold-to-select on touch arms at 450ms (HOLD_MS); never treat a hold as a tap.
+      if (performance.now() - start.t >= 450) return
+      if (term.hasSelection() && term.getSelection().length > 2) return
+      const cell = mouseCell(ev)
+      if (!cell) return
+      const act = linkActionAtCell(
+        term,
+        cell.col,
+        cell.row,
+        (target, fallback) => onOpenPathRef.current?.(target, fallback),
+        openExternal,
+        ev,
+      )
+      if (!act) return
+      if (term.hasSelection()) term.clearSelection()
+      lastLinkSeq = start.seq
+      act()
+    }
+    const onLinkPointerMove = (ev: PointerEvent) => {
+      if (ev.pointerType === 'touch' || ev.buttons !== 0 || hostScale() === 1) {
+        if (host.dataset.linkHover) delete host.dataset.linkHover
+        return
+      }
+      const cell = mouseCell(ev)
+      const act = cell
+        ? linkActionAtCell(term, cell.col, cell.row, () => {}, () => {}, ev)
+        : null
+      if (act) host.dataset.linkHover = 'true'
+      else if (host.dataset.linkHover) delete host.dataset.linkHover
+    }
+    const onLinkPointerLeave = () => {
+      if (host.dataset.linkHover) delete host.dataset.linkHover
+    }
+    host.addEventListener('pointerdown', onLinkPointerDown, true)
+    host.addEventListener('pointerup', onLinkPointerUp)
     host.addEventListener('pointerup', copyOnSelect)
+    host.addEventListener('pointermove', onLinkPointerMove)
+    host.addEventListener('pointerleave', onLinkPointerLeave)
 
     // The send callback, and it cannot go through xterm.
     //
@@ -804,11 +924,16 @@ export function TerminalView({
       detachIme()
       echo.dispose()
       detachTouch?.()
+      host.removeEventListener('pointerdown', onLinkPointerDown, true)
+      host.removeEventListener('pointerup', onLinkPointerUp)
       host.removeEventListener('pointerup', copyOnSelect)
+      host.removeEventListener('pointermove', onLinkPointerMove)
+      host.removeEventListener('pointerleave', onLinkPointerLeave)
       host.removeEventListener('mousedown', scaledMouseDown, true)
       host.removeEventListener('wheel', arrowsWheel, true)
       document.removeEventListener('mousemove', scaledMouseMove, true)
       document.removeEventListener('mouseup', scaledMouseUp, true)
+      fileLinksSub.dispose()
       selSub.dispose()
       dataSub.dispose()
       binarySub.dispose()

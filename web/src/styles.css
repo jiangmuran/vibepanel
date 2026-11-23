@@ -2201,6 +2201,12 @@ body {
   padding-right: var(--vp-scrollbar);
 }
 
+/* Passive scaled viewers resolve link hover in scaled cell coordinates, since
+   xterm's own Linkifier divides mouse offsets by the unscaled cell width. */
+[data-link-hover='true'] .xterm {
+  cursor: pointer;
+}
+
 /* On a touch screen the browser's own long-press selection is the gesture
    people already know, and it beats anything hand-rolled on top of a grid of
    spans. xterm turns selection off to implement its own, which is the right

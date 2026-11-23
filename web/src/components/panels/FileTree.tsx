@@ -46,6 +46,7 @@ export function FileTree({
   density = 'narrow',
   onOpenRepo,
   pageLine,
+  revealDir,
 }: {
   projectId: string
   /** The viewer's breadcrumb starts here rather than at a bare `/`. */
@@ -55,12 +56,14 @@ export function FileTree({
   onOpenRepo?: () => void
   /** The share page's line, when this directory is a page's draft. */
   pageLine?: React.ReactNode
+  /** Navigates the tree when a folder link in the terminal is clicked. */
+  revealDir?: { path: string; seq: number } | null
 }) {
   useLang()
   // The caller keys this component by project, so switching projects gives a
   // fresh instance starting at the root. Resetting state from an effect
   // instead would render one frame against the wrong project's path.
-  const [path, setPath] = useState('')
+  const [path, setPath] = useState(() => revealDir?.path ?? '')
   const [listing, setListing] = useState<FileListing | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Bumped to refetch the same directory. The listing is a snapshot of a
@@ -87,6 +90,15 @@ export function FileTree({
   }>(null)
   const [newName, setNewName] = useState('')
   const [previewing, setPreviewing] = useState<FileEntry | null>(null)
+  const [revealSeen, setRevealSeen] = useState(revealDir?.seq ?? 0)
+  if ((revealDir?.seq ?? 0) !== revealSeen) {
+    setRevealSeen(revealDir?.seq ?? 0)
+    if (revealDir) {
+      setPreviewing(null)
+      setPath(revealDir.path)
+      setReloads((n) => n + 1)
+    }
+  }
   // One clock for the whole listing, set when the listing lands. A Date.now()
   // in the body is a value that changes without the component being told —
   // React's purity rule refuses it — and one clock means forty rows cannot

@@ -909,9 +909,40 @@ timestamp.
 ### `GET /api/browse?path=`
 ### `POST /api/browse/mkdir`
 
-Directories only, rooted at the home directory, for choosing where a project
-should live. `mkdir` takes `{"path": "...", "name": "..."}` where `name` is one
-element, not a path.
+Directories only, rooted at `/` and opening at the home directory, for choosing
+where a project should live. `mkdir` takes `{"path": "...", "name": "..."}`
+where `name` is one element, not a path.
+
+### `GET /api/fs/resolve?target=&fallback=&sessionId=&projectId=`
+
+Resolves a file path or `file://` link clicked in a terminal against the
+session's `cwd` and project root (`~` expands to the panel user's home). Files
+resolve anywhere on the host (`inProject: false` returns the resolved absolute
+path to pass to the routes below); directories resolve only inside the project
+root (`kind: "dir"` with a project-relative `path`, or `kind: "outside_dir"`).
+Only stats; not audited.
+
+### `GET /api/fs/preview?path=&meta=`
+### `GET /api/fs/preview/render?path=&scripts=`
+### `GET /api/fs/inline?path=`
+### `GET /api/fs/download?path=`
+### `GET /api/fs/archive-entries?path=`
+### `GET /api/fs/sqlite?path=&table=`
+### `PUT /api/fs/file?path=`
+
+The project file routes (`/api/projects/{id}/preview` and the rest), with an
+absolute `path` anywhere the panel's user can reach instead of a path inside a
+project; a relative one is `400`. Same answers, same sandbox and CSP on
+`preview/render`, same `If-Match` rule and 2 MB bound on `PUT`. None lists a
+directory.
+
+These are the widest file routes the API has, so they are audited: a read of a
+file outside every project is a `files.read` row (`files.download` for
+`download`) naming the path and the route, at most once a minute per user,
+path and kind; a `PUT` is always a `files.write` row, saying when the file is
+outside a project. A row for the panel's data dir, `~/.ssh`, `~/.gnupg` or an
+agent's config directory begins `[credentials]`. See `docs/design.md`, "The
+viewer outside a project".
 
 ## Settings
 

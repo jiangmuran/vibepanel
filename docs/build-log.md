@@ -28327,3 +28327,81 @@ was written on, lists the flag.
 Not changed: a terminal that was hidden while the ring wrapped is still caught
 up from the ring and not from a capture, so it is cleared and replayed in full
 when shown.
+
+## 2026-11-23 — Clickable terminal file and folder links, and content-hashed embedded ETags
+
+Coding agents print paths and links directly into the TUI — Codex emits
+`[name](/abs/path#L42C5)` and `:line:col` paths, Antigravity CLI writes
+artifacts under `~/.gemini/antigravity-cli/brain/…` and embeds paths inline
+inside Chinese sentences with no surrounding spaces (`在internal/tmux/tmux.go中`),
+and tools emit OSC 8 hyperlinks (`\e]8;;file:///…\a`).
+
+- **OSC 8 hyperlinks through tmux, and direct cell-resolved activation.**
+  `vibepanel.conf` and `EnsureServer` (`advertiseHyperlinks`) enable
+  `*:hyperlinks` in `terminal-features` so tmux stops stripping OSC 8 sequences
+  before xterm.js sees them. `TerminalView` wires `linkHandler`
+  (`allowNonHttpProtocols: true`), `registerLinkProvider` (`terminalLinks.ts`)
+  and `onLinkPointerUp` so single clicks and taps (`<= 6px` pointer / `<= 10px`
+  touch, `< 450ms`) resolve directly from cell coordinates across desktop,
+  passive scaled viewers and touchscreens — surviving live TUI spinner redraws
+  (`onRenderedViewportChange`) and clearing accidental 1-cell half-column mouse
+  jitter ahead of `copyOnSelect` without disturbing real drags, double-clicks or
+  long-press selections.
+- **Files anywhere on the host; folders confined to the project.**
+  `/api/fs/resolve` expands `~`, `file://`/`vscode://`/`cursor://` URIs,
+  relative paths (against the session's `cwd` and then the project root),
+  `#L`/`line:col`/`(line,col)` anchors and hard-wrapped TUI margin
+  continuations. Regular files anywhere on the server open in `FileViewer` (via
+  `/api/fs/{preview,inline,download,archive-entries,sqlite,file}` and
+  `/api/fs/preview/render`), while directories resolve only inside the project
+  root (`kind: "dir"` switches the right-hand `FileTree` to that folder;
+  anything outside answers `outside_dir` with no directory listing route under
+  `/api/fs`).
+- **Content-derived ETags in `internal/webui`.** `embed.FS` reports zero
+  `ModTime()` on every embedded file, and Vite's fixed-width 8-character asset
+  hashes keep `dist/index.html` at the exact same byte count across upgrades, so
+  a `size-mtime` ETag answered `304 Not Modified` to `GET /` on reload and left
+  open tabs on the previous bundle. `gzCache` now hashes the uncompressed file
+  bytes (`sha256[:16]`) and emits `"<hash>-gz"` / `"<hash>"`, pinned by
+  `TestUpgradeWithSameLengthEmbeddedIndexDoesNotAnswer304`.
+
+
+## 2026-11-23 — Whole-host file routes are accepted, audited, and a click the TUI wanted stays the TUI's
+
+PR #45 made a path printed in a terminal open the viewer, which needed
+`/api/fs/*` and `PUT /api/fs/file`: any absolute path the panel's user can read
+or write, not a project's. The owner's decision is that this reach is accepted
+-- whoever is signed in already has a shell -- and is not narrowed. What it
+costs is a record, so:
+
+- Reads of a file outside every registered project are `files.read`
+  (`files.download` for `download`), one row per user, path and kind a minute,
+  in a bounded in-memory map (`fsaudit.go`). One click is a preview, a render
+  and inline subresources, which is why the window exists. `resolve` only stats
+  and is not audited; reads inside a project never were.
+- Every `PUT /api/fs/file` is a `files.write` row with the absolute path and
+  size, and "outside any project" when it is.
+- A row for the data dir (database, `secrets.key`), `~/.ssh`, `~/.gnupg` or an
+  agent's config directory starts `[credentials]`.
+- Tests: `TestFSReadsOutsideAProjectAreAuditedOnceAMinute`,
+  `TestEveryFSReadRouteIsAudited`, `TestTheReadWindowIsBounded`,
+  `TestCredentialFilesAreMarkedInTheAuditRow`,
+  `TestAWriteThroughFSFileIsAuditedAndGuarded` (If-Match, FIFO, relative path,
+  the row), `TestRenderOutsideAProjectCarriesTheSameSandbox`,
+  `TestFSRoutesNeedASessionForARealFile`; each was removed-and-watched-red.
+  `TestEverythingRequiresASession` already walked every `/api/fs` route.
+  docs/design.md, docs/file-preview.md and docs/api.md say the same.
+
+Terminal side: a click on a path while the program has asked for the mouse
+(`term.modes.mouseTrackingMode !== 'none'`) now needs Ctrl or Cmd, otherwise a
+TUI's own clickable rows were swallowed by the viewer. A touch tap has no
+modifier, so on a phone a path inside a mouse-reporting TUI does not open.
+`findTerminalPathHits` memoises the last eight lines, so moving the pointer
+within a line no longer rescans it. The nested-quantifier regexes were measured
+on 4,000-character hostile lines at under 20 ms and are pinned by a 200 ms
+bound; the grammar was not changed.
+
+Left: the 4,000-character bound is a regression tripwire, not a proof the
+grammar is linear (making the trailing anchor mandatory does hang it, which is
+how the test was shown to bite); `[credentials]` marks a fixed list, not every
+secret on a host; touch taps on paths under mouse tracking.

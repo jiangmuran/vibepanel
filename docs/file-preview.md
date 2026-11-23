@@ -216,6 +216,23 @@ original with its mode kept, and records `files.write` in the audit log with
 who, the project, the path and the size. Nothing here creates, renames or
 deletes a file.
 
+## Outside a project, from a terminal link
+
+A path printed in a terminal (`src/a.go:12`, `~/.claude/plan.md`,
+`file:///tmp/x.html`) opens the viewer on click, wherever the file is. Inside
+the session's project it is the project's routes; anywhere else it is
+`/api/fs/*`, which resolves absolute paths from `/` and takes the same
+`If-Match` save. So the viewer is no longer confined to a project for a click
+on a terminal link. Directories still are: the tree never leaves the workspace.
+
+That reach is accepted -- a signed-in user has a shell -- and recorded rather
+than limited (`docs/design.md`, "The viewer outside a project"). A read of a
+file outside every project is a `files.read` audit row (`files.download` for a
+download), at most one a minute per user, path and kind; a write is a
+`files.write` row that says when the file is outside a project. Files under the
+panel's data dir, `~/.ssh`, `~/.gnupg` and the agents' config directories start
+the detail with `[credentials]`. Reads inside a project are not audited.
+
 ## What stays
 
 - The download route, the directory listing and the upload path are

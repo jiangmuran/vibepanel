@@ -18,6 +18,7 @@ import type {
   PanelState,
   Passkey,
   Project,
+  ResolvedPath,
   Session,
   SessionState,
   ShareDetail,
@@ -421,9 +422,17 @@ export function errorText(err: unknown): string {
  */
 export const GLOBAL_NOTE = '@global'
 
+/** Sentinel projectId for server-wide files opened from terminal links. */
+export const SERVER_FILES = '@fs'
+
 /** Where a note lives. The global one is not under /projects/. */
 function notePath(projectId: string): string {
   return projectId === GLOBAL_NOTE ? '/api/notes' : `/api/projects/${projectId}/notes`
+}
+
+/** Where a file route lives: under /fs for server-wide files, /projects/{id} otherwise. */
+function filePath(projectId: string, leaf: string): `/${string}` {
+  return projectId === SERVER_FILES ? `/api/fs/${leaf}` : `/api/projects/${projectId}/${leaf}`
 }
 
 export const api = {
@@ -1343,7 +1352,7 @@ export const api = {
    * save dialog, without holding the file in memory.
    */
   downloadURL: (projectId: string, path: string) =>
-    `/api/projects/${projectId}/download?path=${encodeURIComponent(path)}`,
+    `${filePath(projectId, 'download')}?path=${encodeURIComponent(path)}`,
 
   /**
    * Where an <img>, <video>, <audio> or <object> streams a medium from: the
@@ -1353,7 +1362,7 @@ export const api = {
    * browser streams and seeks and the response keeps the server's headers.
    */
   inlineURL: (projectId: string, path: string) =>
-    `/api/projects/${projectId}/inline?path=${encodeURIComponent(path)}`,
+    `${filePath(projectId, 'inline')}?path=${encodeURIComponent(path)}`,
 
   /**
    * Where an <iframe> points to draw a page out of a project.
@@ -1370,8 +1379,16 @@ export const api = {
    * header, so editing the attribute in devtools cannot enable execution.
    */
   renderURL: (projectId: string, path: string, scripts: boolean) =>
-    `/api/projects/${projectId}/preview/render?path=${encodeURIComponent(path)}` +
+    `${filePath(projectId, 'preview/render')}?path=${encodeURIComponent(path)}` +
     (scripts ? '&scripts=1' : ''),
+
+  resolvePath: (opts: { target: string; fallback?: string; sessionId?: string; projectId?: string }) => {
+    const q = new URLSearchParams({ target: opts.target })
+    if (opts.fallback) q.set('fallback', opts.fallback)
+    if (opts.sessionId) q.set('sessionId', opts.sessionId)
+    if (opts.projectId) q.set('projectId', opts.projectId)
+    return request<ResolvedPath>(`/api/fs/resolve?${q.toString()}`)
+  },
 
   /** What the working tree says. Reads the disk; never the network. */
   git: (projectId: string) => request<GitInfo>(`/api/projects/${projectId}/git`),
@@ -1484,7 +1501,7 @@ export const api = {
   preview: async (projectId: string, path: string): Promise<FilePreview> => {
     // meta=1: a medium is answered with its kind and no bytes, and streamed
     // from inlineURL. Text and bytes come back as before.
-    const res = await fetch(`/api/projects/${projectId}/preview?path=${encodeURIComponent(path)}&meta=1`)
+    const res = await fetch(`${filePath(projectId, 'preview')}?path=${encodeURIComponent(path)}&meta=1`)
     // Drained rather than ignored, for the reason the 204 branch above is:
     // a body nobody reads is reported by Chromium as an aborted request, which
     // turns every honest refusal into a network error in the devtools log.
@@ -1544,7 +1561,7 @@ export const api = {
   saveFile: async (projectId: string, path: string, text: string, etag: string): Promise<{ etag: string; size: number }> => {
     let res: Response
     try {
-      res = await fetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`, {
+      res = await fetch(`${filePath(projectId, 'file')}?path=${encodeURIComponent(path)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'text/plain; charset=utf-8', 'If-Match': etag },
         body: text,
@@ -1574,7 +1591,7 @@ export const api = {
    * one of ours, since the sentence is English and names what broke.
    */
   archiveEntries: async (projectId: string, path: string): Promise<ArchiveListing> => {
-    const res = await listing(`/api/projects/${projectId}/archive-entries?path=${encodeURIComponent(path)}`)
+    const res = await listing(`${filePath(projectId, 'archive-entries')}?path=${encodeURIComponent(path)}`)
     if (res.status === 422) throw new Error(t('packed.unreadable', { reason: await reasonOf(res) }))
     if (!res.ok) throw await failure(res)
     const l = readArchiveListing(await res.json().catch(() => null))
@@ -1589,7 +1606,7 @@ export const api = {
    */
   sqlite: async (projectId: string, path: string, table?: string): Promise<DBListing> => {
     const q = table === undefined ? '' : `&table=${encodeURIComponent(table)}`
-    const res = await listing(`/api/projects/${projectId}/sqlite?path=${encodeURIComponent(path)}${q}`)
+    const res = await listing(`${filePath(projectId, 'sqlite')}?path=${encodeURIComponent(path)}${q}`)
     if (res.status === 422) throw new Error(t('db.unreadable', { reason: await reasonOf(res) }))
     if (res.status === 400 && table !== undefined) {
       await res.arrayBuffer()

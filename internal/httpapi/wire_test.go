@@ -52,6 +52,7 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"Todo", store.Todo{}},
 		{"AuditEntry", store.AuditEntry{}},
 		{"FileEntry", browse.Entry{}},
+		{"ResolvedPath", resolvedPathResponse{}},
 		// The largest surface and the last one to be covered. This is what the
 		// socket pushes on every change, and it lived in a package the old
 		// home of this test could not import without a cycle — so the rows
@@ -562,6 +563,10 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"project.archive_idle":  true,
 		// A text file saved from the viewer's editor.
 		"files.write": true,
+		// The whole-host routes under /api/fs: a read of a file outside every
+		// project, and a download of one, coalesced per file per minute.
+		"files.read":     true,
+		"files.download": true,
 	}
 
 	files, err := filepath.Glob("*.go")

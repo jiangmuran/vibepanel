@@ -72,6 +72,19 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		writeBrowseErr(w, err)
 		return
 	}
+	s.serveWriteFile(w, r, abs, func(n int) string {
+		written := rel
+		if root, err := filepath.EvalSymlinks(p.Path); err == nil {
+			if got, err := filepath.Rel(root, abs); err == nil {
+				written = filepath.ToSlash(got)
+			}
+		}
+		return fmt.Sprintf("%s: %s, %d bytes", p.Name, written, n)
+	})
+}
+
+func (s *Server) serveWriteFile(w http.ResponseWriter, r *http.Request, abs string, auditDetail func(int) string) {
+	ctx := r.Context()
 	info, err := os.Stat(abs)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "no such file")
@@ -196,17 +209,8 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	done = true
 
-	// The path written, which is the link's target when the request named a
-	// link: the row says which file changed.
-	written := rel
-	if root, err := filepath.EvalSymlinks(p.Path); err == nil {
-		if got, err := filepath.Rel(root, abs); err == nil {
-			written = filepath.ToSlash(got)
-		}
-	}
 	if u, ok := currentUserFrom(r); ok {
-		s.audit(ctx, "files.write", u.Username, s.clientIP(r),
-			fmt.Sprintf("%s: %s, %d bytes", p.Name, written, len(body)))
+		s.audit(ctx, "files.write", u.Username, s.clientIP(r), auditDetail(len(body)))
 	}
 	etag := contentETag(body)
 	w.Header().Set("ETag", etag)
