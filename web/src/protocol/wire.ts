@@ -763,6 +763,18 @@ export interface FileListing {
   truncated: boolean
 }
 
+export interface ResolvedPath {
+  kind: 'file' | 'dir' | 'outside_dir' | 'not_regular' | 'missing' | string
+  inProject: boolean
+  projectId: string
+  projectName: string
+  path: string
+  name: string
+  size: number
+  modTime: number
+  line: number
+}
+
 /** A directory listing for the "where should this project live" picker. */
 export interface DirListing {
   /** The absolute path the picker is rooted at: the filesystem, so that

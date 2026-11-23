@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // A relative --static-dir is what anyone would type, and it used to answer 404
@@ -265,5 +266,49 @@ func TestAnImageIsNeverCompressed(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Header().Get("Content-Encoding") != "" || rec.Body.Len() != 5000 {
 		t.Errorf("png encoded: %v len %d", rec.Header(), rec.Body.Len())
+	}
+}
+
+// Embedded files all carry a zero ModTime, and Vite's hashed asset names are
+// fixed-width (`index-DGv2PUHW.js` -> `index-BfVW1Vhb.js`), so dist/index.html
+// keeps the exact same byte count across upgrades. A size+mtime ETag answered
+// 304 Not Modified on reload after a binary upgrade and kept serving the old
+// bundle from the browser cache.
+func TestUpgradeWithSameLengthEmbeddedIndexDoesNotAnswer304(t *testing.T) {
+	pad := strings.Repeat("<!-- vibepanel -->\n", 80)
+	v1 := pad + `<script type="module" src="/assets/index-DGv2PUHW.js"></script>`
+	v2 := pad + `<script type="module" src="/assets/index-BfVW1Vhb.js"></script>`
+	if len(v1) != len(v2) {
+		t.Fatalf("fixture lengths differ: %d vs %d", len(v1), len(v2))
+	}
+
+	h1 := spaHandler{fsys: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte(v1)}}, gz: &gzCache{}}
+	h2 := spaHandler{fsys: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte(v2)}}, gz: &gzCache{}}
+
+	for _, enc := range []string{"gzip", ""} {
+		req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+		if enc != "" {
+			req1.Header.Set("Accept-Encoding", enc)
+		}
+		rec1 := httptest.NewRecorder()
+		h1.ServeHTTP(rec1, req1)
+		etag1 := rec1.Header().Get("ETag")
+		if rec1.Code != http.StatusOK || etag1 == "" {
+			t.Fatalf("enc=%q v1 status=%d etag=%q", enc, rec1.Code, etag1)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		if enc != "" {
+			req2.Header.Set("Accept-Encoding", enc)
+		}
+		req2.Header.Set("If-None-Match", etag1)
+		rec2 := httptest.NewRecorder()
+		h2.ServeHTTP(rec2, req2)
+		if rec2.Code != http.StatusOK {
+			t.Fatalf("enc=%q upgraded index answered %d for stale ETag %s, want 200", enc, rec2.Code, etag1)
+		}
+		if etag2 := rec2.Header().Get("ETag"); etag2 == "" || etag2 == etag1 {
+			t.Fatalf("enc=%q etag did not change across upgrade: %q -> %q", enc, etag1, etag2)
+		}
 	}
 }

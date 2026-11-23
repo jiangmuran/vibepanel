@@ -139,6 +139,8 @@ interface Props {
   /** Bumped to open the share page's Preview, when a page is opened from
    *  the settings. A counter rather than a flag, so the same ask twice is two. */
   previewAsk?: number
+  /** Moves the project's FileTree to `path` when a terminal folder link is clicked. */
+  revealDir?: { projectId: string; path: string; seq: number } | null
 }
 
 /** Pixels of movement before a press on a tab becomes a drag.
@@ -232,6 +234,11 @@ export function RightPanel(props: Props) {
   if ((props.previewAsk ?? 0) !== askSeen) {
     setAskSeen(props.previewAsk ?? 0)
     setDetail({ block: 'page', full: false })
+  }
+  const [revealSeen, setRevealSeen] = useState(props.revealDir?.seq ?? 0)
+  if ((props.revealDir?.seq ?? 0) !== revealSeen) {
+    setRevealSeen(props.revealDir?.seq ?? 0)
+    if (opened !== null) setDetail(null)
   }
 
   // One reading of the token ledger for the dock block, above the pane layout
@@ -486,6 +493,7 @@ export function RightPanel(props: Props) {
           density={density}
           onOpenRepo={() => openDetail('repo')}
           pageLine={page && <PageLine page={page} onOpen={() => openDetail('page')} />}
+          revealDir={props.revealDir?.projectId === project.id ? props.revealDir : null}
         />
       ) : (
         <Notes key={project.id} projectId={project.id} socket={props.socket} />

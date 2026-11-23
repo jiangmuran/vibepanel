@@ -47,6 +47,7 @@ interface Props {
    * wheel has to know.
    */
   fullscreen: string[]
+  onOpenPath?: (sessionId: string, target: string, fallback?: string) => void
 }
 
 /**
@@ -277,6 +278,9 @@ export function BottomTerminals(props: Props) {
             themeKey={themeKey}
             touchSelect={props.touchSelect}
             fullscreen={props.fullscreen.includes(active.id)}
+            onOpenPath={
+              props.onOpenPath ? (target, fallback) => props.onOpenPath?.(active.id, target, fallback) : undefined
+            }
             className="h-full w-full px-2 py-1"
           />
         ) : (

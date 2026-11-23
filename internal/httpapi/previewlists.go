@@ -23,6 +23,13 @@ func (s *Server) handleArchiveEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	serveArchiveEntries(w, f, info)
+}
+
+func serveArchiveEntries(w http.ResponseWriter, f interface {
+	io.ReaderAt
+	Name() string
+}, info interface{ Size() int64 }) {
 	head := make([]byte, 512)
 	n, _ := f.ReadAt(head, 0)
 	if !browse.IsArchive(head[:n]) {
@@ -53,6 +60,13 @@ func (s *Server) handleSQLite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	serveSQLite(w, r, f)
+}
+
+func serveSQLite(w http.ResponseWriter, r *http.Request, f interface {
+	io.ReadCloser
+	Name() string
+}) {
 	head := make([]byte, 16)
 	n, _ := io.ReadFull(f, head)
 	path := f.Name()

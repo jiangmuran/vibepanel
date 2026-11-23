@@ -308,6 +308,7 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 	}
 	if c.ServerRunning(ctx) {
 		c.advertiseTruecolor(ctx)
+		c.advertiseHyperlinks(ctx)
 		c.watchBells(ctx)
 		return nil
 	}
@@ -320,6 +321,7 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 		}
 	}
 	c.advertiseTruecolor(ctx)
+	c.advertiseHyperlinks(ctx)
 	c.watchBells(ctx)
 	// Stamp what the server was started with.
 	//
@@ -404,6 +406,38 @@ func (c *Client) RunningConfigStamp(ctx context.Context) string {
 // panel over a colour capability would trade every session for one box.
 func (c *Client) advertiseTruecolor(ctx context.Context) {
 	_, _ = c.run(ctx, "set-environment", "-g", "COLORTERM", "truecolor")
+}
+
+// advertiseHyperlinks adds OSC 8 hyperlink forwarding on a server started
+// before vibepanel.conf carried `*:hyperlinks`, for the same reason
+// advertiseTruecolor exists: `-f` is read once at start-server, and the panel
+// never restarts its tmux server on upgrade. Checked before appending because
+// `set-option -as` grows an array option on every call.
+func (c *Client) advertiseHyperlinks(ctx context.Context) {
+	if out, err := c.run(ctx, "show-options", "-s", "terminal-features"); err == nil && hasWildcardFeature(out, "hyperlinks") {
+		return
+	}
+	_, _ = c.run(ctx, "set-option", "-as", "terminal-features", ",*:hyperlinks")
+}
+
+func hasWildcardFeature(out, want string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		_, val, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		val = strings.Trim(strings.TrimSpace(val), `"`)
+		term, rest, ok := strings.Cut(val, ":")
+		if !ok || term != "*" {
+			continue
+		}
+		for _, feat := range strings.Split(rest, ":") {
+			if feat == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // watchBells installs the alert-bell hook on a server that may predate it.

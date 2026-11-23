@@ -151,6 +151,10 @@ func (s *Server) handleRenderPreview(w http.ResponseWriter, r *http.Request) {
 		writeBrowseErr(w, err)
 		return
 	}
+	serveRenderPreviewAt(w, r, abs)
+}
+
+func serveRenderPreviewAt(w http.ResponseWriter, r *http.Request, abs string) {
 	info, err := os.Stat(abs)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "no such file")

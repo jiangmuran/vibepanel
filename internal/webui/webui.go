@@ -4,7 +4,9 @@ package webui
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -215,20 +217,23 @@ type gzCache struct {
 
 type gzEntry struct {
 	sig  string
+	hash string // content digest for ETag; embed.FS has zero ModTime and equal-length upgrades collided on size+mtime
 	body []byte // nil: compression did not make it smaller, serve as-is
 }
 
-func (c *gzCache) get(name, sig string, rs io.ReadSeeker) []byte {
+func (c *gzCache) get(name, sig string, rs io.ReadSeeker) (gzEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.m[name]; ok && e.sig == sig {
-		return e.body
+		return e, true
 	}
 	var plain bytes.Buffer
 	_, _ = rs.Seek(0, io.SeekStart)
 	if _, err := io.Copy(&plain, rs); err != nil {
-		return nil
+		return gzEntry{}, false
 	}
+	sum := sha256.Sum256(plain.Bytes())
+	hash := hex.EncodeToString(sum[:16])
 	var out bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&out, gzip.BestCompression)
 	_, _ = zw.Write(plain.Bytes())
@@ -240,8 +245,9 @@ func (c *gzCache) get(name, sig string, rs io.ReadSeeker) []byte {
 	if c.m == nil {
 		c.m = map[string]gzEntry{}
 	}
-	c.m[name] = gzEntry{sig: sig, body: body}
-	return body
+	entry := gzEntry{sig: sig, hash: hash, body: body}
+	c.m[name] = entry
+	return entry, true
 }
 
 // compressible is a whitelist: PNG, woff2 and the like are already compressed
@@ -284,21 +290,28 @@ func (h spaHandler) serveContent(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 	w.Header().Add("Vary", "Accept-Encoding")
-	if acceptsGzip(r) {
-		sig := fmt.Sprintf("%d-%d", st.Size(), st.ModTime().UnixNano())
-		if body := h.gz.get(name, sig, rs); body != nil {
-			w.Header().Set("Content-Encoding", "gzip")
-			w.Header().Set("ETag", `"`+sig+`-gz"`)
-			// ServeContent leaves Content-Length out whenever Content-Encoding
-			// is set, so a 1.3 MB bundle would go chunked with no progress
-			// figure. A Range reply is sized by net/http's own framing instead.
-			if r.Header.Get("Range") == "" {
-				w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-			}
-			http.ServeContent(w, r, name, st.ModTime(), bytes.NewReader(body))
-			return
+	// ETag must come from the file's bytes, never from (size, mtime) alone:
+	// embed.FS reports zero ModTime on every file, and Vite's 8-char asset
+	// hashes keep dist/index.html at the exact same byte length across builds.
+	// A size+mtime ETag answered 304 Not Modified on reload after an upgrade
+	// and pinned browsers to the previous bundle.
+	sig := fmt.Sprintf("%d-%d", st.Size(), st.ModTime().UnixNano())
+	entry, ok := h.gz.get(name, sig, rs)
+	if ok && acceptsGzip(r) && entry.body != nil {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("ETag", `"`+entry.hash+`-gz"`)
+		// ServeContent leaves Content-Length out whenever Content-Encoding
+		// is set, so a 1.3 MB bundle would go chunked with no progress
+		// figure. A Range reply is sized by net/http's own framing instead.
+		if r.Header.Get("Range") == "" {
+			w.Header().Set("Content-Length", strconv.Itoa(len(entry.body)))
 		}
-		_, _ = rs.Seek(0, io.SeekStart)
+		http.ServeContent(w, r, name, st.ModTime(), bytes.NewReader(entry.body))
+		return
 	}
+	if ok {
+		w.Header().Set("ETag", `"`+entry.hash+`"`)
+	}
+	_, _ = rs.Seek(0, io.SeekStart)
 	http.ServeContent(w, r, name, st.ModTime(), rs)
 }

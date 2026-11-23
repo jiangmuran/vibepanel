@@ -28187,4 +28187,40 @@ What changed across the frontend:
   gutter or arrow buttons (`scrollbar-width: thin` gated to engines without
   `::-webkit-scrollbar` so Chromium keeps the custom pill).
 
+## 2026-11-23 — Clickable terminal file and folder links, and content-hashed embedded ETags
+
+Coding agents print paths and links directly into the TUI — Codex emits
+`[name](/abs/path#L42C5)` and `:line:col` paths, Antigravity CLI writes
+artifacts under `~/.gemini/antigravity-cli/brain/…` and embeds paths inline
+inside Chinese sentences with no surrounding spaces (`在internal/tmux/tmux.go中`),
+and tools emit OSC 8 hyperlinks (`\e]8;;file:///…\a`).
+
+- **OSC 8 hyperlinks through tmux, and direct cell-resolved activation.**
+  `vibepanel.conf` and `EnsureServer` (`advertiseHyperlinks`) enable
+  `*:hyperlinks` in `terminal-features` so tmux stops stripping OSC 8 sequences
+  before xterm.js sees them. `TerminalView` wires `linkHandler`
+  (`allowNonHttpProtocols: true`), `registerLinkProvider` (`terminalLinks.ts`)
+  and `onLinkPointerUp` so single clicks and taps (`<= 6px` pointer / `<= 10px`
+  touch, `< 450ms`) resolve directly from cell coordinates across desktop,
+  passive scaled viewers and touchscreens — surviving live TUI spinner redraws
+  (`onRenderedViewportChange`) and clearing accidental 1-cell half-column mouse
+  jitter ahead of `copyOnSelect` without disturbing real drags, double-clicks or
+  long-press selections.
+- **Files anywhere on the host; folders confined to the project.**
+  `/api/fs/resolve` expands `~`, `file://`/`vscode://`/`cursor://` URIs,
+  relative paths (against the session's `cwd` and then the project root),
+  `#L`/`line:col`/`(line,col)` anchors and hard-wrapped TUI margin
+  continuations. Regular files anywhere on the server open in `FileViewer` (via
+  `/api/fs/{preview,inline,download,archive-entries,sqlite,file}` and
+  `/api/fs/preview/render`), while directories resolve only inside the project
+  root (`kind: "dir"` switches the right-hand `FileTree` to that folder;
+  anything outside answers `outside_dir` with no directory listing route under
+  `/api/fs`).
+- **Content-derived ETags in `internal/webui`.** `embed.FS` reports zero
+  `ModTime()` on every embedded file, and Vite's fixed-width 8-character asset
+  hashes keep `dist/index.html` at the exact same byte count across upgrades, so
+  a `size-mtime` ETag answered `304 Not Modified` to `GET /` on reload and left
+  open tabs on the previous bundle. `gzCache` now hashes the uncompressed file
+  bytes (`sha256[:16]`) and emits `"<hash>-gz"` / `"<hash>"`, pinned by
+  `TestUpgradeWithSameLengthEmbeddedIndexDoesNotAnswer304`.
 

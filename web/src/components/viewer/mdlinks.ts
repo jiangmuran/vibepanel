@@ -77,6 +77,34 @@ export function projectImage(docPath: string, src: string): string | null {
 }
 
 /**
+ * Resolves a local image inside a server-wide Markdown file (`@fs`), where
+ * `docPath` is an absolute path on the host and `src` may be either relative
+ * to that document or an absolute path on the same host. Remote schemes are
+ * still refused so opening a Markdown file never phones home.
+ */
+export function serverImage(docPath: string, src: string): string | null {
+  // eslint-disable-next-line no-control-regex
+  const s = src.replace(/[\t\n\r]/g, '').replace(/^[\u0000- ]+/, '').split(/[?#]/)[0]
+  if (s === '' || /^[a-z][a-z0-9+.-]*:/i.test(s) || /^[/\\]{2}/.test(s) || s.startsWith('\\')) return null
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(s)
+  } catch {
+    return null
+  }
+  const parts = decoded.startsWith('/') ? [] : docPath.split('/').filter(Boolean).slice(0, -1)
+  for (const seg of decoded.split(/[/\\]/)) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') {
+      parts.pop()
+      continue
+    }
+    parts.push(seg)
+  }
+  return parts.length ? '/' + parts.join('/') : null
+}
+
+/**
  * A heading's id, GitHub's way, so a link written for a README on GitHub
  * lands on the same heading here: lower case, punctuation dropped, spaces to
  * hyphens, and a repeat numbered `-1`, `-2` in order.
