@@ -1743,8 +1743,8 @@ const DICT = {
   'sharing.originReset': { zh: '恢复默认', en: 'Use panel address' },
   'sharing.originPlaceholder': { zh: '例如 https://share.example.com（留空用面板地址）', en: 'e.g. https://share.example.com (empty for panel address)' },
   'sharing.originWhy': {
-    zh: '反向代理到此面板并透传Host；该域名只开放分享页，不暴露面板登录。',
-    en: 'Proxy this origin to the panel (forward Host); only share pages answer on it, never sign-in.',
+    zh: '反代到此面板，Host 填该域名；只开放分享页，须与面板域名不同。',
+    en: 'Proxy it to the panel with Host set to this name. Only share pages answer there. Not the panel address.',
   },
   'sharing.originCheck': { zh: '检测', en: 'Check' },
   'sharing.originChecking': { zh: '检测中…', en: 'Checking…' },
@@ -1767,6 +1767,14 @@ const DICT = {
   'sharing.originCopySnippet': { zh: '复制nginx配置', en: 'Copy nginx config' },
   'sharing.originCopiedSnippet': { zh: '已复制', en: 'Copied' },
   'sharing.originProvisioned': { zh: 'HTTPS已配置并生效', en: 'HTTPS provisioned and saved.' },
+  'sharing.originNotSaved': {
+    zh: 'HTTPS已配置，但域名未通过检测，分享域名未保存。',
+    en: 'HTTPS is set up, but the domain did not pass the check. The share origin was not saved.',
+  },
+  'sharing.originNotPublic': {
+    zh: '域名解析到非公网地址，未发起连接',
+    en: 'The domain resolves to an address that is not public. Nothing was contacted.',
+  },
   'page.architecture': { zh: '架构与安全', en: 'Architecture & security' },
   'page.tpl.kiosk': { zh: '互动屏', en: 'Kiosk' },
   'page.viewFrames': { zh: '预览', en: 'Preview' },

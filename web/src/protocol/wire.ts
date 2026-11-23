@@ -1328,6 +1328,7 @@ export interface ShareOriginCheck {
   origin: string
   hostname: string
   ready: boolean
+  /** 'ready' | 'needs_dns' | 'not_public' | 'needs_https' | 'needs_proxy' | 'host_mismatch' | 'unreachable' */
   status: string
   dnsOk: boolean
   dnsIps: string[]
@@ -1351,6 +1352,7 @@ export interface ShareOriginCheck {
 export interface ShareOriginProvisionResult {
   origin: string
   mode: string
+  /** The setting after the attempt: equal to `origin` only when the check passed and it was saved. */
   shareOrigin: string
   check: ShareOriginCheck
 }

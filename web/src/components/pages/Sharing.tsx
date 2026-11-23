@@ -502,6 +502,7 @@ function ShareOriginLine({
   const [provisioning, setProvisioning] = useState(false)
   const [check, setCheck] = useState<ShareOriginCheck | null>(null)
   const [doneMsg, setDoneMsg] = useState('')
+  const [notSaved, setNotSaved] = useState(false)
   const [copiedSnippet, setCopiedSnippet] = useState(false)
 
   const normalizeInput = (raw: string) => {
@@ -514,6 +515,7 @@ function ShareOriginLine({
     const shareOrigin = normalizeInput(raw)
     setBusy(true)
     setDoneMsg('')
+    setNotSaved(false)
     try {
       onChanged(await api.setSharingSettings({ shareOrigin }))
       setEditing(false)
@@ -531,6 +533,7 @@ function ShareOriginLine({
     setValue(origin)
     setChecking(true)
     setDoneMsg('')
+    setNotSaved(false)
     try {
       const res = await api.checkShareOrigin(origin)
       setCheck(res)
@@ -548,11 +551,16 @@ function ShareOriginLine({
     setValue(origin)
     setProvisioning(true)
     setDoneMsg('')
+    setNotSaved(false)
     try {
       const res = await api.provisionShareOrigin(origin)
       setCheck(res.check)
       onChanged({ ...settings, shareOrigin: res.shareOrigin })
-      setDoneMsg(t('sharing.originProvisioned'))
+      // The panel saves the origin only when the check that follows passes;
+      // shareOrigin is then the one asked for. Otherwise the report below
+      // says what is missing and nothing here claims it worked.
+      setDoneMsg(res.shareOrigin === res.origin ? t('sharing.originProvisioned') : '')
+      setNotSaved(res.shareOrigin !== res.origin)
     } catch (e) {
       onError(e)
     } finally {
@@ -572,6 +580,8 @@ function ShareOriginLine({
         return t('sharing.originNeedsProxy')
       case 'host_mismatch':
         return t('sharing.originHostMismatch', { host: safeText(c.seenHost || '?') })
+      case 'not_public':
+        return t('sharing.originNotPublic')
       default:
         return t('sharing.originUnreachable')
     }
@@ -606,6 +616,7 @@ function ShareOriginLine({
               setValue(settings.shareOrigin)
               setCheck(null)
               setDoneMsg('')
+              setNotSaved(false)
               setEditing(true)
             }}
             className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
@@ -624,6 +635,7 @@ function ShareOriginLine({
                 setValue(e.target.value)
                 setCheck(null)
                 setDoneMsg('')
+                setNotSaved(false)
               }}
               onKeyDown={(e) => {
                 if (isEnter(e)) void save(value)
@@ -667,6 +679,7 @@ function ShareOriginLine({
                 setEditing(false)
                 setCheck(null)
                 setDoneMsg('')
+                setNotSaved(false)
               }}
               className="vp-outline text-vp-sm"
             >
@@ -679,6 +692,13 @@ function ShareOriginLine({
             <p className="flex items-center gap-1.5 text-vp-xs font-medium" style={{ color: 'var(--vp-state-done)' }} data-testid="share-origin-provisioned">
               <Check size={12} className="shrink-0" />
               {doneMsg}
+            </p>
+          )}
+
+          {notSaved && (
+            <p className="flex items-center gap-1.5 text-vp-xs font-medium" style={{ color: 'var(--vp-state-waiting)' }} data-testid="share-origin-not-saved">
+              <TriangleAlert size={12} className="shrink-0" />
+              {t('sharing.originNotSaved')}
             </p>
           )}
 
