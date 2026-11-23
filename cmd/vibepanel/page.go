@@ -589,6 +589,7 @@ func pagePublish(args []string) error {
 			return lerr
 		}
 		link = &res
+		printLinkWarnings(res)
 	}
 	if *asJSON {
 		payload := map[string]any{
@@ -650,6 +651,7 @@ func pageLink(args []string) error {
 	if err != nil {
 		return err
 	}
+	printLinkWarnings(res)
 	if *asJSON {
 		out, _ := json.MarshalIndent(res, "", "  ")
 		fmt.Println(string(out))
@@ -657,6 +659,14 @@ func pageLink(args []string) error {
 	}
 	fmt.Println(res.URL)
 	return nil
+}
+
+// printLinkWarnings says what the link result carries on stderr, so stdout
+// stays the URL (or the JSON) a script parses.
+func printLinkWarnings(res httpapi.ShareLinkResult) {
+	for _, w := range res.Warnings {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
 }
 
 // parseLinkExpires parses optional durations such as "24h", "7d", or "0".

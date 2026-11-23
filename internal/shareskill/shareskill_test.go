@@ -2,6 +2,7 @@ package shareskill
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -228,5 +229,175 @@ func TestRejectsUnknownAgent(t *testing.T) {
 	}
 	if _, err := Uninstall(Agent("bogus")); err == nil {
 		t.Fatal("Uninstall accepted unknown agent")
+	}
+}
+
+// A leaf named vibepanel-share that the panel did not write is somebody's
+// work: install must not write into it and remove must not RemoveAll it.
+func TestForeignLeafIsNeitherOverwrittenNorRemoved(t *testing.T) {
+	home := setupHome(t)
+	leaf := filepath.Join(home, ".claude", "skills", SkillName)
+	mine := filepath.Join(leaf, "SKILL.md")
+	if err := os.MkdirAll(leaf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mine, []byte("my own skill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Install(AgentClaude); !errors.Is(err, ErrForeign) {
+		t.Fatalf("Install over a foreign leaf: err = %v, want ErrForeign", err)
+	}
+	if _, err := Uninstall(AgentClaude); !errors.Is(err, ErrForeign) {
+		t.Fatalf("Uninstall of a foreign leaf: err = %v, want ErrForeign", err)
+	}
+	if b, err := os.ReadFile(mine); err != nil || string(b) != "my own skill\n" {
+		t.Fatalf("foreign file damaged: err=%v body=%q", err, b)
+	}
+	st, err := Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := findAgent(t, st, AgentClaude)
+	if !got.Foreign || got.Installed || got.Stale {
+		t.Fatalf("foreign leaf should report foreign only: %+v", got)
+	}
+}
+
+// A symlink at the leaf would make RemoveAll or a write act on its target.
+func TestSymlinkedLeafIsRefused(t *testing.T) {
+	home := setupHome(t)
+	target := t.TempDir()
+	keep := filepath.Join(target, "keep.txt")
+	if err := os.WriteFile(keep, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Even a target that carries the marker must not be followed.
+	if err := os.WriteFile(filepath.Join(target, ownerMarker), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(parent, SkillName)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Install(AgentClaude); !errors.Is(err, ErrForeign) {
+		t.Fatalf("Install through a symlinked leaf: err = %v", err)
+	}
+	if _, err := Uninstall(AgentClaude); !errors.Is(err, ErrForeign) {
+		t.Fatalf("Uninstall of a symlinked leaf: err = %v", err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("symlink target was touched: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "SKILL.md")); err == nil {
+		t.Fatal("install wrote through the symlink")
+	}
+}
+
+// A symlink at SKILL.md inside our own leaf must not be written through.
+func TestSymlinkedFileInsideOwnedLeafIsRefused(t *testing.T) {
+	home := setupHome(t)
+	if _, err := Install(AgentClaude); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skill := filepath.Join(home, ".claude", "skills", SkillName, "SKILL.md")
+	if err := os.Remove(skill); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, skill); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(AgentClaude); !errors.Is(err, ErrForeign) {
+		t.Fatalf("err = %v, want ErrForeign", err)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "outside\n" {
+		t.Fatalf("symlink target rewritten: %q", b)
+	}
+}
+
+// A relative CODEX_HOME would resolve against the panel's working directory.
+func TestRelativeEnvHomesAreIgnored(t *testing.T) {
+	home := setupHome(t)
+	t.Setenv("CODEX_HOME", "relative/codex")
+	t.Setenv("DSH_HOME", "./dsh")
+	st, err := Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := findAgent(t, st, AgentCodex).Path, filepath.Join(home, ".codex", "skills", SkillName, "SKILL.md"); got != want {
+		t.Fatalf("codex path = %q, want %q", got, want)
+	}
+	if got, want := findAgent(t, st, AgentDsh).Path, filepath.Join(home, ".dsh", "skills", SkillName, "SKILL.md"); got != want {
+		t.Fatalf("dsh path = %q, want %q", got, want)
+	}
+}
+
+// Without a home directory the agents that do not need one still work and the
+// others say why, instead of the whole listing failing.
+func TestNoHomeStillReportsAgentsThatDoNotNeedIt(t *testing.T) {
+	setupHome(t)
+	t.Setenv("HOME", "")
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "codex"))
+	t.Setenv("DSH_HOME", filepath.Join(t.TempDir(), "dsh"))
+	st, err := Inspect()
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if a := findAgent(t, st, AgentCodex); a.Error != "" || a.Path == "" {
+		t.Fatalf("codex should resolve without HOME: %+v", a)
+	}
+	if a := findAgent(t, st, AgentDsh); a.Error != "" || a.Path == "" {
+		t.Fatalf("dsh should resolve without HOME: %+v", a)
+	}
+	for _, id := range []Agent{AgentClaude, AgentAgy} {
+		if a := findAgent(t, st, id); a.Error == "" {
+			t.Fatalf("%s needs HOME and should carry an error: %+v", id, a)
+		}
+	}
+	if _, err := Install(AgentCodex); err != nil {
+		t.Fatalf("install codex without HOME: %v", err)
+	}
+	if _, err := Install(AgentClaude); err == nil {
+		t.Fatal("install claude without HOME should fail")
+	}
+}
+
+// The temp file is unique and gone afterwards; a leftover fixed name would be
+// shared between writers and followed if it were a symlink.
+func TestInstallLeavesNoTempFilesAndIgnoresPlantedTmpSymlink(t *testing.T) {
+	home := setupHome(t)
+	leaf := filepath.Join(home, ".codex", "skills", SkillName)
+	if _, err := Install(AgentCodex); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(leaf, "SKILL.md.tmp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(leaf, "SKILL.md"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(AgentCodex); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "outside\n" {
+		t.Fatalf("install wrote through a planted .tmp symlink: %q", b)
+	}
+	entries, _ := os.ReadDir(leaf)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") && e.Name() != "SKILL.md.tmp" {
+			t.Fatalf("temp file left behind: %s", e.Name())
+		}
 	}
 }

@@ -1009,6 +1009,14 @@ empty or unrecognised names answer `400`). Each target owns only its
 `vibepanel-share` directory and never edits existing configuration files.
 Audited as `shareskill.installed` and `shareskill.removed`.
 
+The panel writes a `.vibepanel-owned` marker into every directory it creates and
+overwrites or removes only a directory that has it. Each agent row carries
+`foreign: true` when something else is at that path (no marker, or a symlink);
+`POST` and `DELETE` for it answer `409` and change nothing. A relative
+`CODEX_HOME` or `DSH_HOME` is ignored in favour of the default. A row whose path
+could not be resolved (no home directory) carries `error` instead of failing the
+whole listing.
+
 `POST /api/settings/hooks` merges the state-reporting hooks into the agent's own
 configuration file, backing it up first and tagging every entry so removing them
 later cannot take anybody else's with it. `GET` shows what it would write before

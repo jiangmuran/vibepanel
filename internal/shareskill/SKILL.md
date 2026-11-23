@@ -95,8 +95,9 @@ vibepanel page publish --link --note "<what changed>" <page-dir>
 
 How `--link` behaves:
 
-- If this page already has an active copyable share link, it reuses that URL
-  (the link automatically serves the newly published version).
+- If this page already has an active copyable share link that never expires and
+  is not locked, it reuses that URL (the link automatically serves the newly
+  published version); passing `--expires` always mints a new link.
 - If the page has no link yet, it mints one on the panel's configured share
   origin (or panel URL) with `detail=counts` (privacy-safe default) and prints
   the URL.

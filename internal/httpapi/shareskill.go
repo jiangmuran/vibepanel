@@ -34,7 +34,7 @@ func (s *Server) handleShareSkillInstall(w http.ResponseWriter, r *http.Request)
 	}
 	st, err := shareskill.InstallMany(agents)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeShareSkillErr(w, err)
 		return
 	}
 	if u, ok := currentUserFrom(r); ok {
@@ -50,13 +50,23 @@ func (s *Server) handleShareSkillUninstall(w http.ResponseWriter, r *http.Reques
 	}
 	st, err := shareskill.UninstallMany(agents)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeShareSkillErr(w, err)
 		return
 	}
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(r.Context(), "shareskill.removed", u.Username, s.clientIP(r), joinShareSkillAgents(agents))
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// writeShareSkillErr answers a refusal to touch a directory the panel did not
+// write as a conflict the person can act on, not as a server fault.
+func writeShareSkillErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, shareskill.ErrForeign) {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeErr(w, http.StatusInternalServerError, err.Error())
 }
 
 // parseShareSkillAgents reads target agents from either ?agent=... or a JSON
