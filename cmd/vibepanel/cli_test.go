@@ -233,10 +233,18 @@ func TestTheCLIOperatesTheRunningPanel(t *testing.T) {
 		t.Error("the file outlived the revocation")
 	}
 	mustRun(t, "settings", "archive-idle", "14")
-	if out := mustRun(t, "settings", "share-origin", "https://share.example.com"); !strings.Contains(out, "https://share.example.com") {
+	// Setting a share origin from here says how to undo it: the panel cannot
+	// always tell that the name is its own when asked over loopback.
+	if out := mustRun(t, "settings", "share-origin", "https://share.example.com"); !strings.Contains(out, "https://share.example.com") ||
+		!strings.Contains(out, "vibepanel settings share-origin clear") {
 		t.Errorf("settings share-origin set: %s", out)
 	}
-	if out := mustRun(t, "settings", "share-origin", "check", "http://127.0.0.1:1"); !strings.Contains(out, "status:") || !strings.Contains(out, "http://127.0.0.1:1") {
+	// An address is not something the check connects to.
+	if out, err := runCLI(t, "settings", "share-origin", "check", "http://127.0.0.1:1"); err == nil || !strings.Contains(err.Error(), "domain name") {
+		t.Errorf("settings share-origin check of an address: err %v, out %s; want it refused", err, out)
+	}
+	// .invalid never resolves (RFC 6761), so this stops at DNS, on any network.
+	if out := mustRun(t, "settings", "share-origin", "check", "share.invalid"); !strings.Contains(out, "status:    needs_dns") || !strings.Contains(out, "https://share.invalid") {
 		t.Errorf("settings share-origin check: %s", out)
 	}
 	if out := mustRun(t, "settings", "share-origin", "clear"); !strings.Contains(out, "panel address") {

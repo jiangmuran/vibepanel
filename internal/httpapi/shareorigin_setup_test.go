@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -160,10 +162,65 @@ http {
 	}
 }
 
+// sharePublicIP is what the share domain resolves to in these tests: an
+// address the real guard (publicAddr) lets through, so the tests run with the
+// guard in place and only the dial replaced. 203.0.113.0/24, the documentation
+// range, is refused by it, which is right and is why it is not used here.
+const sharePublicIP = "93.184.215.14"
+
+// dialByPort stands in for the network: a connection to any address on a port
+// in the table lands on that local port, anything else is refused. Every
+// address asked for is recorded.
+type dialByPort struct {
+	mu      sync.Mutex
+	ports   map[string]string
+	dialled []string
+}
+
+func (d *dialByPort) dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	d.mu.Lock()
+	d.dialled = append(d.dialled, addr)
+	_, port, _ := net.SplitHostPort(addr)
+	local, ok := d.ports[port]
+	d.mu.Unlock()
+	if !ok {
+		return nil, errors.New("connect: connection refused")
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:"+local)
+}
+
+func (d *dialByPort) seen() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.dialled...)
+}
+
+func lookupAlways(ip string) func(context.Context, string) ([]net.IPAddr, error) {
+	return func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP(ip)}}, nil
+	}
+}
+
+// shareTLSServer serves h over TLS with a certificate for share.example.com,
+// returning its port and a pool that trusts it.
+func shareTLSServer(t *testing.T, h http.Handler) (port string, pool *x509.CertPool) {
+	t.Helper()
+	certPEM, _, tlsCert := selfSignedCertPEM(t, "share.example.com", time.Now().Add(30*24*time.Hour))
+	pool = x509.NewCertPool()
+	pool.AppendCertsFromPEM(certPEM)
+	tlsSrv := httptest.NewUnstartedServer(h)
+	tlsSrv.TLS = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
+	tlsSrv.StartTLS()
+	t.Cleanup(tlsSrv.Close)
+	_, port, _ = net.SplitHostPort(tlsSrv.Listener.Addr().String())
+	return port, pool
+}
+
 func TestCheckShareOriginStatuses(t *testing.T) {
 	ts, srv := newTestServer(t)
 	srv.Cfg.Domain = "panel.example.com"
 	srv.Cfg.TLSMode = config.TLSOff
+	_, tsPort, _ := net.SplitHostPort(ts.Listener.Addr().String())
 
 	// Lockout guard: checking the panel's own domain returns 400.
 	if code, body, _ := sendRaw(t, ts, http.MethodPost, "/api/settings/sharing/check", "application/json",
@@ -192,55 +249,38 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 	if got.Origin != "https://share.example.com" || len(got.HostIPs) == 0 || got.HostIPs[0] != "203.0.113.10" {
 		t.Errorf("missing DNS origin/hostIps = %q / %v", got.Origin, got.HostIPs)
 	}
-
-	// 2. Ready over valid HTTPS with Host forwarded properly.
-	certPEM, _, tlsCert := selfSignedCertPEM(t, "share.example.com", time.Now().Add(30*24*time.Hour))
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(certPEM)
-	tlsSrv := httptest.NewUnstartedServer(srv.Routes())
-	tlsSrv.TLS = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
-	tlsSrv.StartTLS()
-	defer tlsSrv.Close()
-
-	_, tlsPort, _ := net.SplitHostPort(tlsSrv.Listener.Addr().String())
-	makeClient := func(trustPool *x509.CertPool, insecure bool) *http.Client {
-		return &http.Client{
-			Timeout: 5 * time.Second,
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-					return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:"+tlsPort)
-				},
-				TLSClientConfig: &tls.Config{
-					RootCAs:            trustPool,
-					InsecureSkipVerify: insecure, //nolint:gosec // test server
-				},
-			},
-		}
+	if !auditHas(t, srv, "sharing.origin_checked", "share.example.com needs_dns") {
+		t.Error("a check left no audit row naming the host and the outcome")
 	}
 
+	// 2. Ready over valid HTTPS with Host forwarded properly.
+	tlsPort, pool := shareTLSServer(t, srv.Routes())
+	net1 := &dialByPort{ports: map[string]string{"443": tlsPort}}
+	noNginx := func(_ context.Context, _ string, _ ...string) ([]byte, error) { return nil, errors.New("no nginx") }
 	srv.pb.provisioner = &shareOriginProvisioner{
-		lookupIP: func(_ context.Context, host string) ([]net.IPAddr, error) {
-			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
-		},
-		probeClient: func(insecure bool) *http.Client {
-			return makeClient(pool, insecure)
-		},
-		runCmd: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
-			return nil, errors.New("no nginx")
-		},
+		lookupIP: lookupAlways(sharePublicIP),
+		dial:     net1.dial,
+		rootCAs:  pool,
+		runCmd:   noNginx,
 	}
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if !got.Ready || got.Status != "ready" || !got.TLSOK || !got.Reachable || !got.HostForwarded || !got.DNSMatchesHost {
 		t.Errorf("ready check = %+v", got)
 	}
-
-	// 3. Untrusted / wrong-domain TLS cert -> needs_https with insecure reachability confirmed.
-	emptyPool := x509.NewCertPool()
-	srv.pb.provisioner.probeClient = func(insecure bool) *http.Client {
-		return makeClient(emptyPool, insecure)
+	// The address that was resolved and checked is the one connected to.
+	if d := net1.seen(); len(d) != 1 || d[0] != sharePublicIP+":443" {
+		t.Errorf("dialled %v, want exactly the checked address %s:443", d, sharePublicIP)
 	}
-	srv.pb.provisioner.httpProbeURL = func(_, nonce string) string {
-		return ts.URL + "/.well-known/vibepanel-probe/" + nonce
+	if !auditHas(t, srv, "sharing.origin_checked", "share.example.com ready") {
+		t.Error("a ready check left no audit row")
+	}
+
+	// 3. Untrusted TLS cert -> needs_https with insecure reachability confirmed.
+	srv.pb.provisioner = &shareOriginProvisioner{
+		lookupIP: lookupAlways(sharePublicIP),
+		dial:     (&dialByPort{ports: map[string]string{"443": tlsPort, "80": tsPort}}).dial,
+		rootCAs:  x509.NewCertPool(),
+		runCmd:   noNginx,
 	}
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if got.Status != "needs_https" || got.Ready || got.TLSOK || !got.Reachable || !got.HTTPPortOpen {
@@ -248,24 +288,15 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 	}
 
 	// 4. Proxy reaches this panel but strips/rewrites Host header -> host_mismatch.
-	rewriteProxy := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rwPort, rwPool := shareTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Host = "127.0.0.1:9884"
 		srv.Routes().ServeHTTP(w, r)
 	}))
-	rewriteProxy.TLS = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
-	rewriteProxy.StartTLS()
-	defer rewriteProxy.Close()
-	_, rwPort, _ := net.SplitHostPort(rewriteProxy.Listener.Addr().String())
-	srv.pb.provisioner.probeClient = func(insecure bool) *http.Client {
-		return &http.Client{
-			Timeout: 5 * time.Second,
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-					return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:"+rwPort)
-				},
-				TLSClientConfig: &tls.Config{RootCAs: pool, InsecureSkipVerify: insecure}, //nolint:gosec
-			},
-		}
+	srv.pb.provisioner = &shareOriginProvisioner{
+		lookupIP: lookupAlways(sharePublicIP),
+		dial:     (&dialByPort{ports: map[string]string{"443": rwPort}}).dial,
+		rootCAs:  rwPool,
+		runCmd:   noNginx,
 	}
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if got.Status != "host_mismatch" || got.Ready || !got.Reachable || got.HostForwarded || got.SeenHost != "127.0.0.1:9884" {
@@ -273,27 +304,38 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 	}
 
 	// 5. Foreign server answering HTTP 200 (not this panel) -> needs_proxy.
-	foreignSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	fPort, fPool := shareTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("welcome to nginx"))
 	}))
-	foreignSrv.TLS = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
-	foreignSrv.StartTLS()
-	defer foreignSrv.Close()
-	_, fPort, _ := net.SplitHostPort(foreignSrv.Listener.Addr().String())
-	srv.pb.provisioner.probeClient = func(insecure bool) *http.Client {
-		return &http.Client{
-			Timeout: 5 * time.Second,
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-					return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:"+fPort)
-				},
-				TLSClientConfig: &tls.Config{RootCAs: pool, InsecureSkipVerify: insecure}, //nolint:gosec
-			},
-		}
+	srv.pb.provisioner = &shareOriginProvisioner{
+		lookupIP: lookupAlways(sharePublicIP),
+		dial:     (&dialByPort{ports: map[string]string{"443": fPort}}).dial,
+		rootCAs:  fPool,
+		runCmd:   noNginx,
 	}
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if got.Status != "needs_proxy" || got.Ready || got.Reachable {
 		t.Errorf("needs_proxy check = %+v", got)
+	}
+
+	// 6. A redirect is an answer from something else, reported and not followed.
+	var followed atomic.Bool
+	rPort, rPool := shareTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/elsewhere" {
+			followed.Store(true)
+			return
+		}
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	}))
+	srv.pb.provisioner = &shareOriginProvisioner{
+		lookupIP: lookupAlways(sharePublicIP),
+		dial:     (&dialByPort{ports: map[string]string{"443": rPort}}).dial,
+		rootCAs:  rPool,
+		runCmd:   noNginx,
+	}
+	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
+	if got.Status != "needs_proxy" || followed.Load() {
+		t.Errorf("redirecting host: status %q, redirect followed = %v; want needs_proxy and not followed", got.Status, followed.Load())
 	}
 }
 
@@ -303,9 +345,10 @@ func TestProvisionShareOriginACME(t *testing.T) {
 	srv.Cfg.TLSMode = config.TLSACME
 
 	var managed []string
+	var manageErr error
 	srv.ManageTLS = func(_ context.Context, domain string) error {
 		managed = append(managed, domain)
-		return nil
+		return manageErr
 	}
 
 	// Missing DNS refuses before invoking ManageTLS.
@@ -324,40 +367,69 @@ func TestProvisionShareOriginACME(t *testing.T) {
 	if len(managed) != 0 {
 		t.Fatalf("ManageTLS called despite missing DNS: %v", managed)
 	}
+	if !auditHas(t, srv, "sharing.origin_provision_refused", "share.example.com: DNS for share.example.com does not resolve yet") {
+		t.Error("a provision refused for DNS left no audit row")
+	}
 
-	// With DNS resolving, ManageTLS is invoked, setting saved, and both audit events recorded.
-	srv.pb.provisioner.lookupIP = func(_ context.Context, _ string) ([]net.IPAddr, error) {
-		return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+	// The CA says no: 502, nothing saved, and a row saying which host and why.
+	offline := &dialByPort{}
+	srv.pb.provisioner = &shareOriginProvisioner{
+		lookupIP: lookupAlways(sharePublicIP),
+		dial:     offline.dial,
+		settle:   []time.Duration{},
 	}
-	srv.pb.provisioner.probeClient = func(bool) *http.Client {
-		return &http.Client{
-			Timeout: time.Second,
-			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-				return nil, errors.New("connection refused")
-			}),
-		}
+	manageErr = errors.New("acme: rate limited")
+	if code, _, _ := sendRaw(t, ts, http.MethodPost, "/api/settings/sharing/provision", "application/json",
+		[]byte(`{"origin":"https://share.example.com"}`)); code != http.StatusBadGateway {
+		t.Fatalf("acme failure = %d, want 502", code)
 	}
+	if !auditHas(t, srv, "sharing.origin_provision_failed", "acme share.example.com: acme: rate limited") {
+		t.Error("a failed provision left no audit row")
+	}
+	manageErr = nil
+	managed = nil
+
+	// The certificate is obtained but the domain does not reach this panel:
+	// the setting is left alone, and the answer and the log both say so.
 	res := postJSON[shareOriginProvisionResult](t, ts, "/api/settings/sharing/provision", `{"origin":"https://share.example.com"}`)
-	if res.Mode != "acme" || res.ShareOrigin != "https://share.example.com" {
-		t.Errorf("acme provision result = %+v", res)
+	if res.Mode != "acme" || res.Check.Ready || res.ShareOrigin != "" {
+		t.Errorf("provision with the domain unreachable = %+v, want mode acme, not ready, shareOrigin empty", res)
 	}
 	if len(managed) != 1 || managed[0] != "share.example.com" {
 		t.Errorf("ManageTLS domains = %v, want [share.example.com]", managed)
 	}
+	if got := getJSON[sharingSettingsResponse](t, ts, "/api/settings/sharing"); got.ShareOrigin != "" {
+		t.Errorf("a provision whose check was %q saved shareOrigin = %q; want it left unset", res.Check.Status, got.ShareOrigin)
+	}
+	if !auditHas(t, srv, "sharing.origin_provisioned", "acme https://share.example.com not saved: check says unreachable") {
+		t.Error("missing the audit row for a provision that was not saved")
+	}
+	if auditHas(t, srv, "sharing.origin_changed", "https://share.example.com") {
+		t.Error("sharing.origin_changed was written although nothing changed")
+	}
+
+	// With the domain reaching this panel, the setting is saved and both rows written.
+	tlsPort, pool := shareTLSServer(t, srv.Routes())
+	srv.pb.provisioner = &shareOriginProvisioner{
+		lookupIP: lookupAlways(sharePublicIP),
+		dial:     (&dialByPort{ports: map[string]string{"443": tlsPort}}).dial,
+		rootCAs:  pool,
+		settle:   []time.Duration{},
+	}
+	res = postJSON[shareOriginProvisionResult](t, ts, "/api/settings/sharing/provision", `{"origin":"https://share.example.com"}`)
+	if res.Mode != "acme" || !res.Check.Ready || res.ShareOrigin != "https://share.example.com" {
+		t.Errorf("acme provision result = %+v", res)
+	}
 	if got := getJSON[sharingSettingsResponse](t, ts, "/api/settings/sharing"); got.ShareOrigin != "https://share.example.com" {
 		t.Errorf("saved shareOrigin = %q", got.ShareOrigin)
 	}
-	if !auditHas(t, srv, "sharing.origin_provisioned", "acme https://share.example.com") {
+	if !auditHas(t, srv, "sharing.origin_provisioned", "acme https://share.example.com saved") {
 		t.Error("missing sharing.origin_provisioned audit")
 	}
 	if !auditHas(t, srv, "sharing.origin_changed", "https://share.example.com") {
 		t.Error("missing sharing.origin_changed audit")
 	}
 }
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestProvisionShareOriginNginxCertbotFlowAndRollback(t *testing.T) {
 	ts, srv := newTestServer(t)
@@ -375,6 +447,9 @@ func TestProvisionShareOriginNginxCertbotFlowAndRollback(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
+	// What the share domain reaches once it is set up: this panel, over TLS.
+	tlsPort, pool := shareTLSServer(t, srv.Routes())
 
 	var calls []string
 	failCertbot := false
@@ -396,17 +471,10 @@ stream {
 		letsencryptDir: leDir,
 		nginxBin:       "/fake/nginx",
 		certbotBin:     "/fake/certbot",
-		lookupIP: func(_ context.Context, _ string) ([]net.IPAddr, error) {
-			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
-		},
-		probeClient: func(bool) *http.Client {
-			return &http.Client{
-				Timeout: time.Second,
-				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-					return nil, errors.New("offline test")
-				}),
-			}
-		},
+		lookupIP:       lookupAlways(sharePublicIP),
+		dial:           (&dialByPort{ports: map[string]string{"443": tlsPort}}).dial,
+		rootCAs:        pool,
+		settle:         []time.Duration{},
 		runCmd: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			if name == "/fake/nginx" && len(args) > 0 && args[0] == "-T" {
@@ -474,8 +542,8 @@ stream {
 		"listen 127.0.0.1:14443 ssl http2;",
 		"server_name share.example.com;",
 		"proxy_pass http://127.0.0.1:9884;",
-		"proxy_set_header Host $host;",
-		"return 301 https://$host$request_uri;",
+		"proxy_set_header Host share.example.com;",
+		"return 301 https://share.example.com$request_uri;",
 	} {
 		if !strings.Contains(conf, want) {
 			t.Errorf("generated vhost missing %q:\n%s", want, conf)

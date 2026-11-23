@@ -163,7 +163,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	}
 	token := chi.URLParam(r, "token")
 	link, err := s.DB.ShareLinkByToken(ctx, auth.HashToken(token))
-	shareOrigin, onShareHost := s.isShareHost(ctx, r)
+	shareOrigin, onShareHost := s.isShareHost(r)
 	if err != nil || link.PageID == "" || (onShareHost && link.Purpose != "") {
 		// Unknown, expired, revoked, an internal preview/peek link hit on the
 		// dedicated share host, or a database hiccup. A page of its own,

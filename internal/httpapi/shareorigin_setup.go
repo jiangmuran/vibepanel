@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -44,9 +45,15 @@ import (
 //     - Under `--tls off` behind nginx with certbot installed and writable
 //       nginx/webroot directories, detects the active SSL listen directive
 //       (including `stream { ... default <addr>; }` SNI multiplexers), writes
-//       an isolated `# Managed by vibepanel` vhost with atomic rollback on any
-//       failure, obtains a Let's Encrypt certificate via HTTP-01 webroot, and
-//       reloads nginx.
+//       an isolated `# Managed by vibepanel` vhost (temp file and rename, the
+//       previous file put back on any failure), obtains a Let's Encrypt
+//       certificate via HTTP-01 webroot, and reloads nginx.
+//
+// The check makes outbound requests to a name somebody typed, so it goes
+// through the guard page sources use (pagesources.go): https, a domain and
+// never an address, every resolved address public, the checked address the
+// one dialled, no redirect followed. Both handlers write an audit row for
+// every attempt, refused ones included.
 
 const (
 	shareProbePrefix = "vibepanel-probe:"
@@ -162,9 +169,16 @@ type shareOriginProvisioner struct {
 	certbotBin     string
 	runCmd         func(ctx context.Context, name string, args ...string) ([]byte, error)
 	lookupIP       func(ctx context.Context, host string) ([]net.IPAddr, error)
-	probeClient    func(insecure bool) *http.Client
-	probeURL       func(origin, nonce string) string
-	httpProbeURL   func(hostname, nonce string) string
+	// allowAddr, dial and rootCAs are sourceFetcher's seams, passed straight
+	// to it: tests replace them to reach a server on loopback and to see
+	// which address was dialled, and nothing else does.
+	allowAddr func(netip.Addr) bool
+	dial      func(ctx context.Context, network, addr string) (net.Conn, error)
+	rootCAs   *x509.CertPool
+	// settle is how long to wait between the checks that follow a provision,
+	// while nginx's new workers or a fresh certificate come up. Nil means the
+	// real waits; a test passes an empty list.
+	settle []time.Duration
 }
 
 func (s *Server) originProvisioner() shareOriginProvisioner {
@@ -213,25 +227,85 @@ func (p shareOriginProvisioner) resolveIPs(ctx context.Context, host string) ([]
 	return out, nil
 }
 
-func (p shareOriginProvisioner) client(insecure bool) *http.Client {
-	if p.probeClient != nil {
-		return p.probeClient(insecure)
+// errNotPublic is the whole of what a caller learns about a name that
+// resolves somewhere the panel will not connect to. Nothing was dialled, so
+// there is no refused-or-timed-out to report, and that is the point: the
+// difference between those two is a port scan of the network the panel sits
+// in, run by whoever can type a hostname into a settings page.
+const errNotPublic = "the domain resolves to an address that is not public (loopback, private, link-local or reserved); nothing was contacted"
+
+// probeClients builds the three clients one check uses, all aimed at the same
+// already-checked address: strict HTTPS, HTTPS without certificate
+// verification (to tell "this panel behind a bad certificate" from "something
+// else"), and plain HTTP on port 80 (whether an HTTP-01 challenge could get
+// in). ok is false when the guard refuses the name, and then nothing may be
+// sent anywhere.
+//
+// addrs is what the caller resolved and showed; the guard is handed those
+// same addresses rather than resolving again, so the address that was checked,
+// the address that is reported and the address that is dialled are one value
+// and a resolver answering differently the second time changes nothing.
+func (p shareOriginProvisioner) probeClients(ctx context.Context, origin, hostname string, addrs []netip.Addr) (strict, insecure, plain *http.Client, ok bool) {
+	lookup := func(ctx context.Context, h string) ([]netip.Addr, error) {
+		if h == hostname {
+			return addrs, nil
+		}
+		// The guard's fake-ip probe asks about a second, made-up name.
+		ips, err := p.resolveIPs(ctx, h)
+		if err != nil {
+			return nil, err
+		}
+		return parseAddrs(ips), nil
 	}
-	tr := &http.Transport{
-		DialContext: (&net.Dialer{Timeout: shareProbeTime}).DialContext,
-		TLSClientConfig: &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: insecure, //nolint:gosec // diagnostic-only fallback carrying a random nonce, never credentials
+	f := &sourceFetcher{resolve: lookup, allowAddr: p.allowAddr, dial: p.dial, rootCAs: p.rootCAs}
+	build := func() *http.Client {
+		c, problem := f.guardedClient(ctx, origin+"/", shareProbeTime)
+		if problem != "" {
+			return nil
+		}
+		c.Timeout = shareProbeTime
+		// Still never followed. The guard's own policy turns a redirect into
+		// an error, and here a 301 is an answer worth reporting: something
+		// other than this panel is on that port.
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		return c
+	}
+	if strict = build(); strict == nil {
+		return nil, nil, nil, false
+	}
+	insecure = build()
+	if tr, isTr := insecure.Transport.(*http.Transport); isTr {
+		tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // diagnostic only: carries a random nonce, never a credential
+	}
+	dial := p.dial
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: shareProbeTime}).DialContext
+	}
+	target := net.JoinHostPort(addrs[0].Unmap().String(), "80")
+	plain = &http.Client{
+		Timeout: shareProbeTime,
+		Transport: &http.Transport{
+			Proxy: nil,
+			// The checked address again, on the port a CA would knock on.
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return dial(ctx, network, target)
+			},
+			DisableKeepAlives:     true,
+			ResponseHeaderTimeout: shareProbeTime,
 		},
-		TLSHandshakeTimeout: shareProbeTime,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &http.Client{
-		Timeout:   shareProbeTime,
-		Transport: tr,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	return strict, insecure, plain, true
+}
+
+func parseAddrs(ips []string) []netip.Addr {
+	out := make([]netip.Addr, 0, len(ips))
+	for _, ip := range ips {
+		if a, err := netip.ParseAddr(ip); err == nil {
+			out = append(out, a)
+		}
 	}
+	return out
 }
 
 func (p shareOriginProvisioner) findNginx() string {
@@ -400,7 +474,7 @@ func (s *Server) detectProvisionInfo(ctx context.Context, p shareOriginProvision
 	}
 	snippet := ""
 	if validPublicDomain(hostname) {
-		snippet = renderNginxShareHTTPS(hostname, listen, p.webroot, upstream,
+		snippet = renderNginxShareHTTPS(hostname, host, listen, p.webroot, upstream,
 			filepath.Join(p.letsencryptDir, "live", hostname, "fullchain.pem"),
 			filepath.Join(p.letsencryptDir, "live", hostname, "privkey.pem"))
 	}
@@ -487,6 +561,36 @@ func dirWritable(dir string) error {
 
 // ─── Handler: POST /api/settings/sharing/check ────────────────────────────
 
+// auditActor is who a sharing audit row is about. The rows are written with a
+// context that outlives the request: a provision runs for a minute and a half,
+// and somebody closing the tab during it must not be how its row goes missing.
+func (s *Server) auditActor(r *http.Request) (ctx context.Context, username, ip string) {
+	if u, ok := currentUserFrom(r); ok {
+		username = u.Username
+	}
+	return context.WithoutCancel(r.Context()), username, s.clientIP(r)
+}
+
+// auditText makes something a caller typed safe to put in an audit row before
+// it has been parsed: bounded, and with nothing in it that breaks a log line.
+func auditText(raw string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(raw))
+	if len(clean) > 120 {
+		clean = clean[:120]
+	}
+	if clean == "" {
+		return "(empty)"
+	}
+	return clean
+}
+
+const errCheckNeedsDomain = "the check needs an https:// origin on a domain name, not an address"
+
 func (s *Server) handleCheckShareOrigin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Origin string `json:"origin"`
@@ -494,36 +598,77 @@ func (s *Server) handleCheckShareOrigin(w http.ResponseWriter, r *http.Request) 
 	if !decode(w, r, &req) {
 		return
 	}
+	actx, who, ip := s.auditActor(r)
+	refuse := func(subject, why string) {
+		s.audit(actx, "sharing.origin_checked", who, ip, subject+" refused: "+why)
+		writeErr(w, http.StatusBadRequest, why)
+	}
 	origin, scheme, host, hostname, err := normalizeShareOriginInput(req.Origin)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		refuse(auditText(req.Origin), err.Error())
 		return
 	}
-	if s.collidesWithPanelHost(r, host, scheme) {
-		writeErr(w, http.StatusBadRequest,
-			"share origin must be different from the panel's own address; leave it empty to use the panel's address")
+	// Before anything is resolved or dialled. An address literal or a plain
+	// http:// origin is a request to connect to wherever the caller says; a
+	// share origin that can be checked is a name with a certificate.
+	if scheme != "https" || !validPublicDomain(hostname) {
+		refuse(host, errCheckNeedsDomain)
+		return
+	}
+	if why := s.collidesWithPanelHost(r, host); why != "" {
+		refuse(host, why)
 		return
 	}
 	res := s.checkShareOrigin(r.Context(), origin, scheme, host, hostname, r.Host)
+	s.audit(actx, "sharing.origin_checked", who, ip, host+" "+res.Status)
 	writeJSON(w, http.StatusOK, res)
 }
 
-func (s *Server) collidesWithPanelHost(r *http.Request, host, scheme string) bool {
-	if host == "" {
-		return false
+const errOwnAddress = "share origin must be different from the panel's own address; leave it empty to use the panel's address"
+
+// collidesWithPanelHost says why host may not become the share origin, or "".
+//
+// By name, not by `host:port`: the share host is recognised by name on any
+// port (classifyShareHost), so a share origin on the panel's own name and
+// another port would confine the panel too.
+//
+// The request's own Host is only evidence when a browser sent it. The command
+// line talks to the panel on loopback, so `vibepanel settings share-origin
+// https://<the panel's public name>` on a panel with no VIBEPANEL_DOMAIN
+// passed every check here and turned the whole panel into the "this link no
+// longer works" page. What the panel does know without being told is where
+// people are signed in from: every session is bound to the origin it was
+// made at, so a name with a live session on it is the panel's.
+func (s *Server) collidesWithPanelHost(r *http.Request, host string) string {
+	name := hostnameOnly(host)
+	if name == "" {
+		return ""
 	}
-	panelHosts := s.panelConfiguredHosts()
-	if panelHosts[host] {
-		return true
+	if s.panelHostnames()[name] {
+		return errOwnAddress
 	}
-	if r != nil {
-		reqScheme := requestScheme(r, s.trustedProxies())
-		if strings.EqualFold(host, normalizeHostPort(r.Host, reqScheme)) ||
-			strings.EqualFold(host, normalizeHostPort(r.Host, scheme)) {
-			return true
+	if r == nil {
+		return ""
+	}
+	if hostnameOnly(r.Host) == name {
+		return errOwnAddress
+	}
+	if s.DB == nil {
+		return ""
+	}
+	origins, err := s.DB.LiveAuthSessionOrigins(r.Context())
+	if err != nil {
+		// Not knowing is a refusal: the mistake this prevents costs the owner
+		// the panel, and asking again costs nothing.
+		return "the panel cannot read its sign-in sessions to check this address; try again"
+	}
+	for _, o := range origins {
+		if u, perr := url.Parse(o); perr == nil && hostnameOnly(u.Host) == name {
+			return "a signed-in session reaches the panel at " + name +
+				", so it is the panel's own address; sign that session out first if the panel has moved"
 		}
 	}
-	return false
+	return ""
 }
 
 func (s *Server) checkShareOrigin(ctx context.Context, origin, scheme, host, hostname string, panelReqHost ...string) shareOriginCheckResponse {
@@ -536,12 +681,20 @@ func (s *Server) checkShareOrigin(ctx context.Context, origin, scheme, host, hos
 		TLSRequired: scheme == "https",
 		Provision:   s.detectProvisionInfo(ctx, p, origin, scheme, host, hostname),
 	}
+	// The handler refuses these already; this is the same rule where the
+	// dialling happens, so no second caller can forget it.
+	if scheme != "https" || !validPublicDomain(hostname) {
+		out.Status = "not_public"
+		out.ReachError = errCheckNeedsDomain
+		return out
+	}
 
 	// 1. DNS lookup.
 	dctx, dcancel := context.WithTimeout(ctx, 4*time.Second)
 	ips, derr := p.resolveIPs(dctx, hostname)
 	dcancel()
-	if derr != nil || len(ips) == 0 {
+	addrs := parseAddrs(ips)
+	if derr != nil || len(addrs) == 0 {
 		out.Status = "needs_dns"
 		if derr != nil {
 			out.DNSError = derr.Error()
@@ -563,7 +716,18 @@ func (s *Server) checkShareOrigin(ctx context.Context, origin, scheme, host, hos
 		}
 	}
 
-	// 2. Live self-challenge probe to the target origin.
+	// 2. The guard. A share domain pointing at this machine's public address
+	// is the ordinary case and passes like any other public address; one that
+	// resolves into loopback or private space is refused here, with one fixed
+	// sentence and no connection attempted.
+	strict, insecure, plain, ok := p.probeClients(ctx, origin, hostname, addrs)
+	if !ok {
+		out.Status = "not_public"
+		out.ReachError = errNotPublic
+		return out
+	}
+
+	// 3. Live self-challenge probe to the target origin.
 	nonce, entry, cleanup, merr := s.pb.probes.mint()
 	if merr != nil {
 		out.Status = "unreachable"
@@ -573,22 +737,18 @@ func (s *Server) checkShareOrigin(ctx context.Context, origin, scheme, host, hos
 	defer cleanup()
 
 	targetURL := origin + "/.well-known/vibepanel-probe/" + nonce
-	if p.probeURL != nil {
-		targetURL = p.probeURL(origin, nonce)
-	}
-
 	probeReq, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		out.Status = "unreachable"
 		out.ReachError = err.Error()
 		return out
 	}
-	resp, perr := p.client(false).Do(probeReq)
+	resp, perr := strict.Do(probeReq)
 	if perr == nil {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 		_ = resp.Body.Close()
 		body := strings.TrimSpace(string(bodyBytes))
-		if scheme == "https" && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 			cert := resp.TLS.PeerCertificates[0]
 			out.TLSOK = true
 			out.TLSIssuer = cert.Issuer.CommonName
@@ -615,15 +775,15 @@ func (s *Server) checkShareOrigin(ctx context.Context, origin, scheme, host, hos
 		return out
 	}
 
-	// 3. Target probe failed: classify TLS failure vs proxy/network failure.
-	if scheme == "https" && isTLSError(perr) {
+	// 4. Target probe failed: classify TLS failure vs proxy/network failure.
+	if isTLSError(perr) {
 		out.TLSOK = false
 		out.TLSError = perr.Error()
 		// Diagnostic follow-up over insecure TLS (carrying only the random
 		// nonce) to see whether this panel or another site already answers on
 		// :443, and check port 80 for HTTP-01 readiness.
 		if insecReq, ierr := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil); ierr == nil {
-			if iresp, err2 := p.client(true).Do(insecReq); err2 == nil {
+			if iresp, err2 := insecure.Do(insecReq); err2 == nil {
 				b, _ := io.ReadAll(io.LimitReader(iresp.Body, 256))
 				_ = iresp.Body.Close()
 				if iresp.StatusCode == http.StatusOK && strings.TrimSpace(string(b)) == shareProbePrefix+nonce {
@@ -635,17 +795,18 @@ func (s *Server) checkShareOrigin(ctx context.Context, origin, scheme, host, hos
 				}
 			}
 		}
-		out.HTTPPortOpen = p.checkHTTPPortOpen(ctx, hostname, nonce)
+		out.HTTPPortOpen = checkHTTPPortOpen(ctx, plain, hostname, nonce)
 		out.Status = "needs_https"
 		return out
 	}
 
 	// Connection refused / timeout on target port: check port 80 too so we can
 	// distinguish "server reachable on HTTP, just needs HTTPS/proxy" from
-	// "domain doesn't reach this machine at all".
+	// "domain doesn't reach this machine at all". The error text is a public
+	// address's, which is the only kind that gets this far.
 	out.ReachError = perr.Error()
-	out.HTTPPortOpen = p.checkHTTPPortOpen(ctx, hostname, nonce)
-	if scheme == "https" && out.HTTPPortOpen {
+	out.HTTPPortOpen = checkHTTPPortOpen(ctx, plain, hostname, nonce)
+	if out.HTTPPortOpen {
 		out.Status = "needs_https"
 	} else {
 		out.Status = "unreachable"
@@ -653,16 +814,16 @@ func (s *Server) checkShareOrigin(ctx context.Context, origin, scheme, host, hos
 	return out
 }
 
-func (p shareOriginProvisioner) checkHTTPPortOpen(ctx context.Context, hostname, nonce string) bool {
-	u := "http://" + hostname + "/.well-known/vibepanel-probe/" + nonce
-	if p.httpProbeURL != nil {
-		u = p.httpProbeURL(hostname, nonce)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+// checkHTTPPortOpen asks whether anything answers plain HTTP on port 80 of the
+// checked address. The one request here that is not https, and it carries a
+// nonce to a path and reads nothing back: whether a CA's HTTP-01 request could
+// arrive is a question about port 80 and has no https form.
+func checkHTTPPortOpen(ctx context.Context, plain *http.Client, hostname, nonce string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+hostname+"/.well-known/vibepanel-probe/"+nonce, nil)
 	if err != nil {
 		return false
 	}
-	resp, err := p.client(false).Do(req)
+	resp, err := plain.Do(req)
 	if err != nil {
 		return false
 	}
@@ -696,30 +857,50 @@ func (s *Server) handleProvisionShareOrigin(w http.ResponseWriter, r *http.Reque
 	if !decode(w, r, &req) {
 		return
 	}
+	actx, who, ip := s.auditActor(r)
+	// Every way out of this handler leaves a row: this is the request that
+	// rewrites the web server's configuration and asks a CA for a certificate,
+	// and "somebody tried and it was refused" is as much part of that record
+	// as the time it worked.
+	refuse := func(code int, subject, why string) {
+		s.audit(actx, "sharing.origin_provision_refused", who, ip, subject+": "+why)
+		writeErr(w, code, why)
+	}
 	origin, scheme, host, hostname, err := normalizeShareOriginInput(req.Origin)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		refuse(http.StatusBadRequest, auditText(req.Origin), err.Error())
 		return
 	}
 	if scheme != "https" {
-		writeErr(w, http.StatusBadRequest, "automatic HTTPS requires an https:// origin")
+		refuse(http.StatusBadRequest, host, "automatic HTTPS requires an https:// origin")
 		return
 	}
 	if !validPublicDomain(hostname) || host != hostname {
-		writeErr(w, http.StatusBadRequest, "automatic HTTPS requires a standard domain name on port 443")
+		refuse(http.StatusBadRequest, host, "automatic HTTPS requires a standard domain name on port 443")
 		return
 	}
-	if s.collidesWithPanelHost(r, host, scheme) {
-		writeErr(w, http.StatusBadRequest,
-			"share origin must be different from the panel's own address; leave it empty to use the panel's address")
+	if why := s.collidesWithPanelHost(r, host); why != "" {
+		refuse(http.StatusBadRequest, host, why)
 		return
 	}
+
+	// One at a time, panel-wide. Two of these at once read the same vhost as
+	// "the previous state", each wrote its own and each rolled back to what
+	// it had read, so the loser's rollback could delete the winner's working
+	// site; and two certbots for one name spend the CA's failed-validation
+	// budget twice. The second caller is told, not queued: by the time the
+	// first finishes, what the second would have done is out of date.
+	if !s.pb.provisioning.TryLock() {
+		refuse(http.StatusConflict, host, "another HTTPS setup is running; wait for it to finish")
+		return
+	}
+	defer s.pb.provisioning.Unlock()
 
 	ctx := r.Context()
 	p := s.originProvisioner()
 	info := s.detectProvisionInfo(ctx, p, origin, scheme, host, hostname)
 	if !info.CanProvision {
-		writeErr(w, http.StatusBadRequest, "automatic HTTPS is not available: "+info.Reason)
+		refuse(http.StatusBadRequest, host, "automatic HTTPS is not available: "+info.Reason)
 		return
 	}
 
@@ -734,69 +915,85 @@ func (s *Server) handleProvisionShareOrigin(w http.ResponseWriter, r *http.Reque
 		if len(hostIPs) > 0 {
 			hint = " (point an A record to " + strings.Join(hostIPs, " / ") + " first)"
 		}
-		writeErr(w, http.StatusBadRequest, "DNS for "+hostname+" does not resolve yet"+hint)
+		refuse(http.StatusBadRequest, host, "DNS for "+hostname+" does not resolve yet"+hint)
 		return
 	}
 
+	failed := func(code int, why string) {
+		s.audit(actx, "sharing.origin_provision_failed", who, ip, info.Mode+" "+host+": "+why)
+		writeErr(w, code, why)
+	}
 	switch info.Mode {
 	case "acme":
 		if err := s.ManageTLS(ctx, hostname); err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			failed(http.StatusBadGateway, err.Error())
 			return
 		}
 	case "nginx-certbot":
 		if err := s.provisionNginxCertbot(ctx, p, hostname, info.NginxListen); err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			failed(http.StatusBadGateway, err.Error())
 			return
 		}
 	default:
-		writeErr(w, http.StatusBadRequest, "automatic HTTPS is not available on this host")
+		refuse(http.StatusBadRequest, host, "automatic HTTPS is not available on this host")
 		return
 	}
 
-	if err := s.DB.SetSetting(ctx, shareOriginKey, origin); err != nil {
-		s.writeStoreErr(w, err)
-		return
-	}
-	s.pb.origin.forget()
-	if u, ok := currentUserFrom(r); ok {
-		s.audit(ctx, "sharing.origin_provisioned", u.Username, s.clientIP(r), info.Mode+" "+origin)
-		s.audit(ctx, "sharing.origin_changed", u.Username, s.clientIP(r), origin)
-	}
-
+	// The setting is saved only if the domain now demonstrably reaches this
+	// panel. It used to be saved first and checked afterwards: a certificate
+	// that was issued while the proxy still pointed elsewhere left every
+	// handed-out link on a name that did not serve it, and the response said
+	// "provisioned". Not saving costs nothing -- the certificate and the vhost
+	// stay, the report says what is still missing, and Save is one click once
+	// it is fixed.
 	check := s.checkShareOriginAfterProvision(ctx, p, origin, scheme, host, hostname, r.Host)
+	saved := ""
+	if check.Ready {
+		if err := s.DB.SetSetting(actx, shareOriginKey, origin); err != nil {
+			s.audit(actx, "sharing.origin_provision_failed", who, ip, info.Mode+" "+host+": could not save the setting")
+			s.writeStoreErr(w, err)
+			return
+		}
+		s.pb.origin.forget()
+		s.audit(actx, "sharing.origin_provisioned", who, ip, info.Mode+" "+origin+" saved")
+		s.audit(actx, "sharing.origin_changed", who, ip, origin)
+		saved = origin
+	} else {
+		s.audit(actx, "sharing.origin_provisioned", who, ip, info.Mode+" "+origin+" not saved: check says "+check.Status)
+		saved, _, _ = s.shareOrigin(actx)
+	}
 	writeJSON(w, http.StatusOK, shareOriginProvisionResult{
 		Origin:      origin,
 		Mode:        info.Mode,
-		ShareOrigin: origin,
+		ShareOrigin: saved,
 		Check:       check,
 	})
 }
 
-// checkShareOriginAfterProvision probes the newly provisioned origin and, when
-// running against a real network (not an offline mock probeClient), retries
+// checkShareOriginAfterProvision probes the newly provisioned origin, retrying
 // briefly so `nginx -s reload` workers or a fresh ACME handshake finish
 // settling before the response tells the caller whether the origin is ready.
 func (s *Server) checkShareOriginAfterProvision(ctx context.Context, p shareOriginProvisioner, origin, scheme, host, hostname, reqHost string) shareOriginCheckResponse {
 	check := s.checkShareOrigin(ctx, origin, scheme, host, hostname, reqHost)
-	if check.Ready || p.probeClient != nil {
-		return check
+	waits := p.settle
+	if waits == nil {
+		waits = []time.Duration{300 * time.Millisecond, 500 * time.Millisecond, 800 * time.Millisecond, 1200 * time.Millisecond}
 	}
-	for _, wait := range []time.Duration{300 * time.Millisecond, 500 * time.Millisecond, 800 * time.Millisecond, 1200 * time.Millisecond} {
+	for _, wait := range waits {
+		if check.Ready {
+			return check
+		}
 		select {
 		case <-ctx.Done():
 			return check
 		case <-time.After(wait):
 		}
 		check = s.checkShareOrigin(ctx, origin, scheme, host, hostname, reqHost)
-		if check.Ready {
-			return check
-		}
 	}
 	return check
 }
 
-// ─── nginx + certbot atomic provisioner ───────────────────────────────────
+// ─── nginx + certbot provisioner ───────────────────────────────────
 
 // nginxTargetPaths picks either Debian-style sites-available/sites-enabled or
 // RHEL/Alpine-style conf.d, verifying write access up front.
@@ -987,7 +1184,7 @@ func (s *Server) provisionNginxCertbot(ctx context.Context, p shareOriginProvisi
 		sslListen = "443 ssl http2"
 	}
 
-	// Snapshot prior state for guaranteed rollback.
+	// Snapshot prior state for rollback.
 	hadAvail := false
 	var prevAvail []byte
 	if b, rerr := os.ReadFile(availPath); rerr == nil {
@@ -1002,7 +1199,7 @@ func (s *Server) provisionNginxCertbot(ctx context.Context, p shareOriginProvisi
 	}
 	rollback := func() {
 		if hadAvail {
-			_ = os.WriteFile(availPath, prevAvail, 0o644)
+			_ = writeFileAtomic(availPath, prevAvail, 0o644)
 		} else {
 			_ = os.Remove(availPath)
 		}
@@ -1015,7 +1212,7 @@ func (s *Server) provisionNginxCertbot(ctx context.Context, p shareOriginProvisi
 	}
 
 	writeAndReload := func(conf string) error {
-		if err := os.WriteFile(availPath, []byte(conf), 0o644); err != nil {
+		if err := writeFileAtomic(availPath, []byte(conf), 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", availPath, err)
 		}
 		if enabledPath != "" {
@@ -1040,10 +1237,20 @@ func (s *Server) provisionNginxCertbot(ctx context.Context, p shareOriginProvisi
 	// Phase 1: obtain certificate via HTTP-01 webroot unless a valid one is
 	// already on disk.
 	if !existingCertValid(certPath, keyPath, hostname) {
-		httpOnly := renderNginxShareHTTPChallenge(hostname, p.webroot, upstream)
-		if err := writeAndReload(httpOnly); err != nil {
-			rollback()
-			return err
+		// A site that is already serving HTTPS keeps doing so while its
+		// certificate is renewed. The first version always swapped in the
+		// HTTP-only challenge vhost here, so renewing a certificate with two
+		// weeks left took every handed-out link off the air for as long as
+		// certbot ran, up to ninety seconds, and for good if certbot failed
+		// between the two reloads. The HTTPS vhost this file writes already
+		// answers the challenge on port 80 from the same webroot, so there is
+		// nothing to swap.
+		if !servesManagedHTTPS(prevAvail, hadAvail && (enabledPath == "" || hadEnabled), p.webroot) {
+			httpOnly := renderNginxShareHTTPChallenge(hostname, p.webroot, upstream)
+			if err := writeAndReload(httpOnly); err != nil {
+				rollback()
+				return err
+			}
 		}
 		args := []string{
 			"certonly", "--webroot",
@@ -1066,12 +1273,63 @@ func (s *Server) provisionNginxCertbot(ctx context.Context, p shareOriginProvisi
 	}
 
 	// Phase 2: write full HTTPS + HTTP->HTTPS redirect vhost and reload.
-	fullConf := renderNginxShareHTTPS(hostname, sslListen, p.webroot, upstream, certPath, keyPath)
+	fullConf := renderNginxShareHTTPS(hostname, hostname, sslListen, p.webroot, upstream, certPath, keyPath)
 	if err := writeAndReload(fullConf); err != nil {
 		rollback()
 		return err
 	}
 	return nil
+}
+
+// servesManagedHTTPS is whether the vhost already in place is this file's own
+// HTTPS one, enabled, answering the ACME challenge from the webroot certbot is
+// about to write into. Anything else -- no file, somebody's edit that dropped
+// the challenge location, a different webroot -- gets the challenge vhost.
+func servesManagedHTTPS(conf []byte, enabled bool, webroot string) bool {
+	text := string(conf)
+	return enabled &&
+		strings.Contains(text, managedMarker) &&
+		strings.Contains(text, "ssl_certificate ") &&
+		strings.Contains(text, "location /.well-known/acme-challenge/") &&
+		strings.Contains(text, "root "+webroot+";")
+}
+
+// writeFileAtomic replaces path with data by writing a sibling and renaming
+// it over.
+//
+// os.WriteFile truncates the file and then fills it, and nginx may be reading
+// it at that moment: a reload started by anything else on the machine (logrotate,
+// certbot's own deploy hook, another site's deploy) parses whatever is there,
+// and half a server block is a syntax error that takes the reload -- every
+// site's reload -- down with it. A rename is one step: a reader gets the old
+// file or the new one.
+//
+// The sibling's name starts with a dot and does not end in .conf, so neither
+// `include conf.d/*.conf` nor `include sites-enabled/*` picks it up if this
+// process dies before the rename.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	if werr == nil {
+		werr = f.Chmod(perm)
+	}
+	if werr == nil {
+		werr = f.Sync()
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, path)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+	}
+	return werr
 }
 
 func hasCertbotAccount(letsencryptDir string) bool {
@@ -1109,6 +1367,20 @@ func trimCmdErr(out []byte, err error) string {
 	return s
 }
 
+// The two vhosts below send the share host's name upstream as a literal, never
+// `$host`.
+//
+// `$host` is whatever the client put in its Host header. If this server block
+// is nginx's default for its socket -- the only site on the machine, or the
+// first one loaded -- nginx hands it requests for every name, and with `$host`
+// each of them reached the panel under the name the client chose: a name that
+// is not the share host, so the panel answered as itself, sign-in page and
+// all, through the one door that exists to keep it off the public domain.
+// A literal makes everything that comes through this vhost a share-host
+// request, whatever it claimed to be. hostHeader has passed strictDomainRe
+// (and a numeric port check) before it gets here, so it cannot carry a
+// directive. The redirect names the host the same way, for the same reason:
+// `https://$host` sends a visitor wherever their Host header said.
 func renderNginxShareHTTPChallenge(hostname, webroot, upstream string) string {
 	return fmt.Sprintf(`%s — temporary HTTP-01 challenge for %s
 server {
@@ -1123,7 +1395,7 @@ server {
     location /.well-known/vibepanel-probe/ {
         proxy_pass %s;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        proxy_set_header Host %s;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -1133,10 +1405,10 @@ server {
         return 404;
     }
 }
-`, managedMarker, hostname, hostname, webroot, upstream)
+`, managedMarker, hostname, hostname, webroot, upstream, hostname)
 }
 
-func renderNginxShareHTTPS(hostname, sslListen, webroot, upstream, certPath, keyPath string) string {
+func renderNginxShareHTTPS(hostname, hostHeader, sslListen, webroot, upstream, certPath, keyPath string) string {
 	listenBlock := "    listen " + sslListen + ";"
 	if strings.HasPrefix(sslListen, "443 ") || sslListen == "443" {
 		listenBlock += "\n    listen [::]:" + sslListen + ";"
@@ -1159,7 +1431,7 @@ server {
     location / {
         proxy_pass %s;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        proxy_set_header Host %s;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
@@ -1177,8 +1449,8 @@ server {
     }
 
     location / {
-        return 301 https://$host$request_uri;
+        return 301 https://%s$request_uri;
     }
 }
-`, managedMarker, hostname, listenBlock, hostname, certPath, keyPath, upstream, hostname, webroot)
+`, managedMarker, hostname, listenBlock, hostname, certPath, keyPath, upstream, hostHeader, hostname, webroot, hostHeader)
 }

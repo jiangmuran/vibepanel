@@ -926,6 +926,18 @@ const settingsUsage = `usage: vibepanel settings <archive-idle|timezone|share-or
   share-origin check <origin>        test DNS, reverse proxy and HTTPS for a candidate share domain
   share-origin setup <origin>        configure HTTPS + proxy (ACME or nginx+certbot) and save it`
 
+// shareOriginRecovery is printed whenever the command line makes a name the
+// share origin.
+//
+// The panel refuses its own address, but it can only refuse an address it
+// knows is its own, and this command reaches it on loopback: a panel with no
+// domain configured and nobody signed in at the moment has nothing to compare
+// against. Given its own public name it then serves that name as a share
+// host, which is every page of the panel answering "this link no longer
+// works". The way back is one command from a shell on the machine, and the
+// moment to say so is before it is needed.
+const shareOriginRecovery = "that name now serves share links only. If it is the address you open the panel at, undo it from this machine: vibepanel settings share-origin clear\n"
+
 func cmdSettings(args []string) error {
 	if wantsHelp(args) {
 		fmt.Println(settingsUsage)
@@ -1022,9 +1034,10 @@ func cmdSettings(args []string) error {
 		}
 		if len(args) == 3 && args[1] == "setup" {
 			var res struct {
-				Origin string `json:"origin"`
-				Mode   string `json:"mode"`
-				Check  struct {
+				Origin      string `json:"origin"`
+				Mode        string `json:"mode"`
+				ShareOrigin string `json:"shareOrigin"`
+				Check       struct {
 					Ready  bool   `json:"ready"`
 					Status string `json:"status"`
 				} `json:"check"`
@@ -1033,6 +1046,14 @@ func cmdSettings(args []string) error {
 				return err
 			}
 			fmt.Printf("provisioned %s via %s (status=%s, ready=%v)\n", res.Origin, res.Mode, res.Check.Status, res.Check.Ready)
+			if res.ShareOrigin != res.Origin {
+				// The panel saves the origin only once the domain is shown to
+				// reach it; saying "provisioned" and stopping there would
+				// read as done.
+				fmt.Printf("not saved: the check did not pass. Fix what `vibepanel settings share-origin check %s` reports, then set it with `vibepanel settings share-origin %s`\n", res.Origin, res.Origin)
+				return nil
+			}
+			fmt.Print(shareOriginRecovery)
 			return nil
 		}
 		if len(args) != 2 {
@@ -1052,6 +1073,7 @@ func cmdSettings(args []string) error {
 			fmt.Println("share origin: (panel address)")
 		} else {
 			fmt.Printf("share origin: %s\n", out.ShareOrigin)
+			fmt.Print(shareOriginRecovery)
 		}
 		return nil
 	}

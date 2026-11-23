@@ -240,6 +240,7 @@ func TestShareOriginValidationAndLockoutGuard(t *testing.T) {
 
 func TestShareOriginRewritesAddressesAndIsolatesShareHost(t *testing.T) {
 	ts, srv := newTestServer(t)
+	withBundle(t, srv)
 	srv.Cfg.Domain = "panel.example.com"
 
 	// Publish a page with a visitor action so we test HTML, SDK, snapshot and action POST.

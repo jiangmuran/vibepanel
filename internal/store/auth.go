@@ -169,6 +169,31 @@ func (d *DB) DeleteUserAuthSessions(ctx context.Context, userID string) error {
 	return nil
 }
 
+// LiveAuthSessionOrigins lists the distinct origins unexpired sessions are
+// bound to: the addresses people are signed in to the panel at, right now.
+//
+// The share-origin setting asks this before it turns a name into a host that
+// serves share links only. Configuration cannot answer it on a panel with no
+// domain set, and the request that makes the change may come from the command
+// line on loopback.
+func (d *DB) LiveAuthSessionOrigins(ctx context.Context) ([]string, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT DISTINCT origin FROM auth_sessions WHERE origin != '' AND expires_at > ?`, now())
+	if err != nil {
+		return nil, fmt.Errorf("store: auth session origins: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var o string
+		if err := rows.Scan(&o); err != nil {
+			return nil, fmt.Errorf("store: auth session origins: %w", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // PurgeExpiredAuthSessions removes sessions past their expiry.
 func (d *DB) PurgeExpiredAuthSessions(ctx context.Context) (int64, error) {
 	res, err := d.sql.ExecContext(ctx, `DELETE FROM auth_sessions WHERE expires_at <= ?`, now())

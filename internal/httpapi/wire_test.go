@@ -452,6 +452,13 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"sharing.visitor_writes":     true,
 		"sharing.origin_changed":     true,
 		"sharing.origin_provisioned": true,
+		// The check connects out to a name somebody typed, and a provision
+		// rewrites the web server's configuration and asks a CA for a
+		// certificate: every attempt is a row, the refused and the failed
+		// ones included, each naming the host and what came of it.
+		"sharing.origin_checked":           true,
+		"sharing.origin_provision_refused": true,
+		"sharing.origin_provision_failed":  true,
 		// A page's own data changed by its owner or through an admin page.
 		"page.data_changed": true,
 		// A visitor action run through a link, coalesced per minute; a grant
