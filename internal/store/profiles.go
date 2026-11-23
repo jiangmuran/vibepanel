@@ -152,7 +152,11 @@ var builtinProfiles = []LaunchProfile{
 		// exactly as a bare terminal would.
 		{Name: "ANTHROPIC_MODEL"},
 	}},
-	{ID: BuiltinPrefix + "codex", Name: "Codex", Command: []string{"codex"}, Env: []LaunchEnvVar{
+	// `--no-alt-screen` keeps Codex on the primary buffer. Codex 0.163+ enters
+	// the alternate screen by default and, inside tmux with `mouse off`, turns
+	// off mouse capture too -- leaving zero lines in tmux's scrollback while
+	// wheel events send Up/Down arrows into the prompt composer.
+	{ID: BuiltinPrefix + "codex", Name: "Codex", Command: []string{"codex", "--no-alt-screen"}, Env: []LaunchEnvVar{
 		{Name: "OPENAI_BASE_URL"},
 		{Name: "OPENAI_API_KEY", Secret: true},
 	}},

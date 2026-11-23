@@ -28260,5 +28260,31 @@ attach+replay took 9 ms. Four causes:
   typed `>` inside `a > b` is never mistaken for the prompt marker; `!` and `?`
   left to shell and shortcuts on an empty prompt).
 
+## 2026-11-23 — Scrollback recovery for Codex and inline agent TUIs
 
+Both Codex and Antigravity CLI lost scrollback above the current screen, from
+three separate causes:
 
+- **`Attach` left up to one screenful of primed history under `ESC[2J`.**
+  `CaptureHistory` stops at `-E -1` (one line above the visible pane), and
+  `Attach` ended the primed history with a single `\r\n`, leaving the last
+  `min(history, rows)` lines sitting on xterm.js's active screen when `tmux
+  attach` arrived with `ESC[H ESC[2J` and erased them in place. Appending
+  `ESC[0m` plus `rows` line feeds scrolls every primed line into scrollback
+  before the repaint clears the active grid.
+- **An overflowed 2 MiB `RingBuffer` evicted scrollback that tmux still held.**
+  Antigravity CLI redraws ~50 rows in place (`ESC[row;1H ESC[J ...`) at ~33 KB/s
+  while thinking, filling the 2 MiB ring in ~60s with single-screen redraws and
+  evicting all earlier conversation lines even though tmux's 20,000-line history
+  still had them. When `RingBuffer.Overflowed()` is true on a non-resumed
+  subscribe, `Live.subscribe` now calls `tmux.CaptureSnapshot` outside `l.mu`,
+  restores history, visible screen, `DECSTBM` margins and cursor position, and
+  appends any bytes written to the ring while tmux ran.
+- **Codex 0.163+ defaulted to `fullscreen_transcript` (`alternate_on=1`) with
+  mouse capture off under tmux.** Seeing `$TMUX_PANE` and `#{mouse} == 0`
+  (`vibepanel.conf` keeps `mouse off` so xterm.js owns drag-select), Codex
+  entered the alternate screen (`history_size=0`) without enabling SGR mouse,
+  turning wheel notches into Up/Down arrow keys in the prompt composer. Both
+  `builtin:codex` and `tmux.LaunchArgv` now pass `--no-alt-screen` to
+  interactive Codex launches unless an explicit alternate-screen option was
+  given, keeping Codex on tmux's primary buffer.

@@ -116,6 +116,13 @@ type Live struct {
 	ID       string
 	TmuxName string
 
+	// captureSnapshot asks tmux for this pane's scrollback and screen; nil
+	// when there is no tmux to ask. A field and not a call on the client so a
+	// test can count the captures and hold one open. See captureForReplay.
+	captureSnapshot func(ctx context.Context, maxHistoryLines int) (tmux.Snapshot, error)
+	captureMu       sync.Mutex
+	capturing       *replayCapture
+
 	// onInput is Manager.OnInput, captured when the attachment was made; onKey
 	// likewise.
 	onInput func(sessionID string)
@@ -505,7 +512,16 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		// convertEol off -- and it is off, because an agent's own \n must not
 		// be rewritten -- every line would start where the previous one ended
 		// and the history would arrive as a diagonal.
-		ring.Write([]byte(strings.ReplaceAll(history, "\n", "\r\n") + "\r\n"))
+		//
+		// CaptureHistory stops at -E -1 (one line above the visible screen),
+		// and tmux's attach begins with ESC[H ESC[2J, which erases the active
+		// screen without scrolling it into scrollback. A single \r\n left the
+		// last min(history, rows) lines sitting on the active screen where the
+		// repaint immediately wiped them out; `rows` line feeds push every
+		// primed line past row 0 into scrollback before ESC[2J clears the blank
+		// padding below. ESC[0m first so background-colour erase does not fill
+		// those blank lines with the last history line's background.
+		ring.Write([]byte(strings.ReplaceAll(history, "\n", "\r\n") + "\x1b[0m" + strings.Repeat("\r\n", rows)))
 	}
 
 	// A bell that rang while no client was attached, handed to the detector as
@@ -559,6 +575,11 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		// Before the pump starts, because the pump is what answers tmux's
 		// colour queries and it answers them on the first chunk. See lastDark.
 		dark: m.lastDark.Load(),
+	}
+	if tm := m.tmux; tm != nil {
+		l.captureSnapshot = func(ctx context.Context, maxHistoryLines int) (tmux.Snapshot, error) {
+			return tm.CaptureSnapshot(ctx, tmuxName, maxHistoryLines)
+		}
 	}
 
 	// Install, unless somebody asked for this session to go while it was being
@@ -937,6 +958,14 @@ type Replay struct {
 	Continued bool
 }
 
+// maxReplayHistoryLines matches xterm.js's scrollback cap in Terminal.tsx;
+// capturing further back would spend tmux CPU on lines the browser discards.
+const maxReplayHistoryLines = 10_000
+
+// snapshotCaptureTimeout bounds how long a subscribe waits on tmux when
+// rebuilding scrollback after the ring buffer has wrapped.
+const snapshotCaptureTimeout = 2 * time.Second
+
 // SubscribeFrom is Subscribe or SubscribeHidden for a viewer that may already
 // hold most of the snapshot. See RingBuffer.SnapshotFrom.
 func (l *Live) SubscribeFrom(clientID string, hidden bool, from Resume) (*Subscriber, Replay) {
@@ -947,38 +976,182 @@ func (l *Live) subscribe(clientID string, hidden bool, from Resume) (*Subscriber
 	sub := &Subscriber{Events: make(chan Event, subscriberQueue), ClientID: clientID, hidden: hidden}
 
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.closed {
 		close(sub.Events)
+		l.mu.Unlock()
 		return sub, Replay{Stream: l.stream}
 	}
-	var replay Replay
-	replay.Stream = l.stream
-	if hidden && from.Stream != "" && from.Stream == l.stream && from.Since >= 0 && from.Since <= l.ring.Total() {
+	replay := Replay{Stream: l.stream}
+	sameStream := from.Stream != "" && from.Stream == l.stream
+
+	// Every return below sets sub.sentUntil. SetHidden replays from it when the
+	// terminal comes back on screen, so a branch that leaves it at zero makes
+	// the next show replay the whole ring on top of what the viewer already
+	// has.
+	if hidden && sameStream && from.Since >= 0 && from.Since <= l.ring.Total() {
 		// Reconnecting a terminal that is still off-screen on the same stream:
 		// keep its offset and send nothing until SetHidden brings it back on
 		// screen, rather than pushing megabytes for a pane nobody can see.
 		replay.Offset = from.Since
 		replay.Continued = true
 		sub.sentUntil = from.Since
-	} else {
-		if from.Stream != "" && from.Stream == l.stream {
-			replay.Data, replay.Offset, replay.Continued = l.ring.SnapshotFrom(from.Since)
-		} else {
-			replay.Data, replay.Offset, _ = l.ring.SnapshotFrom(-1)
+		l.finishSubscribeLocked(sub, hidden)
+		l.mu.Unlock()
+		return sub, replay
+	}
+	if sameStream {
+		if data, off, ok := l.ring.SnapshotFrom(from.Since); ok {
+			replay.Data, replay.Offset, replay.Continued = data, off, true
+			sub.sentUntil = l.ring.Total()
+			l.finishSubscribeLocked(sub, hidden)
+			l.mu.Unlock()
+			return sub, replay
 		}
-		if !replay.Continued {
-			// The modes first, then the screen. Offset moves back by the same
-			// amount: the viewer counts every byte it receives from Offset to find
-			// its resume point, and these bytes are not in the stream, so without
-			// the shift its next resume would skip that many real ones.
-			if prefix := l.modes.prefix(); len(prefix) > 0 {
-				replay.Data = append(prefix, replay.Data...)
-				replay.Offset -= int64(len(prefix))
+	}
+
+	// Once the ring has wrapped, its bytes are the last minute of an inline
+	// TUI's in-place spinner redraws (`ESC[10;1H ESC[J ...`) and the
+	// conversation sitting in tmux's history has been evicted. Ask tmux for the
+	// pane instead, outside l.mu so the PTY pump never stalls on a subprocess,
+	// then stitch on whatever landed in the ring while tmux ran.
+	if l.ring.Overflowed() && l.captureSnapshot != nil {
+		l.mu.Unlock()
+		snap, before, cerr := l.captureForReplay()
+		l.mu.Lock()
+		if l.closed {
+			close(sub.Events)
+			l.mu.Unlock()
+			return sub, Replay{Stream: l.stream}
+		}
+		if cerr == nil {
+			if tail, _, ok := l.ring.SnapshotFrom(before); ok {
+				autowrap := true
+				if on, seen := l.modes.state[7]; seen {
+					autowrap = on
+				}
+				rows := l.rows
+				if rows <= 0 {
+					rows = snap.PaneHeight
+				}
+				if rows <= 0 {
+					rows = 24
+				}
+				rendered := formatSnapshot(snap, rows, autowrap)
+				prefix := l.modes.prefix()
+				replay.Data = make([]byte, 0, len(prefix)+len(rendered)+len(tail))
+				replay.Data = append(replay.Data, prefix...)
+				replay.Data = append(replay.Data, rendered...)
+				replay.Data = append(replay.Data, tail...)
+				replay.Offset = l.ring.Total() - int64(len(replay.Data))
+				sub.sentUntil = l.ring.Total()
+				l.finishSubscribeLocked(sub, hidden)
+				l.mu.Unlock()
+				return sub, replay
 			}
 		}
-		sub.sentUntil = l.ring.Total()
+		// The capture failed, or took so long that the bytes written since it
+		// began have themselves left the ring. The ring alone is still a
+		// correct stream, only a short one.
 	}
+
+	replay.Data, replay.Offset, _ = l.ring.SnapshotFrom(-1)
+	// The modes first, then the screen. Offset moves back by the same
+	// amount: the viewer counts every byte it receives from Offset to find
+	// its resume point, and these bytes are not in the stream, so without
+	// the shift its next resume would skip that many real ones.
+	if prefix := l.modes.prefix(); len(prefix) > 0 {
+		replay.Data = append(prefix, replay.Data...)
+		replay.Offset -= int64(len(prefix))
+	}
+	sub.sentUntil = l.ring.Total()
+	l.finishSubscribeLocked(sub, hidden)
+	l.mu.Unlock()
+	return sub, replay
+}
+
+// replayCapture is one capture of the pane and the ring offset taken just
+// before it was asked for.
+type replayCapture struct {
+	done   chan struct{}
+	snap   tmux.Snapshot
+	before int64
+	err    error
+}
+
+// captureForReplay asks tmux for the pane, once for however many viewers are
+// waiting.
+//
+// A ring that has wrapped stays wrapped, so from then on every subscribe that
+// cannot resume comes here, and each capture is three tmux processes reading up
+// to ten thousand lines. A panel restart or a network blip reconnects every
+// viewer of a session in the same instant; without the sharing that was one
+// set of forks per viewer for the same answer.
+//
+// The offset is read before tmux is asked, never after. tmux's grid is ahead of
+// the ring by whatever is still unread in the PTY, so no offset marks the
+// capture exactly, and the choice is which way to be wrong. Taken before, the
+// tail can repeat output the capture already shows: a line printed while tmux
+// ran may appear twice in scrollback. Taken after, that output would be in
+// neither, and a missing line is the worse of the two because nothing later
+// puts it back.
+//
+// Must be called without l.mu.
+func (l *Live) captureForReplay() (tmux.Snapshot, int64, error) {
+	l.captureMu.Lock()
+	if c := l.capturing; c != nil {
+		l.captureMu.Unlock()
+		<-c.done
+		return c.snap, c.before, c.err
+	}
+	c := &replayCapture{done: make(chan struct{}), before: l.ring.Total()}
+	l.capturing = c
+	l.captureMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), snapshotCaptureTimeout)
+	c.snap, c.err = l.captureSnapshot(ctx, maxReplayHistoryLines)
+	cancel()
+
+	l.captureMu.Lock()
+	l.capturing = nil
+	l.captureMu.Unlock()
+	close(c.done)
+	return c.snap, c.before, c.err
+}
+
+// formatSnapshot renders a tmux Snapshot as a byte stream for a fresh xterm.js
+// instance sized to `rows` rows.
+//
+// Order matters at the end: DECSTBM (`ESC[Pt;Pbr`) homes the cursor to (1, 1)
+// per VT100, so the scroll region has to be restored before CUP positions the
+// cursor (including when an inline TUI's prompt sits below its scroll region).
+func formatSnapshot(snap tmux.Snapshot, rows int, autowrap bool) []byte {
+	var b bytes.Buffer
+	b.Grow(len(snap.History) + len(snap.Screen) + rows*2 + 64)
+	b.WriteString("\x1b[r\x1b[0m")
+	if !autowrap {
+		b.WriteString("\x1b[?7h")
+	}
+	if snap.History != "" {
+		b.WriteString(strings.ReplaceAll(snap.History, "\n", "\r\n"))
+		b.WriteString("\x1b[0m")
+		b.WriteString(strings.Repeat("\r\n", rows))
+	}
+	b.WriteString("\x1b[H\x1b[2J")
+	if snap.Screen != "" {
+		b.WriteString(strings.ReplaceAll(snap.Screen, "\n", "\r\n"))
+		b.WriteString("\x1b[0m")
+	}
+	if !autowrap {
+		b.WriteString("\x1b[?7l")
+	}
+	if snap.PaneHeight > 0 && (snap.ScrollUpper > 0 || (snap.ScrollLower > 0 && snap.ScrollLower < snap.PaneHeight-1)) {
+		fmt.Fprintf(&b, "\x1b[%d;%dr", snap.ScrollUpper+1, snap.ScrollLower+1)
+	}
+	fmt.Fprintf(&b, "\x1b[%d;%dH", snap.CursorY+1, snap.CursorX+1)
+	return b.Bytes()
+}
+
+func (l *Live) finishSubscribeLocked(sub *Subscriber, hidden bool) {
 	l.subs[sub] = struct{}{}
 
 	// A session nobody has ever driven goes to whoever opened it. Without this
@@ -1014,7 +1187,6 @@ func (l *Live) subscribe(clientID string, hidden bool, from Resume) (*Subscriber
 	case sub.Events <- Event{Kind: EventSize, Cols: cols, Rows: rows}:
 	default:
 	}
-	return sub, replay
 }
 
 // claimControlLocked gives an unowned grid to a viewer that has just arrived,

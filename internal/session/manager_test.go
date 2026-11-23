@@ -1994,3 +1994,99 @@ func TestDetachReturnsAsSoonAsThePumpCan(t *testing.T) {
 		t.Errorf("Detach took up to %v; it waits for the pump, and the pump should end when its PTY is closed", worst.Round(time.Millisecond))
 	}
 }
+
+// CaptureHistory stops at -E -1 (one line above the visible screen), and tmux's
+// attach begins with ESC[H ESC[2J, which erases the active screen without
+// scrolling it into scrollback. When fewer than `rows` lines sat in history --
+// or for the last `rows` lines of any history -- a single \r\n left them on the
+// active screen where ESC[2J wiped them out.
+func TestAttachPushesPrimedHistoryAboveTheScreenClear(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_short_hist"
+	// 30 lines on a 24-row pane: 6 lines in history (SHORT_1..SHORT_6) and 24
+	// on the visible screen (SHORT_7..SHORT_30). With a single \r\n after the
+	// primed history, all 6 lines sat on rows 0..5 and ESC[2J erased them.
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "i=1; while [ $i -le 30 ]; do echo SHORT_$i; i=$((i+1)); done; exec sleep 60"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+	live, err := m.Attach(ctx, "s1", name, 80, 24)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	time.Sleep(1000 * time.Millisecond)
+
+	_, replay := live.Subscribe("viewer")
+	clearIdx := strings.Index(string(replay), "\x1b[2J")
+	if clearIdx < 0 {
+		t.Fatalf("expected tmux attach screen clear in replay: %q", string(replay))
+	}
+	before := string(replay[:clearIdx])
+	if !strings.Contains(before, "SHORT_6") {
+		t.Fatalf("primed history missing SHORT_6 before screen clear: %q", before)
+	}
+	afterSix := before[strings.Index(before, "SHORT_6"):]
+	if got := strings.Count(afterSix, "\r\n"); got < 24 {
+		t.Fatalf("only %d line feeds between SHORT_6 and ESC[2J (want >= 24 to scroll past a 24-row screen)", got)
+	}
+}
+
+// Inline TUIs like Antigravity CLI redraw 40-50 rows in place several times a
+// second while thinking, filling the 2 MiB ring buffer in ~60s and evicting all
+// earlier lines from the in-memory ring even though tmux still holds 20,000
+// lines of scrollback. A fresh subscribe after overflow must rebuild the
+// scrollback from tmux rather than replaying 2 MiB of one-screen overwrites.
+func TestSubscribeRecoversScrollbackAfterTheRingOverflows(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_overflow_hist"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c",
+			`i=1; while [ $i -le 80 ]; do printf "CONV_LINE_%03d\n" $i; i=$((i+1)); done; ` +
+				`sleep 1; j=0; while [ $j -lt 500 ]; do j=$((j+1)); printf "\033[%d;1Hspinner_%068d" $((j%4+19)) $j; done; ` +
+				`printf "\033[23;1HOVERFLOW_DONE"; sleep 60`},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Small ring so 300 in-place redraws (~24 KiB) wrap it several times over
+	// and evict every CONV_LINE_* from memory.
+	m := NewManager(tm, 4<<10)
+	defer m.DetachAll()
+	live, err := m.Attach(ctx, "s1", name, 80, 24)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	early, _ := live.Subscribe("early")
+	if got := collect(t, early, "OVERFLOW_DONE", 10*time.Second); !strings.Contains(got, "OVERFLOW_DONE") {
+		t.Fatalf("pane never finished flooding: %q", got)
+	}
+	live.Unsubscribe(early)
+
+	if !live.ring.Overflowed() {
+		t.Fatal("ring did not overflow; test did not exercise the overflow path")
+	}
+	if strings.Contains(string(live.ring.Snapshot()), "CONV_LINE_001") {
+		t.Fatal("CONV_LINE_001 is still in the ring; flood was too small")
+	}
+
+	late, replay := live.SubscribeFrom("late", false, Resume{})
+	defer live.Unsubscribe(late)
+	text := string(replay.Data)
+	for _, want := range []string{"CONV_LINE_001", "CONV_LINE_057", "CONV_LINE_075", "OVERFLOW_DONE"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("rebuilt replay missing %q", want)
+		}
+	}
+	if got, want := replay.Offset+int64(len(replay.Data)), live.ring.Total(); got != want {
+		t.Fatalf("offset + len(data) = %d, ring total = %d", got, want)
+	}
+}

@@ -2075,3 +2075,76 @@ func TestAnUnreadableLineIsSkippedAndSaidOnce(t *testing.T) {
 		t.Errorf("the unreadable line was logged %d times, want once with its text:\n%s", n, log.String())
 	}
 }
+
+func TestCodexLaunchesWithoutTheAlternateScreen(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"bare codex", []string{"codex"}, []string{"codex", "--no-alt-screen"}},
+		{"with yolo flag", []string{"codex", "--yolo"}, []string{"codex", "--no-alt-screen", "--yolo"}},
+		{"absolute path and resume", []string{"/usr/local/bin/codex", "-m", "gpt-5", "resume", "--last"}, []string{"/usr/local/bin/codex", "--no-alt-screen", "-m", "gpt-5", "resume", "--last"}},
+		{"fork subcommand", []string{"codex", "fork", "--last"}, []string{"codex", "--no-alt-screen", "fork", "--last"}},
+		{"already set", []string{"codex", "--no-alt-screen"}, []string{"codex", "--no-alt-screen"}},
+		{"explicit alternate_screen config", []string{"codex", "-c", `tui.alternate_screen="always"`}, []string{"codex", "-c", `tui.alternate_screen="always"`}},
+		{"explicit fullscreen_transcript config", []string{"codex", "-c", "tui.fullscreen_transcript=true"}, []string{"codex", "-c", "tui.fullscreen_transcript=true"}},
+		{"non-interactive exec", []string{"codex", "exec", "fix bug"}, []string{"codex", "exec", "fix bug"}},
+		{"non-interactive login", []string{"codex", "login"}, []string{"codex", "login"}},
+		{"version check", []string{"codex", "--version"}, []string{"codex", "--version"}},
+		{"another tool", []string{"claude"}, []string{"claude"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := append([]string(nil), tc.in...)
+			got := codexInlineArgv(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("codexInlineArgv(%q) = %q, want %q", orig, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("codexInlineArgv(%q) = %q, want %q", orig, got, tc.want)
+				}
+			}
+			for i := range orig {
+				if tc.in[i] != orig[i] {
+					t.Fatalf("codexInlineArgv mutated caller slice: %q -> %q", orig, tc.in)
+				}
+			}
+		})
+	}
+}
+
+func TestCaptureSnapshotReadsHistoryScreenAndScrollRegion(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+
+	const name = "vp_snap"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 40, Height: 10,
+		Command: []string{"sh", "-c",
+			`i=1; while [ $i -le 16 ]; do printf "HIST_%02d\n" $i; i=$((i+1)); done; printf "\033[1;7r\033[9;1H> prompt"; sleep 30`},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Kill(context.Background(), name) })
+	time.Sleep(700 * time.Millisecond)
+
+	snap, err := c.CaptureSnapshot(ctx, name, 1000)
+	if err != nil {
+		t.Fatalf("CaptureSnapshot: %v", err)
+	}
+	if !strings.Contains(snap.History, "HIST_01") || !strings.Contains(snap.History, "HIST_07") {
+		t.Errorf("history missing scrolled lines: %q", snap.History)
+	}
+	if !strings.Contains(snap.Screen, "> prompt") {
+		t.Errorf("screen missing prompt: %q", snap.Screen)
+	}
+	if snap.PaneHeight != 10 || snap.ScrollUpper != 0 || snap.ScrollLower != 6 {
+		t.Errorf("geometry = height:%d upper:%d lower:%d, want 10, 0, 6",
+			snap.PaneHeight, snap.ScrollUpper, snap.ScrollLower)
+	}
+	if snap.CursorY != 8 || snap.CursorX != 8 {
+		t.Errorf("cursor = (%d, %d), want (8, 8)", snap.CursorX, snap.CursorY)
+	}
+}
