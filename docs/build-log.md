@@ -28618,3 +28618,45 @@ configured `sharing.origin` (or panel origin) in one command, audited as
 **/sharing**, as an optional step in the first-run **Tour**, and as an opt-in
 prompt (`--share-skill` / `--no-share-skill`) in `deploy/install.sh`.
 
+
+### What review changed in the share plugin, and what it left
+
+The first version overwrote and removed whatever sat at
+`<agent>/skills/vibepanel-share`. Its "mechanical guard" in `removeSpec`
+compared a path with a path built from the same two strings, so it could never
+fire, and a person's own directory of that name would have been `RemoveAll`ed.
+
+- **Ownership.** Every leaf the panel creates now holds `.vibepanel-owned`,
+  written first so an interrupted install still leaves something the panel can
+  repair. Install over and remove of a leaf without it, or reached through a
+  symlink (`Lstat`, for the leaf and every component under it), answer
+  `ErrForeign`: `409` over HTTP, `foreign: true` in the listing, and no button
+  in Settings, the Sharing line or the Tour. Bundles written by the unreleased
+  first version have no marker and read as foreign; there are none in the wild.
+- Temp files are `os.CreateTemp` in the destination directory, not a fixed
+  `dst.tmp` that two writers share and a planted symlink would redirect. A
+  relative `CODEX_HOME` or `DSH_HOME` is ignored. With no home directory the
+  agents that do not need one are still listed; the others carry `error`.
+- **CLI links.** Reuse now has to return what was asked for: never a locked
+  link, always a new link when `--expires` is given, and only a never-expiring
+  link when it is not. `--interactive` writes `share.interactive_changed`
+  like the route; a failed audit write, and a link built on the loopback
+  address, are printed on stderr and carried in `warnings`, so stdout stays
+  the URL or valid JSON. Detail and lifetime checks are one function
+  (`validateShareTerms`) shared with `handleCreateShare`.
+- The tour overlay is `z-30`, the settings dialog's layer, because App renders
+  Settings after it and equal layers stack it on top; at `z-50` "Continue in
+  settings" opened a dialog under the tour's backdrop. `first-run-check` now
+  clicks it and asks `elementFromPoint`, and pins a foreign directory in the
+  fake HOME. It also clears `CODEX_HOME` and `DSH_HOME`, which would otherwise
+  have pointed the check at the developer's real agent directories.
+- `deploy/install.sh`: `--share-skill` with no detected agent says so
+  (`shareskill.none`, both languages) and installs nothing, instead of running
+  `page skill install` into `|| true` under a plan line that said otherwise.
+
+**Left.** Two writers (the settings route and the CLI) share only the
+in-process mutex, so a CLI install racing the panel's can interleave; the
+marker makes that harmless but not atomic. The audit-failure warnings have no
+test: nothing in the suite makes the audit insert fail while the link insert
+succeeds. A bundle's files are compared with `TrimSpace`, so trailing
+whitespace edits read as current.
