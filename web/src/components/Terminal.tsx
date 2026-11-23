@@ -867,6 +867,7 @@ export function TerminalView({
         cell.row,
         (target, fallback) => onOpenPathRef.current?.(target, fallback),
         openExternal,
+        ev,
       )
       if (!act) return
       if (term.hasSelection()) term.clearSelection()
@@ -880,7 +881,7 @@ export function TerminalView({
       }
       const cell = mouseCell(ev)
       const act = cell
-        ? linkActionAtCell(term, cell.col, cell.row, () => {}, () => {})
+        ? linkActionAtCell(term, cell.col, cell.row, () => {}, () => {}, ev)
         : null
       if (act) host.dataset.linkHover = 'true'
       else if (host.dataset.linkHover) delete host.dataset.linkHover

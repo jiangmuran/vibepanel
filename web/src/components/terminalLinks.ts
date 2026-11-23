@@ -206,9 +206,34 @@ function overlaps(spans: readonly { start: number; end: number }[], start: numbe
   return spans.some((s) => start < s.end && end > s.start)
 }
 
-/** Finds every clickable file or folder reference in one logical terminal line. */
+// The last few logical lines scanned. The pointer moves across a line far
+// more often than the line changes, and the scan is six regexes plus
+// per-candidate checks; without this every pointermove over a scaled terminal
+// rescanned the line under it. Keyed by the text itself, so a redraw that
+// leaves the same words in the row costs nothing and one that changes them
+// misses by construction. Eight, because a hit on one row also scans the row
+// above it (hard-wrap continuation) and the two must not evict each other.
+const SCAN_CACHE_MAX = 8
+const scanCache = new Map<string, TerminalPathHit[]>()
+
+/**
+ * Finds every clickable file or folder reference in one logical terminal line.
+ * The result is shared between calls with the same text: do not mutate it.
+ */
 export function findTerminalPathHits(text: string): TerminalPathHit[] {
   if (!text) return []
+  const cached = scanCache.get(text)
+  if (cached) return cached
+  const hits = scanTerminalPathHits(text)
+  if (scanCache.size >= SCAN_CACHE_MAX) {
+    const oldest = scanCache.keys().next().value
+    if (oldest !== undefined) scanCache.delete(oldest)
+  }
+  scanCache.set(text, hits)
+  return hits
+}
+
+function scanTerminalPathHits(text: string): TerminalPathHit[] {
   const hits: TerminalPathHit[] = []
   const blocked: { start: number; end: number }[] = []
 
@@ -287,6 +312,23 @@ export function findTerminalPathHits(text: string): TerminalPathHit[] {
 
   hits.sort((a, b) => a.start - b.start)
   return hits
+}
+
+/**
+ * Whether a click on a path may open it, given what the program in the terminal
+ * has asked for.
+ *
+ * A program that turned mouse reporting on (a TUI with its own menus and
+ * clickable rows) is the one that wants the click; opening a viewer over it
+ * and sending nothing would make its UI unusable wherever it prints a path.
+ * Ctrl or Cmd is the explicit "this one is for the panel", the same chord
+ * terminals use for links. Without a tracking mode the click is ours as before.
+ */
+export function linkClickAllowed(
+  term: Xterm,
+  mods?: { ctrlKey?: boolean; metaKey?: boolean },
+): boolean {
+  return term.modes.mouseTrackingMode === 'none' || !!mods?.ctrlKey || !!mods?.metaKey
 }
 
 interface LogicalWindow {
@@ -447,7 +489,7 @@ export function provideTerminalFileLinks(
         range,
         text: target,
         activate: (ev) => {
-          if (ev.button !== 0 || term.hasSelection()) return
+          if (ev.button !== 0 || term.hasSelection() || !linkClickAllowed(term, ev)) return
           onOpen(target, fallback)
         },
       })
@@ -475,7 +517,7 @@ export function provideTerminalFileLinks(
               range: tailRange,
               text: cont.joined,
               activate: (ev) => {
-                if (ev.button !== 0 || term.hasSelection()) return
+                if (ev.button !== 0 || term.hasSelection() || !linkClickAllowed(term, ev)) return
                 onOpen(cont.joined, lastHit.target)
               },
             })
@@ -504,7 +546,11 @@ export function linkActionAtCell(
   viewportRow0: number,
   onOpen: (target: string, fallback?: string) => void,
   onExternal: (url: string) => void,
+  mods?: { ctrlKey?: boolean; metaKey?: boolean },
 ): (() => void) | null {
+  // Before anything is looked up, so a hover under mouse tracking does not
+  // offer a click that would be refused.
+  if (!linkClickAllowed(term, mods)) return null
   const buf = term.buffer.active
   const bufferRow0 = buf.viewportY + viewportRow0
   const line = buf.getLine(bufferRow0)
@@ -538,7 +584,7 @@ export function linkActionAtCell(
   for (const link of fileLinks) {
     if (posInRange(term.cols, x1, y1, link.range)) {
       return () => {
-        const fakeEv = { button: 0 } as MouseEvent
+        const fakeEv = { button: 0, ctrlKey: !!mods?.ctrlKey, metaKey: !!mods?.metaKey } as MouseEvent
         link.activate(fakeEv, link.text)
       }
     }

@@ -5,6 +5,7 @@ import {
   classifyOscUri,
   findTerminalPathHits,
   linkActionAtCell,
+  linkClickAllowed,
   provideTerminalFileLinks,
 } from './terminalLinks'
 
@@ -151,5 +152,96 @@ describe('provideTerminalFileLinks and linkActionAtCell', () => {
         'Check (internal/httpapi/fsfile.go#L42C5) and web/src/App.tsx(115,3) and app/(dashboard)/page.tsx',
       ).map((h) => h.target),
     ).toEqual(['internal/httpapi/fsfile.go#L42C5', 'web/src/App.tsx(115,3)', 'app/(dashboard)/page.tsx'])
+  })
+})
+
+describe('a click on a path while the program has the mouse', () => {
+  const write = (term: Terminal, data: string) => new Promise<void>((resolve) => term.write(data, resolve))
+
+  it('is the program\'s unless Ctrl or Cmd is held', async () => {
+    const term = new Terminal({ cols: 60, rows: 4, allowProposedApi: true })
+    await write(term, 'see internal/tmux/tmux.go now\r\n')
+    const open = (mods?: { ctrlKey?: boolean; metaKey?: boolean }) =>
+      linkActionAtCell(term, 10, 0, () => {}, () => {}, mods)
+
+    // No tracking: a plain click opens, as it always did.
+    expect(term.modes.mouseTrackingMode).toBe('none')
+    expect(linkClickAllowed(term)).toBe(true)
+    expect(open()).not.toBeNull()
+
+    // Every tracking mode a program can ask for (DECSET 9, 1000, 1002, 1003).
+    for (const set of ['\x1b[?9h', '\x1b[?1000h', '\x1b[?1002h', '\x1b[?1003h']) {
+      await write(term, set)
+      expect(term.modes.mouseTrackingMode).not.toBe('none')
+      expect(linkClickAllowed(term)).toBe(false)
+      expect(linkClickAllowed(term, { ctrlKey: false, metaKey: false })).toBe(false)
+      expect(open()).toBeNull()
+      expect(open({ ctrlKey: true })).not.toBeNull()
+      expect(open({ metaKey: true })).not.toBeNull()
+      await write(term, set.replace('h', 'l'))
+    }
+    expect(open()).not.toBeNull()
+    term.dispose()
+  })
+
+  it('also refuses the activation xterm\'s own link provider delivers', async () => {
+    const term = new Terminal({ cols: 60, rows: 4, allowProposedApi: true })
+    await write(term, 'see internal/tmux/tmux.go now\r\n\x1b[?1000h')
+    const opened: string[] = []
+    const links = provideTerminalFileLinks(term, 1, (t) => opened.push(t))
+    expect(links).toHaveLength(1)
+    links[0].activate({ button: 0 } as MouseEvent, links[0].text)
+    expect(opened).toEqual([])
+    links[0].activate({ button: 0, ctrlKey: true } as MouseEvent, links[0].text)
+    expect(opened).toEqual(['internal/tmux/tmux.go'])
+    term.dispose()
+  })
+})
+
+// Candidate regexes with nested quantifiers (BARE_SEG) are the shape that
+// backtracks catastrophically when something after them can fail. A line of
+// terminal output is attacker-shaped -- an agent prints whatever it is given --
+// and the scan runs on the main thread on every hover, so a bound here is a
+// bound on how long a hostile line can freeze the tab.
+describe('findTerminalPathHits on hostile lines', () => {
+  const lines: Record<string, string> = {
+    'a. repeated': 'a.'.repeat(2000),
+    'word characters, no slash': 'a'.repeat(4000),
+    'word characters then a stop': 'a'.repeat(4000) + '!',
+    dots: '.'.repeat(4000),
+    'absolute with dotted segments': '/' + 'a.'.repeat(2000) + '!',
+    'absolute with parenthesised segments': '/' + '(a)'.repeat(1300) + '!',
+    'relative, dots after the slash': 'a'.repeat(2000) + '/' + '.'.repeat(2000) + '!',
+    'many short segments': '/' + 'a/'.repeat(2000) + '!',
+    'looks like a file with an anchor that never comes': 'a.'.repeat(1500) + 'b.c',
+  }
+  for (const [name, line] of Object.entries(lines)) {
+    it(`finishes in time: ${name}`, () => {
+      const t = performance.now()
+      findTerminalPathHits(line)
+      // Measured at under 20 ms for each; ten times that is slack for a busy CI box.
+      expect(performance.now() - t).toBeLessThan(200)
+    })
+  }
+})
+
+describe('the scan of one line', () => {
+  it('is not repeated while the pointer moves inside it', () => {
+    const text = 'edit internal/tmux/tmux.go:12 then ~/.claude/plan.md'
+    const first = findTerminalPathHits(text)
+    expect(first.map((h) => h.target)).toEqual(['internal/tmux/tmux.go:12', '~/.claude/plan.md'])
+    // Same array, not an equal one: nothing was scanned the second time.
+    expect(findTerminalPathHits(text)).toBe(first)
+    // A different line is its own scan, and the first is still right.
+    expect(findTerminalPathHits('and src/a.ts here').map((h) => h.target)).toEqual(['src/a.ts'])
+    expect(findTerminalPathHits(text)).toBe(first)
+  })
+
+  it('does not outgrow its bound, and a line it forgot is scanned again correctly', () => {
+    const first = findTerminalPathHits('open src/first.ts')
+    for (let i = 0; i < 40; i++) findTerminalPathHits(`open src/file${i}.ts`)
+    const again = findTerminalPathHits('open src/first.ts')
+    expect(again).not.toBe(first)
+    expect(again.map((h) => h.target)).toEqual(['src/first.ts'])
   })
 })
