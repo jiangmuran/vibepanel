@@ -441,8 +441,8 @@ with no encrypted token), and `"actionsToday": n`.
 |---|---|
 | `GET /api/settings/sharing` | → `{"visitorWrites": true, "shareOrigin": ""}` |
 | `PUT /api/settings/sharing` | `{"visitorWrites"?: bool, "shareOrigin"?: "https://…"}` → the same; audited `sharing.visitor_writes` / `sharing.origin_changed` |
-| `POST /api/settings/sharing/check` | `{"origin": "https://…"}` → live DNS, reachability, `Host`-forwarding, TLS and provisioning-mode check |
-| `POST /api/settings/sharing/provision` | `{"origin": "https://…"}` → one-click HTTPS (`acme` or `nginx-certbot`), saves `sharing.origin`, audited `sharing.origin_provisioned` + `sharing.origin_changed` |
+| `POST /api/settings/sharing/check` | `{"origin": "https://…"}` → live DNS, reachability, `Host`-forwarding, TLS and provisioning-mode check; an `https://` domain name only, connecting only to public addresses; audited `sharing.origin_checked` |
+| `POST /api/settings/sharing/provision` | `{"origin": "https://…"}` → one-click HTTPS (`acme` or `nginx-certbot`), one at a time (`409`); saves `sharing.origin` only when the check then passes; every attempt audited (`sharing.origin_provision_refused` / `_failed` / `sharing.origin_provisioned`, and `sharing.origin_changed` when saved) |
 
 **Data** (`ns` is `live`, the default, or `draft`)
 

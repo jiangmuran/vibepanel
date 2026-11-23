@@ -28310,3 +28310,124 @@ editable from **Settings → Sharing** and `vibepanel settings share-origin`):
   SNI multiplexers on port 443 such as `127.0.0.1:14443`, refusing unmanaged
   `server_name` conflicts, and rolling back atomically on any failure). Both
   modes refuse before contacting Let's Encrypt when DNS does not resolve yet.
+
+## 2026-11-22 — The share origin, made to fail closed
+
+The dedicated share origin above arrived as a contribution and was reviewed
+before release. The feature is an isolation boundary — "this public name serves
+share links and nothing else" — and seven places in it gave the wrong answer
+when something was slightly off. Each is fixed with a test that was watched
+going red with the fix removed (the fixed file copied aside, the fix undone,
+the copy put back).
+
+**What was wrong, and what was done.**
+
+1. *The share host was an exact `host:port`.* With the origin
+   `https://share.example.com`, a request for `Host: share.example.com.` or
+   `share.example.com:444` was "not the share host" and got the panel's sign-in
+   page on the public domain. The host is now a name (`hostnameOnly`): lower
+   case, no port, no trailing dot. The consequence is deliberate: a share
+   origin on the panel's own name and a different port can no longer be set,
+   because it would confine the panel as well. Cookies do not distinguish
+   ports either, so that arrangement was never the isolation it looked like.
+   (`TestTheShareHostIsANameOnAnyPort`.)
+2. *The generated vhost proxied `Host $host`.* If that server block is nginx's
+   default for its socket, any name a client sends is proxied under that name
+   and the panel answers as itself. Both vhosts and the manual snippet now send
+   the literal, already-validated host; the HTTP→HTTPS redirect names it too.
+   (`TestTheVhostNamesItsHostLiterally`.)
+3. *The path was checked decoded and routed escaped.* `/share%2Fx` passed the
+   prefix check, matched no share route in chi (which reads `RawPath`) and fell
+   to the catch-all, which is the bundle. Red line 8 says an unknown share path
+   never gets the SPA. The prefix must now be present in the path as the router
+   sees it *and* survive cleaning.
+   (`TestAnEscapedPathOnTheShareHostNeverGetsThePanel`.)
+4. *A failed read was cached as "no share origin".* One cancelled request
+   context during the first read turned isolation off until restart. A failed
+   read is no longer remembered, and while the setting cannot be read the
+   middleware answers 503 on every host: the request may be for the share
+   host, and serving the panel there is the one wrong answer. The panel's own
+   host loses nothing it had, since every route that matters reads the same
+   database to find out who is asking. The handlers further down no longer
+   re-read the setting; they take the middleware's decision from the request.
+   (`TestAFailedReadOfTheShareOriginIsNotRemembered`,
+   `TestNothingIsServedAsThePanelWhileTheShareOriginCannotBeRead`.)
+5. *The check dialled whatever it was given*: address literals, `http://`,
+   loopback, RFC 1918, link-local, the metadata address. It now goes through
+   the guard page sources already use (`sourceFetcher.guardedClient`): https
+   on a domain name, every resolved address public, the checked address the
+   one dialled, no redirect followed. A name that resolves to a non-public
+   address gets `not_public` and one fixed sentence, with no connection made,
+   so there is no refused-versus-timed-out to read a port scan out of. A share
+   domain on this machine's public address is the ordinary case and passes.
+   (`TestTheCheckDialsOnlyPublicAddresses`.)
+6. *Provisioning.* (a) Two at once raced on the vhost and on each other's
+   rollback: there is one lock, and the second caller gets 409. (b) The vhost
+   was written in place while described as atomic: it is now a sibling file
+   renamed over. (c) The origin was saved before the follow-up check: it is
+   saved only when that check is `ready`, and the response's `shareOrigin`
+   says which happened. (d) Renewal swapped a working HTTPS vhost for the
+   HTTP-only challenge one for as long as certbot ran: a managed HTTPS vhost
+   that is enabled and already answers the challenge from the same webroot is
+   left in place. (`TestOnlyOneProvisionRunsAtATime`,
+   `TestTheVhostIsReplacedNotRewritten`, `TestProvisionShareOriginACME`,
+   `TestRenewalKeepsServingHTTPS`.)
+7. *The collision check trusted `r.Host`*, which is loopback when the command
+   line asks. On a panel with no domain configured, `vibepanel settings
+   share-origin https://<its own public name>` turned the whole panel into the
+   "link no longer works" page. The panel already records the origin every
+   sign-in session is bound to, so a name with an unexpired session on it is
+   now refused as the panel's own, and the command prints the way back
+   (`vibepanel settings share-origin clear`) whenever it sets one.
+   (`TestANameSomebodyIsSignedInAtCannotBecomeTheShareOrigin`,
+   `TestTheCLIOperatesTheRunningPanel`.)
+
+**The log.** The check connects out and a provision rewrites the web server's
+configuration and asks a CA for a certificate, so every call writes a row
+naming the host and the outcome: `sharing.origin_checked` (status, or why it
+was refused), `sharing.origin_provision_refused`,
+`sharing.origin_provision_failed`, and `sharing.origin_provisioned` with
+`saved` or `not saved`. The rows are written with a context that outlives the
+request, because a provision takes long enough for the tab to be closed.
+
+**One thing the existing test did not test.** The contributed isolation test
+asserted that no response on the share host contained the bundle's
+`<div id="root">`. The test server has no frontend, so the catch-all answers
+503 "frontend not built" on every host and that assertion held with the
+middleware deleted. The tests here write an `index.html` first and check the
+panel's own host serves it, so "no bundle" means something.
+
+**Deliberately left.**
+
+- *A `Host` that is neither the share name nor a known panel name is not
+  confined.* Confining it would be the stronger rule, and it cannot be shown
+  safe: the panel is reached at addresses no configuration lists (a LAN or
+  tailnet address, `localhost` through an SSH tunnel, a second name on a
+  proxy), and nothing distinguishes that owner from a stranger before they
+  have signed in — which is exactly when a wrong answer locks them out of the
+  setting that would fix it. The literal `Host` in the vhost (2) is what
+  closes that side for traffic that comes through the share domain's proxy. A
+  hand-written proxy that forwards `$host` is still open in that way, and the
+  snippet no longer suggests it.
+- *The port-80 probe is plain HTTP.* Whether a CA's HTTP-01 request could
+  arrive has no https form. It goes to the same checked public address,
+  carries a nonce, follows nothing and reads nothing back.
+- *The runtime lockout guard still fails open.* If the stored share name is
+  also a configured panel name, isolation is off rather than the panel locked
+  out. That is the contributed behaviour and the right way round.
+- *A provision whose check does not pass leaves the certificate and the vhost
+  in place.* Only the setting is withheld. Removing them would undo work the
+  next attempt needs.
+- *Under `--tls acme`, a domain that was provisioned but not saved is managed
+  by certmagic until the next restart* and not after it.
+
+**Not run.** nginx, certbot and a real ACME issuance were not run for this
+work, and neither was any browser check. `provisionNginxCertbot`,
+`detectNginxSSLListen` and the two vhost renderers are tested against a fake
+command runner and a temporary directory standing in for `/etc/nginx` and
+`/etc/letsencrypt`; that the generated configuration is accepted by a real
+nginx, that a literal `Host` behaves as described on a default server, and
+that certbot renews through the HTTPS vhost's port-80 block, are read from
+their documentation and not observed. The `acme` mode is tested against a
+stand-in for `ManageTLS`. The check's dial is replaced in tests; the guard in
+front of it is the real one.
