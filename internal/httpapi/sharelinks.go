@@ -371,7 +371,30 @@ func isShareHostPath(method, rawPath string) bool {
 			return true
 		}
 	}
+	if strings.HasPrefix(clean, "/.well-known/vibepanel-probe/") && len(clean) > len("/.well-known/vibepanel-probe/") {
+		return method == http.MethodGet || method == http.MethodHead
+	}
 	return false
+}
+
+// ShareOriginHostname returns the configured dedicated share origin's DNS
+// hostname when it uses https:// and is a valid public domain, or "" otherwise.
+// Used at startup under --tls acme so certmagic keeps the share domain's
+// certificate managed across restarts.
+func (s *Server) ShareOriginHostname(ctx context.Context) string {
+	origin, scheme, host := s.shareOrigin(ctx)
+	if origin == "" || scheme != "https" {
+		return ""
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return ""
+	}
+	hn := strings.ToLower(u.Hostname())
+	if !validPublicDomain(hn) || hn != host {
+		return ""
+	}
+	return hn
 }
 
 // visitorWritesAllowed is read on every visitor action, from the database, so

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   BookOpen,
+  Check,
+  Copy,
   Download,
   FileUp,
   FolderCog,
@@ -12,7 +14,9 @@ import {
   Plus,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
+  TriangleAlert,
   Upload,
 } from 'lucide-react'
 
@@ -21,6 +25,7 @@ import type {
   Project,
   Session,
   ShareLink,
+  ShareOriginCheck,
   SharePage,
   SharePageCatalogue,
   SharePageDetail,
@@ -29,6 +34,7 @@ import type {
   SharingSettings,
 } from '../../protocol/wire'
 import { t, useLang, type Key, type Lang } from '../../i18n'
+import { copyTextInGesture } from '../../clipboard'
 import { confirmThen } from '../ask'
 import { safeText } from '../text'
 import { Menu } from '../Menu'
@@ -477,12 +483,8 @@ function VisitorWritesLine({
 }
 
 /**
- * Optional dedicated origin for handed-out share links, in one line.
- *
- * Mirrors PagesRootLine: empty means links use the panel's own origin; set to
- * a separate `scheme://host[:port]` (proxied to the panel with Host preserved),
- * all generated/copied/rotated share URLs use that origin and requests arriving
- * on it reach only the share surface.
+ * Optional dedicated origin for handed-out share links, with live DNS/proxy/TLS
+ * verification and one-click HTTPS provisioning (ACME or nginx + certbot).
  */
 function ShareOriginLine({
   settings,
@@ -496,18 +498,86 @@ function ShareOriginLine({
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [provisioning, setProvisioning] = useState(false)
+  const [check, setCheck] = useState<ShareOriginCheck | null>(null)
+  const [doneMsg, setDoneMsg] = useState('')
+  const [copiedSnippet, setCopiedSnippet] = useState(false)
 
-  const save = async (shareOrigin: string) => {
+  const normalizeInput = (raw: string) => {
+    const s = raw.trim()
+    if (!s) return ''
+    return s.includes('://') ? s : `https://${s}`
+  }
+
+  const save = async (raw: string) => {
+    const shareOrigin = normalizeInput(raw)
     setBusy(true)
+    setDoneMsg('')
     try {
       onChanged(await api.setSharingSettings({ shareOrigin }))
       setEditing(false)
+      setCheck(null)
     } catch (e) {
       onError(e)
     } finally {
       setBusy(false)
     }
   }
+
+  const runCheck = async (raw: string) => {
+    const origin = normalizeInput(raw)
+    if (!origin) return
+    setValue(origin)
+    setChecking(true)
+    setDoneMsg('')
+    try {
+      const res = await api.checkShareOrigin(origin)
+      setCheck(res)
+    } catch (e) {
+      setCheck(null)
+      onError(e)
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const runProvision = async (raw: string) => {
+    const origin = normalizeInput(raw)
+    if (!origin) return
+    setValue(origin)
+    setProvisioning(true)
+    setDoneMsg('')
+    try {
+      const res = await api.provisionShareOrigin(origin)
+      setCheck(res.check)
+      onChanged({ ...settings, shareOrigin: res.shareOrigin })
+      setDoneMsg(t('sharing.originProvisioned'))
+    } catch (e) {
+      onError(e)
+    } finally {
+      setProvisioning(false)
+    }
+  }
+
+  const statusText = (c: ShareOriginCheck): string => {
+    switch (c.status) {
+      case 'ready':
+        return t('sharing.originReady')
+      case 'needs_dns':
+        return t('sharing.originNeedsDns')
+      case 'needs_https':
+        return t('sharing.originNeedsHttps')
+      case 'needs_proxy':
+        return t('sharing.originNeedsProxy')
+      case 'host_mismatch':
+        return t('sharing.originHostMismatch', { host: safeText(c.seenHost || '?') })
+      default:
+        return t('sharing.originUnreachable')
+    }
+  }
+
+  const anyBusy = busy || checking || provisioning
 
   return (
     <div data-testid="share-origin" className="min-w-0 text-vp-sm text-ink-3">
@@ -534,6 +604,8 @@ function ShareOriginLine({
             data-testid="share-origin-change"
             onClick={() => {
               setValue(settings.shareOrigin)
+              setCheck(null)
+              setDoneMsg('')
               setEditing(true)
             }}
             className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
@@ -543,23 +615,36 @@ function ShareOriginLine({
         )}
       </div>
       {editing && (
-        <div className="mt-2 flex flex-col gap-1.5">
+        <div className="mt-2 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <input
               data-testid="share-origin-input"
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setCheck(null)
+                setDoneMsg('')
+              }}
               onKeyDown={(e) => {
-                if (isEnter(e)) void save(value.trim())
+                if (isEnter(e)) void save(value)
               }}
               placeholder={t('sharing.originPlaceholder')}
-              className={`${INPUT} min-w-0 flex-1 font-mono @md:max-w-xl`}
+              className={`${INPUT} min-w-52 flex-1 font-mono @md:max-w-xl`}
             />
             <button
               type="button"
-              disabled={busy}
+              disabled={anyBusy || value.trim() === ''}
+              data-testid="share-origin-check"
+              onClick={() => void runCheck(value)}
+              className="vp-outline text-vp-sm"
+            >
+              {checking ? t('sharing.originChecking') : t('sharing.originCheck')}
+            </button>
+            <button
+              type="button"
+              disabled={anyBusy}
               data-testid="share-origin-save"
-              onClick={() => void save(value.trim())}
+              onClick={() => void save(value)}
               className="vp-primary text-vp-sm"
             >
               {t('sharing.originSave')}
@@ -567,7 +652,7 @@ function ShareOriginLine({
             {settings.shareOrigin !== '' && (
               <button
                 type="button"
-                disabled={busy}
+                disabled={anyBusy}
                 data-testid="share-origin-reset"
                 onClick={() => void save('')}
                 className="vp-outline text-vp-sm"
@@ -577,13 +662,116 @@ function ShareOriginLine({
             )}
             <button
               type="button"
-              onClick={() => setEditing(false)}
+              disabled={anyBusy}
+              onClick={() => {
+                setEditing(false)
+                setCheck(null)
+                setDoneMsg('')
+              }}
               className="vp-outline text-vp-sm"
             >
               {t('share.cancel')}
             </button>
           </div>
           <p className="text-vp-xs text-ink-3">{t('sharing.originWhy')}</p>
+
+          {doneMsg && (
+            <p className="flex items-center gap-1.5 text-vp-xs font-medium" style={{ color: 'var(--vp-state-done)' }} data-testid="share-origin-provisioned">
+              <Check size={12} className="shrink-0" />
+              {doneMsg}
+            </p>
+          )}
+
+          {check && (
+            <div
+              data-testid="share-origin-report"
+              data-status={check.status}
+              className="flex flex-col gap-2 rounded-vp border border-hairline bg-surface-2 px-3 py-2.5 text-vp-xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span
+                  className="flex items-center gap-1.5 font-medium"
+                  style={{ color: check.ready ? 'var(--vp-state-done)' : 'var(--vp-state-waiting)' }}
+                >
+                  {check.ready ? <Check size={13} className="shrink-0" /> : <TriangleAlert size={13} className="shrink-0" />}
+                  {statusText(check)}
+                </span>
+                {!check.ready && check.provision.canProvision && (
+                  <button
+                    type="button"
+                    disabled={anyBusy || !check.dnsOk}
+                    data-testid="share-origin-provision"
+                    onClick={() => void runProvision(check.origin)}
+                    className="vp-primary text-vp-xs"
+                  >
+                    <Sparkles size={12} />
+                    {provisioning ? t('sharing.originProvisioning') : t('sharing.originProvision')}
+                  </button>
+                )}
+              </div>
+
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-ink-2">
+                <dt className="font-medium text-ink-3">{t('sharing.originDnsLabel')}</dt>
+                <dd className="min-w-0 break-all">
+                  {check.dnsOk
+                    ? t('sharing.originDnsOk', { ips: check.dnsIps.join(', ') })
+                    : safeText(check.dnsError || t('sharing.originNeedsDns'))}
+                  {!check.dnsMatchesHost && check.hostIps.length > 0 && (
+                    <span className="ml-1.5 text-ink-3">
+                      ({t('sharing.originDnsPointTo', { ips: check.hostIps.join(', ') })})
+                    </span>
+                  )}
+                </dd>
+
+                {check.dnsOk && (
+                  <>
+                    <dt className="font-medium text-ink-3">{t('sharing.originProxyLabel')}</dt>
+                    <dd className="min-w-0 break-all">
+                      {check.reachable && check.hostForwarded
+                        ? t('sharing.originProxyOk')
+                        : safeText(check.reachError || t('sharing.originNeedsProxy'))}
+                    </dd>
+                  </>
+                )}
+
+                {check.dnsOk && check.tlsRequired && (
+                  <>
+                    <dt className="font-medium text-ink-3">{t('sharing.originTlsLabel')}</dt>
+                    <dd className="min-w-0 break-all">
+                      {check.tlsOk
+                        ? t('sharing.originTlsOk', {
+                            date: new Date(check.tlsNotAfter * 1000).toISOString().slice(0, 10),
+                          })
+                        : safeText(check.tlsError || t('sharing.originNeedsHttps'))}
+                    </dd>
+                  </>
+                )}
+              </dl>
+
+              {!check.ready && !check.provision.canProvision && check.provision.snippet && (
+                <div className="mt-1 flex flex-col gap-1.5 border-t border-hairline pt-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-ink-3">
+                    <span>
+                      {t('sharing.originManualHint')}
+                      {check.provision.reason ? ` (${safeText(check.provision.reason)})` : ''}
+                    </span>
+                    <button
+                      type="button"
+                      data-testid="share-origin-copy-snippet"
+                      onClick={() => copyTextInGesture(check.provision.snippet, setCopiedSnippet)}
+                      className="vp-outline text-vp-xs"
+                    >
+                      <Copy size={11} />
+                      {copiedSnippet ? t('sharing.originCopiedSnippet') : t('sharing.originCopySnippet')}
+                    </button>
+                  </div>
+                  <pre className="max-h-40 overflow-auto rounded-vp border border-hairline bg-surface p-2 font-mono text-vp-xs leading-relaxed text-ink-2">
+                    {check.provision.snippet}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

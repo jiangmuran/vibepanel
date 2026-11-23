@@ -379,6 +379,21 @@ that origin, and `shareHostOnly` restricts requests arriving on that host to
 path (including `/`, `/api/health`, `/api/auth/*`, `/ws`, previews and admin
 pages) answers `404`.
 
+To avoid guesswork when wiring a new subdomain, **Settings → Sharing** (and
+`vibepanel settings share-origin check|setup <origin>`) provides:
+
+- **Live reachability check** (`POST /api/settings/sharing/check`): resolves DNS
+  against the panel's host IPs and performs a self-probe against an ephemeral
+  128-bit nonce (`GET /.well-known/vibepanel-probe/{nonce}`) to confirm that the
+  domain actually hits this panel over valid HTTPS with `Host` preserved.
+- **One-click HTTPS** (`POST /api/settings/sharing/provision`): under
+  `--tls acme`, adds the share domain live to `certmagic` SNI management; under
+  `--tls off` behind nginx with certbot, detects the active SSL listen target
+  (including `stream` SNI multiplexers on port 443), writes an isolated
+  `# Managed by vibepanel` vhost with atomic rollback on error, obtains a Let's
+  Encrypt certificate via HTTP-01 webroot, reloads nginx, and saves the origin.
+  Hosts without automated provisioning receive a ready-to-paste nginx snippet.
+
 ## 10. Decisions taken
 
 1. Red line 8 is a list of `GET`s pinned by a test, not "exactly one".

@@ -1716,6 +1716,8 @@ func (s *Server) registerShareAdminRoutes(r chi.Router) {
 	r.Post("/settings/shares/{shareID}/rotate", s.handleRotateShare)
 	r.Get("/settings/sharing", s.handleGetSharing)
 	r.Put("/settings/sharing", s.handlePutSharing)
+	r.Post("/settings/sharing/check", s.handleCheckShareOrigin)
+	r.Post("/settings/sharing/provision", s.handleProvisionShareOrigin)
 	r.Patch("/settings/shares/{shareID}", s.handleUpdateShare)
 	r.Delete("/settings/shares/{shareID}", s.handleDeleteShare)
 }

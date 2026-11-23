@@ -920,16 +920,18 @@ func cmdAudit(args []string) error {
 
 const settingsUsage = `usage: vibepanel settings <archive-idle|timezone|share-origin> <value>
 
-  archive-idle <days>          archive a project idle for that many days; 0 never
-  timezone <zone>              the panel's time zone, e.g. Asia/Shanghai
-  share-origin <origin|clear>  dedicated origin for share links, e.g. https://share.example.com`
+  archive-idle <days>                archive a project idle for that many days; 0 never
+  timezone <zone>                    the panel's time zone, e.g. Asia/Shanghai
+  share-origin <origin|clear>        dedicated origin for share links, e.g. https://share.example.com
+  share-origin check <origin>        test DNS, reverse proxy and HTTPS for a candidate share domain
+  share-origin setup <origin>        configure HTTPS + proxy (ACME or nginx+certbot) and save it`
 
 func cmdSettings(args []string) error {
 	if wantsHelp(args) {
 		fmt.Println(settingsUsage)
 		return nil
 	}
-	if len(args) != 2 {
+	if len(args) < 2 || len(args) > 3 {
 		return errors.New(settingsUsage)
 	}
 	ctx := context.Background()
@@ -939,6 +941,9 @@ func cmdSettings(args []string) error {
 	}
 	switch args[0] {
 	case "archive-idle":
+		if len(args) != 2 {
+			return errors.New(settingsUsage)
+		}
 		days, err := strconv.Atoi(args[1])
 		if err != nil || days < 0 {
 			return errors.New("archive-idle takes a number of days")
@@ -949,12 +954,90 @@ func cmdSettings(args []string) error {
 		fmt.Printf("projects idle for %d day(s) are archived\n", days)
 		return nil
 	case "timezone":
+		if len(args) != 2 {
+			return errors.New(settingsUsage)
+		}
 		if err := c.do(ctx, http.MethodPut, "/api/settings/timezone", map[string]any{"zone": args[1]}, nil); err != nil {
 			return err
 		}
 		fmt.Printf("time zone: %s\n", args[1])
 		return nil
 	case "share-origin":
+		if len(args) == 3 && args[1] == "check" {
+			var res struct {
+				Origin         string   `json:"origin"`
+				Hostname       string   `json:"hostname"`
+				Ready          bool     `json:"ready"`
+				Status         string   `json:"status"`
+				DNSOK          bool     `json:"dnsOk"`
+				DNSIPs         []string `json:"dnsIps"`
+				HostIPs        []string `json:"hostIps"`
+				DNSMatchesHost bool     `json:"dnsMatchesHost"`
+				DNSError       string   `json:"dnsError"`
+				Reachable      bool     `json:"reachable"`
+				HostForwarded  bool     `json:"hostForwarded"`
+				SeenHost       string   `json:"seenHost"`
+				ReachError     string   `json:"reachError"`
+				TLSRequired    bool     `json:"tlsRequired"`
+				TLSOK          bool     `json:"tlsOk"`
+				TLSIssuer      string   `json:"tlsIssuer"`
+				TLSNotAfter    int64    `json:"tlsNotAfter"`
+				TLSError       string   `json:"tlsError"`
+				Provision      struct {
+					Mode         string `json:"mode"`
+					CanProvision bool   `json:"canProvision"`
+					Reason       string `json:"reason"`
+				} `json:"provision"`
+			}
+			if err := c.do(ctx, http.MethodPost, "/api/settings/sharing/check", map[string]any{"origin": args[2]}, &res); err != nil {
+				return err
+			}
+			fmt.Printf("origin:    %s\n", res.Origin)
+			fmt.Printf("status:    %s (ready=%v)\n", res.Status, res.Ready)
+			if res.DNSOK {
+				fmt.Printf("dns:       ok (%s; host=%s; match=%v)\n", strings.Join(res.DNSIPs, ","), strings.Join(res.HostIPs, ","), res.DNSMatchesHost)
+			} else {
+				fmt.Printf("dns:       missing (%s; point A record to %s)\n", res.DNSError, strings.Join(res.HostIPs, ","))
+			}
+			if res.TLSRequired {
+				if res.TLSOK {
+					fmt.Printf("https:     ok (issuer=%s, expires=%s)\n", res.TLSIssuer, time.Unix(res.TLSNotAfter, 0).Format("2006-01-02"))
+				} else if res.TLSError != "" {
+					fmt.Printf("https:     failed (%s)\n", res.TLSError)
+				} else {
+					fmt.Println("https:     not ready")
+				}
+			}
+			if res.Reachable {
+				fmt.Printf("proxy:     reached this panel (Host=%s, forwarded=%v)\n", res.SeenHost, res.HostForwarded)
+			} else if res.ReachError != "" {
+				fmt.Printf("proxy:     %s\n", res.ReachError)
+			}
+			if res.Provision.CanProvision {
+				fmt.Printf("auto-tls:  available (%s)\n", res.Provision.Mode)
+			} else {
+				fmt.Printf("auto-tls:  manual (%s)\n", res.Provision.Reason)
+			}
+			return nil
+		}
+		if len(args) == 3 && args[1] == "setup" {
+			var res struct {
+				Origin string `json:"origin"`
+				Mode   string `json:"mode"`
+				Check  struct {
+					Ready  bool   `json:"ready"`
+					Status string `json:"status"`
+				} `json:"check"`
+			}
+			if err := c.do(ctx, http.MethodPost, "/api/settings/sharing/provision", map[string]any{"origin": args[2]}, &res); err != nil {
+				return err
+			}
+			fmt.Printf("provisioned %s via %s (status=%s, ready=%v)\n", res.Origin, res.Mode, res.Check.Status, res.Check.Ready)
+			return nil
+		}
+		if len(args) != 2 {
+			return errors.New(settingsUsage)
+		}
 		val := strings.TrimSpace(args[1])
 		if val == "clear" {
 			val = ""

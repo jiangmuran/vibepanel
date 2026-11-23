@@ -1314,6 +1314,47 @@ export interface SharingSettings {
   shareOrigin: string
 }
 
+/** Whether automatic HTTPS provisioning is available for a candidate share origin. */
+export interface ShareOriginProvisionInfo {
+  mode: string
+  canProvision: boolean
+  reason: string
+  nginxListen: string
+  snippet: string
+}
+
+/** Live DNS, reverse-proxy and HTTPS diagnostic report for a candidate share origin. */
+export interface ShareOriginCheck {
+  origin: string
+  hostname: string
+  ready: boolean
+  status: string
+  dnsOk: boolean
+  dnsIps: string[]
+  hostIps: string[]
+  dnsMatchesHost: boolean
+  dnsError: string
+  reachable: boolean
+  hostForwarded: boolean
+  seenHost: string
+  reachError: string
+  tlsRequired: boolean
+  tlsOk: boolean
+  tlsIssuer: string
+  tlsNotAfter: number
+  tlsError: string
+  httpPortOpen: boolean
+  provision: ShareOriginProvisionInfo
+}
+
+/** Result of one-click HTTPS provisioning for a dedicated share origin. */
+export interface ShareOriginProvisionResult {
+  origin: string
+  mode: string
+  shareOrigin: string
+  check: ShareOriginCheck
+}
+
 export interface SharePageParam {
   key: string
   type: 'text' | 'color' | 'number' | 'enum' | 'bool'

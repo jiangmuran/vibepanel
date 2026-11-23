@@ -28224,3 +28224,15 @@ editable from **Settings → Sharing** and `vibepanel settings share-origin`):
   `VIBEPANEL_ADDR` or `VIBEPANEL_PUBLIC_ORIGINS`; at runtime `isShareHost` also
   yields false if a stored share host later collides with a configured panel
   host.
+- **Live reachability check & one-click HTTPS (`check` / `provision`)**:
+  `POST /api/settings/sharing/check` resolves DNS against the panel's host IPs
+  and sends an ephemeral 128-bit self-probe (`GET /.well-known/vibepanel-probe/{nonce}`,
+  allowed on `shareHostOnly` outside `/share/*` so red line 8 stays untouched)
+  to distinguish `needs_dns`, `needs_https`, `needs_proxy`, `host_mismatch`,
+  `unreachable` and `ready` with real evidence. `POST /api/settings/sharing/provision`
+  adds the domain live to `tlsmgr.ACMESource` (`certmagic` SNI) under
+  `--tls acme`, or writes an isolated `# Managed by vibepanel` nginx vhost +
+  `certbot --webroot` certificate under `--tls off` (auto-detecting `stream`
+  SNI multiplexers on port 443 such as `127.0.0.1:14443`, refusing unmanaged
+  `server_name` conflicts, and rolling back atomically on any failure). Both
+  modes refuse before contacting Let's Encrypt when DNS does not resolve yet.

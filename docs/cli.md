@@ -81,7 +81,7 @@ scripts.
 | `audit [-n 50]` | the activity log, oldest first |
 | `settings archive-idle <days>` | archive a project idle that long; 0 never |
 | `settings timezone <zone>` | |
-| `settings share-origin <origin\|clear>` | dedicated `scheme://host[:port]` origin for share links, or `clear` for the panel's own address |
+| `settings share-origin <origin\|clear\|check <origin>\|setup <origin>>` | dedicated `scheme://host[:port]` origin for share links, `clear` for the panel's address, `check` live DNS/TLS reachability, or `setup` for one-click HTTPS |
 | `page …`, `plugin …`, `account …`, `service …`, `hook …`, `tune …`, `doctor` | as before: share pages, plugins, the first account, the service, the agent hooks, another tool's settings, a health check |
 
 ## From inside a session

@@ -371,6 +371,10 @@ type Server struct {
 	// a log line on a machine nobody reads is not where this should first be
 	// noticed.
 	CertExpiry func() time.Time
+	// ManageTLS, if set (under --tls acme), obtains and begins maintaining a
+	// certificate for an additional domain (such as a dedicated share origin)
+	// on the live SNI listener without restarting.
+	ManageTLS func(ctx context.Context, domain string) error
 }
 
 // Routes builds the router.
@@ -616,6 +620,12 @@ func (s *Server) Routes() http.Handler {
 	s.registerPluginFrameRoutes(r)
 	// A rung-4 module's files, under the session and the panel-wide switch.
 	s.registerPluginCodeRoute(r)
+
+	// Ephemeral reachability probe for verifying a candidate dedicated share
+	// origin before or after provisioning HTTPS. Answers 200 only for an active
+	// 128-bit nonce minted during POST /api/settings/sharing/check; 404 for
+	// everything else. Outside /share/ and /api/share/ so red line 8 stays exact.
+	r.Get("/.well-known/vibepanel-probe/{nonce}", s.handleShareProbe)
 
 	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
 	return r
