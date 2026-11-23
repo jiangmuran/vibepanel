@@ -182,6 +182,29 @@ try {
     }
     await page.screenshot({ path: join(SHOTS, 'tour-2.png') })
 
+    // Step 3 is Claude Code settings (tune), step 4 is the optional agent share
+    // plugin step: verify all four harnesses appear and enabling one writes its
+    // bundle inside FAKE_HOME.
+    await page.locator('[data-testid="tour-next"]').click()
+    await sleep(400)
+    await page.locator('[data-testid="tour-next"]').click()
+    await sleep(600)
+    if ((await page.locator('[data-tour-shareskill]').count()) !== 4) {
+      note('FAIL', 'tour', 'the share plugin step does not offer all four agents')
+    }
+    const skillBtn = page.locator('[data-testid="tour-shareskill-claude"]')
+    if (await skillBtn.count()) {
+      await skillBtn.click()
+      await sleep(1200)
+    }
+    const skillSt = await page.evaluate(() => fetch('/api/settings/share-skill').then((r) => r.json()))
+    const claudeSkill = skillSt.agents?.find((a) => a.id === 'claude')
+    if (!claudeSkill?.installed) {
+      note('FAIL', 'tour',
+        `the share plugin step left Claude Code uninstalled (${JSON.stringify(claudeSkill)})`)
+    }
+    await page.screenshot({ path: join(SHOTS, 'tour-4-shareskill.png') })
+
     // And it goes away for good.
     await page.locator('[data-testid="tour-skip"]').click()
     await sleep(600)

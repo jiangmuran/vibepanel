@@ -1,0 +1,9 @@
+{
+  "name": "vibepanel-share",
+  "version": "1.0.0",
+  "description": "Create, validate, publish, and share vibepanel share pages from any project.",
+  "license": "MIT",
+  "author": {
+    "name": "vibepanel"
+  }
+}

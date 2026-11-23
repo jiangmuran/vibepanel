@@ -31,6 +31,8 @@ import type {
   SharePageDetail,
   SharePageRow,
   SharePagesRoot,
+  ShareSkillAgentId,
+  ShareSkillStatus,
   SharingSettings,
 } from '../../protocol/wire'
 import { t, useLang, type Key, type Lang } from '../../i18n'
@@ -103,6 +105,7 @@ export function Sharing({
   const [sessions, setSessions] = useState<Session[]>([])
   const [creating, setCreating] = useState(false)
   const [sharing, setSharing] = useState<SharingSettings | null>(null)
+  const [shareSkill, setShareSkill] = useState<ShareSkillStatus | null>(null)
   const [error, setError] = useState('')
 
   const fail = useCallback((e: unknown) => setError(e instanceof Error ? e.message : String(e)), [])
@@ -137,6 +140,12 @@ export function Sharing({
     api.sharingSettings().then(
       (v) => {
         if (!cancelled) setSharing(v)
+      },
+      () => {},
+    )
+    api.shareSkillStatus().then(
+      (v) => {
+        if (!cancelled) setShareSkill(v)
       },
       () => {},
     )
@@ -239,7 +248,7 @@ export function Sharing({
         </span>
       </header>
 
-      {(catalogue?.pagesRootInfo || sharing) && (
+      {(catalogue?.pagesRootInfo || sharing || shareSkill) && (
         <div className="mb-4 divide-y divide-hairline rounded-vp border border-hairline bg-surface px-3">
           {(catalogue?.pagesRootInfo || sharing) && (
             <div className="flex flex-col gap-2 py-2 @2xl:flex-row @2xl:items-center @2xl:gap-4">
@@ -257,6 +266,11 @@ export function Sharing({
           {sharing && (
             <div className="py-2">
               <ShareOriginLine settings={sharing} onChanged={setSharing} onError={fail} />
+            </div>
+          )}
+          {shareSkill && (
+            <div className="py-2">
+              <ShareSkillLine status={shareSkill} onChanged={setShareSkill} onError={fail} />
             </div>
           )}
         </div>
@@ -314,6 +328,114 @@ export function Sharing({
               onError={fail}
             />
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * One-line summary and inline toggles for the optional vibepanel-share
+ * agent plugin/skill across Claude Code, Codex, Antigravity, and DeepSeek Harness.
+ */
+function ShareSkillLine({
+  status,
+  onChanged,
+  onError,
+}: {
+  status: ShareSkillStatus
+  onChanged: (next: ShareSkillStatus) => void
+  onError: (e: unknown) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState<ShareSkillAgentId | ''>('')
+  const enabledCount = status.agents.filter((a) => a.installed).length
+
+  const toggle = async (id: ShareSkillAgentId, installed: boolean) => {
+    setBusy(id)
+    try {
+      const next = installed ? await api.removeShareSkill(id) : await api.installShareSkill(id)
+      onChanged(next)
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <div data-testid="sharing-share-skill" className="text-vp-sm text-ink-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Sparkles size={12} className="shrink-0" />
+        <span>{t('shareSkill.title')}</span>
+        <span className="text-ink-2" data-testid="sharing-share-skill-summary">
+          {enabledCount > 0
+            ? t('shareSkill.summaryOn', { n: enabledCount, total: status.agents.length })
+            : t('shareSkill.summaryOff')}
+        </span>
+        <button
+          type="button"
+          data-testid="sharing-share-skill-toggle"
+          onClick={() => setOpen((v) => !v)}
+          className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+        >
+          {open ? t('shareSkill.hide') : t('shareSkill.manage')}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-2 flex flex-col gap-2">
+          <p className="text-vp-xs text-ink-3">{t('shareSkill.why')}</p>
+          <div className="overflow-hidden rounded-vp border border-hairline bg-bg/40">
+            {status.agents.map((a) => (
+              <div
+                key={a.id}
+                data-testid={`sharing-share-skill-${a.id}`}
+                className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-3 py-2 last:border-b-0"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-vp-sm font-medium text-ink">{a.name}</span>
+                    <span
+                      className={`rounded-md px-1.5 py-0.5 text-vp-xs ${
+                        a.installed ? 'bg-surface-2 text-done-ink' : 'bg-surface-2 text-ink-2'
+                      }`}
+                    >
+                      {a.installed
+                        ? a.kind === 'plugin'
+                          ? t('shareSkill.enabledPlugin')
+                          : t('shareSkill.enabledSkill')
+                        : a.stale
+                          ? t('shareSkill.stale')
+                          : t('set.notInstalled')}
+                    </span>
+                    {a.detected && (
+                      <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-vp-xs text-ink-3">
+                        {t('shareSkill.detected')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 truncate font-mono text-vp-xs text-ink-3" title={a.path}>
+                    {a.path}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy !== ''}
+                  data-testid={`sharing-share-skill-${a.id}-btn`}
+                  onClick={() => void toggle(a.id, a.installed)}
+                  className={a.installed ? 'vp-outline text-vp-xs' : 'vp-primary text-vp-xs'}
+                >
+                  {busy === a.id
+                    ? t('set.working')
+                    : a.installed
+                      ? t('set.remove')
+                      : a.stale
+                        ? t('shareSkill.update')
+                        : t('set.install')}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

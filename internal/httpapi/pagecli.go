@@ -6,8 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"time"
 
+	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/pages"
+	"github.com/jiangmuran/vibepanel/internal/secret"
+	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -161,4 +170,184 @@ func RunPageServer(ctx context.Context, db *store.DB, page store.SharePage, what
 		return finish(s.runAction(ctx, page, ns, m, name, action, input, "cli", who, visitor, 0))
 	}
 	return out, fmt.Errorf("run transform, schedule or action, not %q", what)
+}
+
+// ShareLinkOptions configures `vibepanel page link` and `page publish --link`.
+type ShareLinkOptions struct {
+	Name        string
+	Detail      store.ShareDetail
+	ExpiresIn   int64
+	Interactive bool
+	ForceNew    bool
+}
+
+// ShareLinkResult is the resolved or newly minted handed-out share link.
+type ShareLinkResult struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	PageID    string `json:"pageId"`
+	URL       string `json:"url"`
+	Detail    string `json:"detail"`
+	ExpiresAt int64  `json:"expiresAt"`
+	Created   bool   `json:"created"`
+	Reused    bool   `json:"reused"`
+}
+
+// EnsurePageShareLink returns a clickable handed-out share link for a published
+// page. Unless opts.ForceNew is true, it reuses the newest active copyable link
+// on that page with matching detail and interactivity so repeated publishes keep
+// the same URL.
+func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
+	page store.SharePage, opts ShareLinkOptions) (ShareLinkResult, error) {
+	if page.PublishedVersion == 0 {
+		return ShareLinkResult{}, errors.New("this page has not been published yet; run `vibepanel page publish` first")
+	}
+	detail := opts.Detail
+	if detail == "" {
+		detail = store.ShareCounts
+	}
+	if !store.ValidShareDetail(detail) {
+		return ShareLinkResult{}, errors.New("detail must be counts or names")
+	}
+	if opts.ExpiresIn < 0 || opts.ExpiresIn > maxShareSeconds {
+		return ShareLinkResult{}, errors.New("expiresIn must be between 0 and a year, in seconds")
+	}
+
+	box, err := secret.Open(filepath.Join(cfg.DataDir, secret.KeyFile))
+	if err != nil {
+		return ShareLinkResult{}, fmt.Errorf("open secrets key: %w", err)
+	}
+	base := cliShareBaseOrigin(ctx, db, cfg)
+
+	if !opts.ForceNew {
+		links, lerr := db.ListShareLinks(ctx)
+		if lerr != nil {
+			return ShareLinkResult{}, lerr
+		}
+		now := time.Now().Unix()
+		for _, l := range links {
+			if l.PageID != page.ID || l.Purpose != "" || !l.Copyable {
+				continue
+			}
+			if l.ExpiresAt > 0 && l.ExpiresAt <= now {
+				continue
+			}
+			if store.ShareDetail(l.Detail) != detail || l.Interactive != opts.Interactive {
+				continue
+			}
+			enc, eerr := db.ShareLinkTokenEnc(ctx, l.ID)
+			if eerr != nil || len(enc) == 0 {
+				continue
+			}
+			tok, uerr := box.Unseal(enc, shareTokenContext(l.ID))
+			if uerr != nil || len(tok) == 0 {
+				continue
+			}
+			return ShareLinkResult{
+				ID:        l.ID,
+				Name:      l.Name,
+				PageID:    l.PageID,
+				URL:       base + "/share/" + string(tok) + "/",
+				Detail:    l.Detail,
+				ExpiresAt: l.ExpiresAt,
+				Reused:    true,
+			}, nil
+		}
+	}
+
+	v, err := db.SharePageVersionByNumber(ctx, page.ID, page.PublishedVersion)
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+	params, err := pages.ValidateParamValues(pages.DecodeStored(v.Manifest).Params, nil)
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+	owner, err := db.SharePageOwner(ctx, page.ID)
+	if err != nil {
+		owner, err = db.FirstUserID(ctx)
+		if err != nil {
+			return ShareLinkResult{}, errors.New("the panel has no account yet; finish setup first")
+		}
+	}
+	name := session.TruncateTitle(strings.TrimSpace(opts.Name))
+	if name == "" {
+		name = session.TruncateTitle(strings.TrimSpace(page.Name))
+	}
+	if name == "" {
+		name = "screen"
+	}
+	token, err := auth.NewToken()
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+	prefix := token
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	var expiresAt int64
+	if opts.ExpiresIn > 0 {
+		expiresAt = time.Now().Add(time.Duration(opts.ExpiresIn) * time.Second).Unix()
+	}
+	linkID := id.New()
+	rec, err := db.CreateShareLink(ctx, store.NewShareLink{
+		ID:          linkID,
+		TokenHash:   auth.HashToken(token),
+		TokenEnc:    box.Seal([]byte(token), shareTokenContext(linkID)),
+		Prefix:      prefix,
+		Name:        name,
+		Detail:      detail,
+		Scope:       store.ShareWhole,
+		UserID:      owner,
+		ExpiresAt:   expiresAt,
+		PageID:      page.ID,
+		Params:      params,
+		Interactive: opts.Interactive,
+	})
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+	_ = db.Audit(ctx, store.AuditEntry{
+		Event:    "share.created",
+		Username: "cli",
+		Detail:   name + " (" + string(detail) + ", page " + page.ID + ")",
+	})
+	return ShareLinkResult{
+		ID:        rec.ID,
+		Name:      rec.Name,
+		PageID:    rec.PageID,
+		URL:       base + "/share/" + token + "/",
+		Detail:    rec.Detail,
+		ExpiresAt: rec.ExpiresAt,
+		Created:   true,
+	}, nil
+}
+
+// cliShareBaseOrigin resolves the public origin a CLI-generated share URL
+// should use: the configured dedicated share origin first, then the panel's
+// public HTTPS/HTTP origin, and finally its loopback address.
+func cliShareBaseOrigin(ctx context.Context, db *store.DB, cfg config.Config) string {
+	if raw, err := db.GetSetting(ctx, shareOriginKey, ""); err == nil {
+		if origin, _, _, perr := parseShareOrigin(raw); perr == nil && origin != "" {
+			return origin
+		}
+	}
+	if cfg.Domain != "" {
+		for _, raw := range cfg.PublicOrigins {
+			u, err := url.Parse(strings.TrimRight(strings.TrimSpace(raw), "/"))
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				continue
+			}
+			if strings.EqualFold(u.Hostname(), cfg.Domain) {
+				return strings.ToLower(u.Scheme) + "://" + u.Host
+			}
+		}
+		// Behind an HTTPS reverse proxy (`--tls off --public-port 443`),
+		// PublicURL() formats http://<domain>:443. Prefer https://<domain>.
+		if cfg.TLSMode == config.TLSOff && cfg.PublicPort == 443 {
+			return "https://" + cfg.Domain
+		}
+		return cfg.PublicURL()
+	}
+	return cfg.LoopbackURL()
 }

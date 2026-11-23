@@ -28575,3 +28575,46 @@ that certbot renews through the HTTPS vhost's port-80 block, are read from
 their documentation and not observed. The `acme` mode is tested against a
 stand-in for `ManageTLS`. The check's dial is replaced in tests; the guard in
 front of it is the real one.
+
+---
+
+## Optional agent share plugin (`vibepanel-share`) and CLI share links
+
+People using vibepanel with several coding agents (Claude Code, Codex,
+Antigravity CLI, and DeepSeek Harness) often ask an agent inside another
+project to spin up a preview or discussion page and hand back a clickable link.
+Without native skill/plugin integration, the agent has to explore the CLI and
+sandbox limits from scratch, and `vibepanel page publish` stopped short of
+printing a share URL.
+
+**Four native bundles, one source of truth (`internal/shareskill`).** Each
+harness discovers its own dedicated `vibepanel-share` directory with zero edits
+to user config files:
+
+- **Claude Code:** `~/.claude/skills/vibepanel-share/` (`SKILL.md` +
+  `.claude-plugin/plugin.json`, validated by `claude plugin validate`).
+- **Codex:** `$CODEX_HOME/skills/vibepanel-share/SKILL.md` (default
+  `~/.codex/skills/`).
+- **Antigravity (`agy`):** `~/.gemini/config/plugins/vibepanel-share/`
+  (`plugin.json` + `assets/logo.svg` + `skills/vibepanel-share/SKILL.md`,
+  validated by `agy plugin validate --strict`, unaffected by `skills.json`
+  `include_only` whitelists).
+- **DeepSeek Harness (`dsh`):** `$DSH_HOME/skills/vibepanel-share/SKILL.md`
+  (default `~/.dsh/skills/`, using canonical kebab-case frontmatter keys so
+  `@deepseek-ai/dsh-skill-filesystem` hot-reloads it cleanly).
+
+Install checks byte equality across every file in the bundle so stale copies
+from an older build surface as updatable; uninstall removes only the
+`vibepanel-share` leaf directory after checking its basename and parent.
+
+**CLI links (`vibepanel page link` and `page publish --link`).** Publishing
+from an agent can now reuse an existing active copyable link on the page (or
+mint a `counts` link sealed with `secrets.key`) and return the URL on the
+configured `sharing.origin` (or panel origin) in one command, audited as
+`share.created` under `cli`.
+
+**Opt-in everywhere.** Controlled via `GET`/`POST`/`DELETE
+/api/settings/share-skill`, exposed in **Settings → Sessions**, inline in
+**/sharing**, as an optional step in the first-run **Tour**, and as an opt-in
+prompt (`--share-skill` / `--no-share-skill`) in `deploy/install.sh`.
+

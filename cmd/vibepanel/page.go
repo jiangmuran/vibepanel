@@ -22,6 +22,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/httpapi"
 	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/pages"
+	"github.com/jiangmuran/vibepanel/internal/shareskill"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -40,7 +41,9 @@ const pageUsage = `usage: vibepanel page <command> [flags] [dir]
             dir into the pages directory (Settings → Sharing), as page-<name>
   check     report what is wrong with the page in dir (the current directory by default)
   shot      screenshot the draft through a preview link, and report what broke
-  publish   store the draft as the next published version
+  publish   store the draft as the next published version (--link prints a share URL)
+  link      get or create a clickable share link for a published page
+  skill     check, install or remove the vibepanel-share plugin/skill for agents
   checkout  write a published version back out into a directory
   list      list pages
   export    write a page as a zip: --page <id> [--version N] [-o file.zip]
@@ -65,6 +68,10 @@ func cmdPage(args []string) error {
 		return pageShot(rest)
 	case "publish":
 		return pagePublish(rest)
+	case "link":
+		return pageLink(rest)
+	case "skill":
+		return pageSkill(rest)
 	case "checkout":
 		return pageCheckout(rest)
 	case "list", "ls":
@@ -534,6 +541,12 @@ func splitList(s string) []string {
 func pagePublish(args []string) error {
 	fs := flag.NewFlagSet("page publish", flag.ContinueOnError)
 	note := fs.String("note", "", "what changed, for the history")
+	withLink := fs.Bool("link", false, "also print a clickable share URL (reusing an existing link or creating one)")
+	forceNew := fs.Bool("new", false, "with --link, always mint a new share link instead of reusing one")
+	detail := fs.String("detail", string(store.ShareCounts), "with --link, disclosure level: counts or names")
+	expires := fs.String("expires", "", "with --link, expiry duration such as 24h or 7d (empty never expires)")
+	interactive := fs.Bool("interactive", false, "with --link, allow declared visitor actions")
+	asJSON := fs.Bool("json", false, "print the result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -541,8 +554,12 @@ func pagePublish(args []string) error {
 	if err != nil {
 		return err
 	}
+	expiresIn, err := parseLinkExpires(*expires)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
-	_, db, err := openDB(ctx)
+	cfg, db, err := openDB(ctx)
 	if err != nil {
 		return err
 	}
@@ -555,12 +572,267 @@ func pagePublish(args []string) error {
 	if err != nil {
 		return err
 	}
+	page.PublishedVersion = version
 	if aerr := db.Audit(ctx, store.AuditEntry{Event: "page.published", Username: "cli",
 		Detail: page.Name + " v" + fmt.Sprint(version)}); aerr != nil {
 		fmt.Fprintln(os.Stderr, "warning: not recorded in the audit log:", aerr)
 	}
+	var link *httpapi.ShareLinkResult
+	if *withLink {
+		res, lerr := httpapi.EnsurePageShareLink(ctx, db, cfg, page, httpapi.ShareLinkOptions{
+			Detail:      store.ShareDetail(strings.TrimSpace(*detail)),
+			ExpiresIn:   expiresIn,
+			Interactive: *interactive,
+			ForceNew:    *forceNew,
+		})
+		if lerr != nil {
+			return lerr
+		}
+		link = &res
+	}
+	if *asJSON {
+		payload := map[string]any{
+			"id":      page.ID,
+			"name":    page.Name,
+			"version": version,
+		}
+		if link != nil {
+			payload["link"] = link
+			payload["url"] = link.URL
+		}
+		out, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Println(string(out))
+		return nil
+	}
 	fmt.Printf("published %s v%d\n", page.Name, version)
+	if link != nil {
+		fmt.Println(link.URL)
+	}
 	return nil
+}
+
+func pageLink(args []string) error {
+	fs := flag.NewFlagSet("page link", flag.ContinueOnError)
+	forceNew := fs.Bool("new", false, "create a new link even if this page already has one")
+	name := fs.String("name", "", "label for a new link (defaults to the page's name)")
+	detail := fs.String("detail", string(store.ShareCounts), "disclosure level: counts or names")
+	expires := fs.String("expires", "", "expiry duration such as 24h or 7d (empty never expires)")
+	interactive := fs.Bool("interactive", false, "allow declared visitor actions through this link")
+	asJSON := fs.Bool("json", false, "print the link as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	dir, err := dirArg(fs)
+	if err != nil {
+		return err
+	}
+	expiresIn, err := parseLinkExpires(*expires)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	cfg, db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	page, err := pageFor(ctx, db, dir)
+	if err != nil {
+		return err
+	}
+	res, err := httpapi.EnsurePageShareLink(ctx, db, cfg, page, httpapi.ShareLinkOptions{
+		Name:        *name,
+		Detail:      store.ShareDetail(strings.TrimSpace(*detail)),
+		ExpiresIn:   expiresIn,
+		Interactive: *interactive,
+		ForceNew:    *forceNew,
+	})
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		out, _ := json.MarshalIndent(res, "", "  ")
+		fmt.Println(string(out))
+		return nil
+	}
+	fmt.Println(res.URL)
+	return nil
+}
+
+// parseLinkExpires parses optional durations such as "24h", "7d", or "0".
+func parseLinkExpires(raw string) (int64, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	if strings.HasSuffix(s, "d") || strings.HasSuffix(s, "D") {
+		daysStr := strings.TrimSpace(s[:len(s)-1])
+		var days int64
+		if _, err := fmt.Sscanf(daysStr, "%d", &days); err != nil || days <= 0 || fmt.Sprint(days) != daysStr {
+			return 0, fmt.Errorf("invalid --expires %q (use e.g. 24h or 7d)", raw)
+		}
+		return days * 24 * 60 * 60, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("invalid --expires %q (use e.g. 24h or 7d)", raw)
+	}
+	return int64(d.Seconds()), nil
+}
+
+const pageSkillUsage = `usage: vibepanel page skill [status|install|remove] [flags]
+
+Manage the optional vibepanel-share skill/plugin for Claude Code, Codex,
+Antigravity (agy), and DeepSeek Harness (dsh).
+
+  status   show install state for each agent (default)
+  install  install or update the bundle (--agent claude,codex,agy,dsh|detected|all)
+  remove   remove the panel-owned bundle (--agent claude,codex,agy,dsh|all)`
+
+func pageSkill(args []string) error {
+	sub := "status"
+	rest := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		if args[0] == "help" {
+			fmt.Println(pageSkillUsage)
+			return nil
+		}
+		sub, rest = args[0], args[1:]
+	}
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		fmt.Println(pageSkillUsage)
+		return nil
+	}
+	switch sub {
+	case "status":
+		fs := flag.NewFlagSet("page skill status", flag.ContinueOnError)
+		asJSON := fs.Bool("json", false, "print status as JSON")
+		detectedNames := fs.Bool("detected-names", false, "print detected agent names (exit 1 when none)")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		st, err := shareskill.Inspect()
+		if err != nil {
+			return err
+		}
+		if *detectedNames {
+			var names []string
+			for _, a := range st.Agents {
+				if a.Detected {
+					names = append(names, a.Name)
+				}
+			}
+			if len(names) == 0 {
+				return errSilentFailure
+			}
+			fmt.Println(strings.Join(names, ", "))
+			return nil
+		}
+		if *asJSON {
+			out, _ := json.MarshalIndent(st, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+		printShareSkillStatus(st)
+		return nil
+
+	case "install", "remove":
+		fs := flag.NewFlagSet("page skill "+sub, flag.ContinueOnError)
+		agentArg := fs.String("agent", "", "comma-separated agent ids (claude,codex,agy,dsh), detected, or all")
+		asJSON := fs.Bool("json", false, "print updated status as JSON")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		targets, err := resolveSkillTargets(*agentArg, sub == "install")
+		if err != nil {
+			return err
+		}
+		var st shareskill.Status
+		if sub == "install" {
+			st, err = shareskill.InstallMany(targets)
+		} else {
+			st, err = shareskill.UninstallMany(targets)
+		}
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			out, _ := json.MarshalIndent(st, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+		printShareSkillStatus(st)
+		return nil
+	}
+	return fmt.Errorf("unknown page skill command %q\n\n%s", sub, pageSkillUsage)
+}
+
+func resolveSkillTargets(raw string, allowDetected bool) ([]shareskill.Agent, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return nil, errors.New("--agent is required (claude, codex, agy, dsh, detected, or all)")
+	}
+	seen := map[shareskill.Agent]bool{}
+	var out []shareskill.Agent
+	add := func(a shareskill.Agent) {
+		if !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+	}
+	for _, part := range strings.Split(s, ",") {
+		p := strings.ToLower(strings.TrimSpace(part))
+		switch p {
+		case "":
+			continue
+		case "all":
+			for _, a := range shareskill.Agents {
+				add(a)
+			}
+		case "detected":
+			if !allowDetected {
+				return nil, errors.New("--agent detected is only valid with install")
+			}
+			st, err := shareskill.Inspect()
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range st.Agents {
+				if a.Detected {
+					add(a.ID)
+				}
+			}
+		default:
+			a, ok := shareskill.ParseAgent(p)
+			if !ok {
+				return nil, fmt.Errorf("unknown agent %q; want claude, codex, agy, dsh, detected, or all", p)
+			}
+			add(a)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no matching agents found")
+	}
+	return out, nil
+}
+
+func printShareSkillStatus(st shareskill.Status) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "AGENT\tSTATE\tDETECTED\tPATH")
+	for _, a := range st.Agents {
+		state := "not installed"
+		if a.Installed {
+			state = "installed"
+		} else if a.Stale {
+			state = "update available"
+		}
+		det := "no"
+		if a.Detected {
+			det = "yes"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.ID, state, det, a.Path)
+	}
+	_ = w.Flush()
 }
 
 func pageCheckout(args []string) error {

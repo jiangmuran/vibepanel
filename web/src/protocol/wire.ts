@@ -938,6 +938,30 @@ export interface HookStatus {
   agySnippet: string
 }
 
+/** One coding-agent harness that supports the optional vibepanel-share skill/plugin. */
+export type ShareSkillAgentId = 'claude' | 'codex' | 'agy' | 'dsh'
+
+export interface ShareSkillAgent {
+  id: ShareSkillAgentId
+  name: string
+  /** Directory or primary file written for this harness. */
+  path: string
+  /** 'plugin' for manifest-backed bundles (Claude Code, agy) or 'skill' for SKILL.md dirs. */
+  kind: string
+  /** True only when every file on disk matches this build's embedded copy. */
+  installed: boolean
+  /** An older copy is on disk and can be updated. */
+  stale: boolean
+  /** Binary or home directory found on this machine. Advisory only. */
+  detected: boolean
+}
+
+export interface ShareSkillStatus {
+  skillName: string
+  content: string
+  agents: ShareSkillAgent[]
+}
+
 /** A credential a program uses instead of the session cookie. */
 export interface ApiToken {
   id: string

@@ -4,7 +4,13 @@ import { Check, ChevronLeft, ChevronRight, Circle, Triangle, X } from 'lucide-re
 import { api } from '../protocol/api'
 import { requestNotifyPermission } from '../notify'
 import { showToast } from './toasts'
-import type { HookAgent, HookStatus, TuneStatus } from '../protocol/wire'
+import type {
+  HookAgent,
+  HookStatus,
+  ShareSkillAgentId,
+  ShareSkillStatus,
+  TuneStatus,
+} from '../protocol/wire'
 import { hookAgentInstalled, hookAgentName, visibleHookAgents } from './hookAgents'
 import type { SettingsSection } from './settings/groups'
 import { t, getLang, useLang } from '../i18n'
@@ -40,7 +46,7 @@ export function Tour({
 }) {
   useLang()
   const [step, setStep] = useState(0)
-  const steps = [Intro, Reporting, TuneStep, Notifications, Encryption, FirstProject, WhereTheRestIs]
+  const steps = [Intro, Reporting, TuneStep, ShareSkillStep, Notifications, Encryption, FirstProject, WhereTheRestIs]
   const Body = steps[step]
   const last = step === steps.length - 1
 
@@ -69,7 +75,7 @@ export function Tour({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4"
       role="dialog"
       aria-modal="true"
       aria-label={t('tour.title')}
@@ -314,6 +320,81 @@ function TuneStep({ onOpenSettings }: StepProps) {
       )}
       {err && <p className="mt-2 text-vp-sm text-state-crashed">{err}</p>}
       <More to="tune" onOpenSettings={onOpenSettings} />
+    </>
+  )
+}
+
+/** Optional agent skill/plugin so any session can publish a share page in one prompt. */
+function ShareSkillStep({ onOpenSettings }: StepProps) {
+  const [st, setSt] = useState<ShareSkillStatus | null>(null)
+  const [busy, setBusy] = useState<ShareSkillAgentId | ''>('')
+  const [err, setErr] = useState('')
+
+  const load = () => {
+    api
+      .shareSkillStatus()
+      .then((s) => {
+        setSt(s)
+        setErr('')
+      })
+      .catch((e: unknown) => setErr(String(e)))
+  }
+  useEffect(load, [])
+
+  const install = (agent: ShareSkillAgentId) => {
+    setBusy(agent)
+    setErr('')
+    api
+      .installShareSkill(agent)
+      .then(setSt)
+      .catch((e: unknown) => setErr(String(e)))
+      .finally(() => setBusy(''))
+  }
+
+  return (
+    <>
+      <H>{t('tour.shareSkillH')}</H>
+      <P>{t('tour.shareSkill1')}</P>
+      <P>{t('tour.shareSkill2')}</P>
+      {!st && <p className="text-vp-sm text-ink-3">{err || t('tune.loading')}</p>}
+      {st && (
+        <div className="mt-3 flex flex-col gap-2">
+          {st.agents.map((a) => (
+            <div
+              key={a.id}
+              data-tour-shareskill={a.id}
+              className="flex flex-wrap items-center gap-3 rounded-vp border border-hairline px-3 py-2"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="text-vp-base text-ink">{a.name}</span>
+                {a.detected && (
+                  <span className="ml-2 rounded-md bg-surface-2 px-1.5 py-0.5 text-vp-xs text-ink-3">
+                    {t('shareSkill.detected')}
+                  </span>
+                )}
+              </span>
+              {a.installed ? (
+                <span className="flex items-center gap-1 text-vp-sm text-state-done">
+                  <Check size={14} />
+                  {t('tour.on')}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy !== ''}
+                  onClick={() => install(a.id)}
+                  data-testid={`tour-shareskill-${a.id}`}
+                  className="vp-press rounded-vp border border-hairline px-3 py-1 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+                >
+                  {busy === a.id ? t('set.working') : a.stale ? t('shareSkill.update') : t('tour.turnOn')}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {err && <p className="mt-2 text-vp-sm text-state-crashed">{err}</p>}
+      <More to="shareskill" onOpenSettings={onOpenSettings} />
     </>
   )
 }

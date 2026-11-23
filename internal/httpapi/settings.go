@@ -43,6 +43,9 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Get("/settings/tune", s.handleTuneStatus)
 	r.Post("/settings/tune", s.handleTuneApply)
 	r.Delete("/settings/hooks", s.handleHooksUninstall)
+	r.Get("/settings/share-skill", s.handleShareSkillStatus)
+	r.Post("/settings/share-skill", s.handleShareSkillInstall)
+	r.Delete("/settings/share-skill", s.handleShareSkillUninstall)
 }
 
 type settingsResponse struct {
