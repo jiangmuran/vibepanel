@@ -28288,3 +28288,42 @@ three separate causes:
   `builtin:codex` and `tmux.LaunchArgv` now pass `--no-alt-screen` to
   interactive Codex launches unless an explicit alternate-screen option was
   given, keeping Codex on tmux's primary buffer.
+
+## 2026-11-23 — What review changed in the scrollback recovery
+
+The entry above arrived as a pull request and was reviewed before it was
+merged. Three things changed on the way in.
+
+**It met the hidden-terminal work in `Live.subscribe`.** That change and this
+one both rewrote the function. The merge keeps the hidden resume, and sets
+`sentUntil` in every return, the capture branch included. Left at zero there,
+the next show of that terminal asked the ring for everything since offset
+zero, which a wrapped ring cannot give, so the viewer was cleared and sent the
+whole ring on top of the scrollback the capture had just rebuilt.
+`TestShowingATerminalRebuiltFromACaptureSendsOnlyWhatItMissed`; without the
+line it is 65,536 bytes where 22 were written.
+
+**Viewers arriving together share one capture.** A wrapped ring stays wrapped,
+so every later subscribe that cannot resume asks tmux for the pane: three
+processes and up to ten thousand lines. A panel restart reconnects every viewer
+of a session in the same instant, and eight viewers made eight captures of one
+pane. `captureForReplay` gives the ones that arrive during a capture its
+result. The ring offset is still read before tmux is asked, and the comment
+there says why: no offset marks the capture exactly, because tmux's grid is
+ahead of the ring by whatever is unread in the PTY, so the choice is between a
+line that can appear twice in scrollback and a line that appears nowhere. It
+can still appear twice.
+
+**`--no-alt-screen` goes to a codex that takes it, and to no other.** The flag
+was added to every interactive codex launch and written into the built-in
+profile. A codex that does not know it exits with "unexpected argument" before
+anybody sees the session, on every launch and restore, with nothing to turn it
+off. The panel now reads the binary's own `--help` (stdout only: an old codex
+names the flag in the error it prints for it), keeps the answer ten minutes,
+and adds nothing when in doubt. The built-in profile is plain `codex` again,
+so the decision is made in one place. 0.153.4, the version on the machine this
+was written on, lists the flag.
+
+Not changed: a terminal that was hidden while the ring wrapped is still caught
+up from the ring and not from a capture, so it is cleared and replayed in full
+when shown.
