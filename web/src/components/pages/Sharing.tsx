@@ -376,6 +376,7 @@ function ShareSkillLine({
         <button
           type="button"
           data-testid="sharing-share-skill-toggle"
+          aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
           className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
         >
@@ -417,22 +418,34 @@ function ShareSkillLine({
                   <div className="mt-0.5 truncate font-mono text-vp-xs text-ink-3" title={a.path}>
                     {a.path}
                   </div>
+                  {a.foreign && (
+                    <p className="mt-1 text-vp-xs text-warn-ink" data-testid={`sharing-share-skill-${a.id}-foreign`}>
+                      {t('shareSkill.foreign')}
+                    </p>
+                  )}
+                  {a.error && (
+                    <p className="mt-1 text-vp-xs text-warn-ink" title={a.error}>
+                      {t('shareSkill.unavailable')}
+                    </p>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  disabled={busy !== ''}
-                  data-testid={`sharing-share-skill-${a.id}-btn`}
-                  onClick={() => void toggle(a.id, a.installed)}
-                  className={a.installed ? 'vp-outline text-vp-xs' : 'vp-primary text-vp-xs'}
-                >
-                  {busy === a.id
-                    ? t('set.working')
-                    : a.installed
-                      ? t('set.remove')
-                      : a.stale
-                        ? t('shareSkill.update')
-                        : t('set.install')}
-                </button>
+                {!a.foreign && !a.error && (
+                  <button
+                    type="button"
+                    disabled={busy !== ''}
+                    data-testid={`sharing-share-skill-${a.id}-btn`}
+                    onClick={() => void toggle(a.id, a.installed)}
+                    className={a.installed ? 'vp-outline text-vp-xs' : 'vp-primary text-vp-xs'}
+                  >
+                    {busy === a.id
+                      ? t('set.working')
+                      : a.installed
+                        ? t('set.remove')
+                        : a.stale
+                          ? t('shareSkill.update')
+                          : t('set.install')}
+                  </button>
+                )}
               </div>
             ))}
           </div>

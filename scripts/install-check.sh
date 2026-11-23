@@ -1021,10 +1021,29 @@ has "$LOG" "Claude Code" && fail "--no-tune-claude asked anyway" \
 
 echo "==> Share skill: --share-skill installs without a terminal; interactive prompt is opt-in"
 newhome
+cat > "$REL/vibepanel" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/binary.log"
+[ "\$1" = version ] && echo "vibepanel v1.0.0"
+[ "\$1 \$2 \$3 \$4" = "page skill status --detected-names" ] && echo "Claude Code"
+exit 0
+EOF
+chmod +x "$REL/vibepanel"
 run --yes --user --share-skill
 grep -q -- 'page skill install --agent detected' "$WORK/binary.log" \
   && ok "--share-skill installs detected agents without prompting" \
   || fail "--share-skill did not invoke page skill install: $(cat "$WORK/binary.log")"
+has "$LOG" "vibepanel-share for Claude Code" && ok "the plan names the detected agents" \
+  || fail "the plan does not name the detected agents"
+# Nothing detected: say so, and do not run an install that has nothing to do.
+newhome
+stub_version v1.0.0
+run --yes --user --share-skill
+grep -q -- 'page skill install' "$WORK/binary.log" \
+  && fail "--share-skill installed with no agent detected" \
+  || ok "--share-skill with no agent detected does not run an install"
+has "$LOG" "no supported coding agent was detected" && ok "and says why" \
+  || fail "--share-skill with no agent detected said nothing"
 newhome
 cat > "$REL/vibepanel" <<EOF
 #!/bin/sh

@@ -148,9 +148,19 @@ function ShareSkillRow({
         <div className="mt-0.5 truncate font-mono text-vp-xs text-ink-3" title={agent.path}>
           {agent.path}
         </div>
+        {agent.foreign && (
+          <p className="mt-1 text-vp-xs text-warn-ink" data-testid={`share-skill-${agent.id}-foreign`}>
+            {t('shareSkill.foreign')}
+          </p>
+        )}
+        {agent.error && (
+          <p className="mt-1 text-vp-xs text-warn-ink" title={agent.error}>
+            {t('shareSkill.unavailable')}
+          </p>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        {agent.installed ? (
+        {agent.foreign || agent.error ? null : agent.installed ? (
           <button
             type="button"
             disabled={disabled}

@@ -810,6 +810,13 @@ your existing agent config files.'
     shareskill.ask)
       MS_EN='Enable the vibepanel-share plugin for these agents?'
       MS_ZH='要为这些 agent 启用 vibepanel-share 分享插件吗？' ;;
+    shareskill.none)
+      MS_EN='  skipped  vibepanel-share plugin: no supported coding agent was detected
+           (Claude Code, Codex, Antigravity, DeepSeek Harness). Install one, then run
+           `vibepanel page skill install --agent detected`.'
+      MS_ZH='  跳过     vibepanel-share 插件：没有检测到受支持的 agent
+           （Claude Code、Codex、Antigravity、DeepSeek Harness）。装好后运行
+           `vibepanel page skill install --agent detected`。' ;;
     shareskill.asroot)
       MS_EN='  skipped  vibepanel-share plugin: this is running as root and the agents
            belong to %1$s. Run `vibepanel page skill install --agent detected` as %1$s.'
@@ -1984,8 +1991,15 @@ SHARE_SKILL_DETECTED=
 if [ "$SHARE_SKILL_FLAG" = never ]; then
   SHARE_SKILL=no
 elif [ "$SHARE_SKILL_FLAG" = yes ]; then
-  SHARE_SKILL=yes
   SHARE_SKILL_DETECTED="$("$BIN_SRC" page skill status --detected-names 2>/dev/null || true)"
+  # Asked for by name and nothing to install into: say so, rather than run an
+  # install that fails quietly behind `|| true` and leave the plan claiming it.
+  if [ -n "$SHARE_SKILL_DETECTED" ]; then
+    SHARE_SKILL=yes
+  else
+    echo
+    m shareskill.none
+  fi
 elif [ "$INTERACTIVE" = yes ]; then
   SHARE_SKILL_DETECTED="$("$BIN_SRC" page skill status --detected-names 2>/dev/null || true)"
   if [ -n "$SHARE_SKILL_DETECTED" ]; then
@@ -2049,7 +2063,7 @@ if [ "$TUNE_CLAUDE" = yes ]; then
   m plan.claude "$HOME/.claude/settings.json"
 fi
 if [ "$SHARE_SKILL" = yes ]; then
-  m plan.shareskill "${SHARE_SKILL_DETECTED:-detected agents}"
+  m plan.shareskill "$SHARE_SKILL_DETECTED"
 fi
 if [ "$PORT_TAKEN" = yes ]; then
   echo

@@ -947,13 +947,17 @@ export interface ShareSkillAgent {
   /** Directory or primary file written for this harness. */
   path: string
   /** 'plugin' for manifest-backed bundles (Claude Code, agy) or 'skill' for SKILL.md dirs. */
-  kind: string
+  kind: 'plugin' | 'skill'
   /** True only when every file on disk matches this build's embedded copy. */
   installed: boolean
   /** An older copy is on disk and can be updated. */
   stale: boolean
   /** Binary or home directory found on this machine. Advisory only. */
   detected: boolean
+  /** Something the panel did not write is at `path`; install and remove refuse it. */
+  foreign: boolean
+  /** Set when the path could not be worked out (no home directory); `path` is then empty. */
+  error?: string
 }
 
 export interface ShareSkillStatus {

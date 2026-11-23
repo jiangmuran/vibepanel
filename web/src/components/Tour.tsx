@@ -74,6 +74,10 @@ export function Tour({
   })
 
   return (
+    // z-30, the same layer as the settings dialog, not above it: "Continue in
+    // settings" opens Settings from inside this tour, and App renders it after
+    // the tour so equal layers stack it on top. At z-50 the dialog opened
+    // underneath the tour's backdrop and could not be clicked.
     <div
       className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4"
       role="dialog"
@@ -337,7 +341,7 @@ function ShareSkillStep({ onOpenSettings }: StepProps) {
         setSt(s)
         setErr('')
       })
-      .catch((e: unknown) => setErr(String(e)))
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
   }
   useEffect(load, [])
 
@@ -347,7 +351,7 @@ function ShareSkillStep({ onOpenSettings }: StepProps) {
     api
       .installShareSkill(agent)
       .then(setSt)
-      .catch((e: unknown) => setErr(String(e)))
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(''))
   }
 
@@ -373,7 +377,15 @@ function ShareSkillStep({ onOpenSettings }: StepProps) {
                   </span>
                 )}
               </span>
-              {a.installed ? (
+              {a.foreign ? (
+                <span className="text-vp-xs text-warn-ink" data-testid={`tour-shareskill-${a.id}-foreign`}>
+                  {t('shareSkill.foreign')}
+                </span>
+              ) : a.error ? (
+                <span className="text-vp-xs text-warn-ink" title={a.error}>
+                  {t('shareSkill.unavailable')}
+                </span>
+              ) : a.installed ? (
                 <span className="flex items-center gap-1 text-vp-sm text-state-done">
                   <Check size={14} />
                   {t('tour.on')}
