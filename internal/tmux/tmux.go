@@ -22,7 +22,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Config is the tmux configuration the panel runs its server with. See the
@@ -711,10 +713,13 @@ var codexNonTUISubcommands = map[string]bool{
 // inline mode (`--no-alt-screen`) keeps the transcript on the primary screen so
 // tmux and xterm.js hold the scrollback.
 //
-// Applied here as well as in store.builtinProfiles because editing the Codex
-// built-in in Settings -- to set OPENAI_API_KEY or add `--yolo` -- saves an
-// override row with the argv the form had at the time, and a restored session
-// re-runs its recorded LaunchCommand through LaunchArgv.
+// Applied here and not in store.builtinProfiles, for two reasons. Editing the
+// Codex built-in in Settings -- to set OPENAI_API_KEY or add `--yolo` -- saves
+// an override row with the argv the form had at the time, and a restored
+// session re-runs its recorded LaunchCommand through LaunchArgv, so the
+// profile would cover neither. And a flag written into the profile is passed
+// to whatever codex is installed, with nothing asking whether it takes it; see
+// codexAcceptsNoAltScreen.
 func codexInlineArgv(command []string) []string {
 	if len(command) == 0 || filepath.Base(command[0]) != "codex" {
 		return command
@@ -747,10 +752,69 @@ func codexInlineArgv(command []string) []string {
 	if codexNonTUISubcommands[sub] {
 		return command
 	}
+	if !codexAcceptsNoAltScreen(command[0]) {
+		return command
+	}
 	out := make([]string, 0, len(command)+1)
 	out = append(out, command[0], "--no-alt-screen")
 	out = append(out, command[1:]...)
 	return out
+}
+
+// codexAcceptsNoAltScreen reports whether this codex takes `--no-alt-screen`,
+// by asking it.
+//
+// The flag is added to a command the person did not type it into, on every
+// launch and every restore, so being wrong has to cost nothing. A codex that
+// does not know the flag exits at once with "unexpected argument", and the
+// session is dead before anybody has seen it; a codex left without the flag
+// runs exactly as it did before this existed. So the flag goes on only when
+// the binary's own help lists it, and any doubt -- not found, timed out, a
+// wrapper script that prints something else -- means no flag.
+//
+// A variable so a test can answer for a codex that is not installed.
+var codexAcceptsNoAltScreen = probeCodexNoAltScreen
+
+// codexProbeTTL is how long an answer is kept. Long enough that a restore of
+// two dozen codex sessions asks once, short enough that an upgrade is noticed
+// without restarting the panel.
+const codexProbeTTL = 10 * time.Minute
+
+type codexProbeResult struct {
+	ok bool
+	at time.Time
+}
+
+var (
+	codexProbeMu    sync.Mutex
+	codexProbeCache = map[string]codexProbeResult{}
+)
+
+func probeCodexNoAltScreen(bin string) bool {
+	codexProbeMu.Lock()
+	defer codexProbeMu.Unlock()
+	if r, ok := codexProbeCache[bin]; ok && time.Since(r.at) < codexProbeTTL {
+		return r.ok
+	}
+	// Through the same resolution a launch gets: a codex that only a login
+	// shell can find is launched through one, so it is asked through one.
+	argv := []string{bin, "--help"}
+	if _, err := exec.LookPath(bin); err != nil {
+		sh := loginShell()
+		if sh == "" {
+			codexProbeCache[bin] = codexProbeResult{at: time.Now()}
+			return false
+		}
+		argv = []string{sh, "-l", "-c", "exec " + shellJoin(argv)}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Output and not CombinedOutput: an old codex names the flag in the error
+	// it prints for it, and that is not the same as accepting it.
+	out, _ := exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
+	ok := bytes.Contains(out, []byte("--no-alt-screen"))
+	codexProbeCache[bin] = codexProbeResult{ok: ok, at: time.Now()}
+	return ok
 }
 
 // startServerWithProfile starts the server through a login shell.

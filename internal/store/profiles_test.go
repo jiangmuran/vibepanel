@@ -531,14 +531,3 @@ func TestAnEditedAgyIsKeptAsTheOwnersProfile(t *testing.T) {
 		t.Fatalf("get: %+v %v", p, err)
 	}
 }
-
-func TestBuiltinCodexDisablesTheAlternateScreen(t *testing.T) {
-	db, ctx := openTemp(t)
-	p, err := db.GetLaunchProfile(ctx, BuiltinPrefix+"codex")
-	if err != nil {
-		t.Fatalf("get builtin:codex: %v", err)
-	}
-	if !slices.Contains(p.Command, "--no-alt-screen") {
-		t.Fatalf("builtin:codex command = %q, want --no-alt-screen so scrollback stays on tmux's primary buffer", p.Command)
-	}
-}

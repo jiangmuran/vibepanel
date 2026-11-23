@@ -2077,6 +2077,12 @@ func TestAnUnreadableLineIsSkippedAndSaidOnce(t *testing.T) {
 }
 
 func TestCodexLaunchesWithoutTheAlternateScreen(t *testing.T) {
+	// This table is about where the flag goes in an argv, so the codex it is
+	// for is one that takes it. Whether a real one does is the tests below.
+	prev := codexAcceptsNoAltScreen
+	codexAcceptsNoAltScreen = func(string) bool { return true }
+	t.Cleanup(func() { codexAcceptsNoAltScreen = prev })
+
 	cases := []struct {
 		name string
 		in   []string
@@ -2146,5 +2152,51 @@ func TestCaptureSnapshotReadsHistoryScreenAndScrollRegion(t *testing.T) {
 	}
 	if snap.CursorY != 8 || snap.CursorX != 8 {
 		t.Errorf("cursor = (%d, %d), want (8, 8)", snap.CursorX, snap.CursorY)
+	}
+}
+
+// fakeCodex writes an executable named codex that answers --help with the
+// given text on stdout and complains about anything else the way clap does.
+func fakeCodex(t *testing.T, help string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "codex")
+	script := "#!/bin/sh\nif [ \"$1\" = --help ]; then cat <<'EOF'\n" + help + "\nEOF\nexit 0; fi\n" +
+		"echo \"error: unexpected argument '--no-alt-screen' found\" >&2\nexit 2\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// The flag is added to a command nobody typed it into. A codex that does not
+// know it exits at once, so the session would be dead on arrival for everyone
+// on an older build -- on every launch and every restore, with no setting to
+// turn it off.
+func TestACodexThatDoesNotKnowTheFlagIsLaunchedWithoutIt(t *testing.T) {
+	old := fakeCodex(t, "Usage: codex [OPTIONS] [PROMPT]\n\nOptions:\n  -m, --model <MODEL>")
+	if got := LaunchArgv([]string{old, "--yolo"}); len(got) != 2 || got[0] != old || got[1] != "--yolo" {
+		t.Fatalf("LaunchArgv for a codex whose help has no --no-alt-screen = %q, want it untouched", got)
+	}
+
+	current := fakeCodex(t, "Usage: codex [OPTIONS] [PROMPT]\n\nOptions:\n      --no-alt-screen\n          Disable alternate screen mode")
+	got := LaunchArgv([]string{current, "--yolo"})
+	if len(got) != 3 || got[0] != current || got[1] != "--no-alt-screen" || got[2] != "--yolo" {
+		t.Fatalf("LaunchArgv for a codex whose help lists --no-alt-screen = %q, want the flag added", got)
+	}
+}
+
+// An old codex prints the flag's name in the error it gives for it. Reading
+// that as "it knows the flag" is the mistake that kills the session.
+func TestTheFlagNamedOnlyInAnErrorIsNotSupport(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "codex")
+	script := "#!/bin/sh\necho \"error: unexpected argument '--no-alt-screen' found\" >&2\nexit 2\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if probeCodexNoAltScreen(bin) {
+		t.Fatal("a codex that only names --no-alt-screen on stderr was taken to accept it")
+	}
+	if probeCodexNoAltScreen(filepath.Join(t.TempDir(), "codex")) {
+		t.Fatal("a codex that does not exist was taken to accept the flag")
 	}
 }
