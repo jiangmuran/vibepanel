@@ -363,10 +363,79 @@ framing the panel, being framed), the workflow through the UI end to end, and
 every template on a TV, a laptop and a phone against `busy`, `counts`, `hostile`
 and `empty`. It is in `make verify`.
 
-## 9. What was not built
+## 9. Optional dedicated share origin
 
-- **A separate origin for pages.** The response-header sandbox on the panel's
-  origin is the boundary, as it is for directory previews.
+The response-header sandbox on the panel's own origin remains the default
+boundary, as it is for directory previews, so single-domain deployments need no
+extra DNS or TLS setup.
+
+Operators who want to keep the panel's hostname off handed-out links can set a
+dedicated `shareOrigin` (`scheme://host[:port]`, e.g. `https://share.example.com`)
+in **Settings → Sharing** (`PUT /api/settings/sharing`) or via
+`vibepanel settings share-origin` and point a reverse proxy for that host at
+the panel (forwarding `Host`). Handed-out create/copy/rotate addresses then use
+that origin, and `shareHostOnly` restricts requests arriving on that host to
+`/share/{token}*` and `/api/share/{token}/*` for handed-out links — every other
+path (including `/`, `/api/health`, `/api/auth/*`, `/ws`, previews and admin
+pages) answers `404`.
+
+The isolation fails closed in four places, each of which once failed open:
+
+- **The share host is a name.** That hostname on any port, with or without a
+  trailing dot, is the share host. It follows that the share origin must be a
+  different *name* from the panel's, not merely a different port, and setting
+  one that is not is refused.
+- **The path is matched as the router sees it.** A request whose escaped path
+  only decodes to a share path (`/share%2Fx`) is refused on the share host;
+  it used to pass the prefix check and fall through to the panel's bundle.
+- **A setting that cannot be read is not "no share origin".** A failed read is
+  not cached, and while it fails every host answers `503`: the request may be
+  for the share host, and the panel is the one thing that host must not serve.
+- **The proxy names the host.** The generated vhost, and the snippet shown for
+  manual setup, send `Host <the share hostname>` upstream as a literal. With
+  `$host`, a vhost that is nginx's default server proxies any name a client
+  sends, and the panel sees a name that is not the share host.
+
+A `Host` that is neither the share name nor a name the panel knows as its own
+is *not* confined. The panel is reached at addresses no configuration lists (a
+LAN or tailnet address, `localhost` through a tunnel), and confining those
+would lock out the owner signing in to change this setting. The literal `Host`
+in the proxy is what covers that side.
+
+What the panel treats as its own name when the setting is written: the
+configured domain, bind address and public origins, origins approved at
+setup, the name the request arrived on, and any name an unexpired sign-in
+session is bound to. The last one is for the command line, which reaches the
+panel on loopback; `vibepanel settings share-origin` also prints the command
+that undoes it (`vibepanel settings share-origin clear`).
+
+To avoid guesswork when wiring a new subdomain, **Settings → Sharing** (and
+`vibepanel settings share-origin check|setup <origin>`) provides:
+
+- **Live reachability check** (`POST /api/settings/sharing/check`): resolves DNS
+  against the panel's host IPs and performs a self-probe against an ephemeral
+  128-bit nonce (`GET /.well-known/vibepanel-probe/{nonce}`) to confirm that the
+  domain actually hits this panel over valid HTTPS with the share host's name
+  as `Host`. It connects out to a name somebody typed, so it uses the guard page
+  sources use (`internal/httpapi/pagesources.go`): `https://` on a domain name
+  only, every resolved address public, the checked address dialled, no redirect
+  followed. A name resolving to loopback or private space gets `not_public`
+  and no connection.
+- **One-click HTTPS** (`POST /api/settings/sharing/provision`): under
+  `--tls acme`, adds the share domain live to `certmagic` SNI management; under
+  `--tls off` behind nginx with certbot, detects the active SSL listen target
+  (including `stream` SNI multiplexers on port 443), writes an isolated
+  `# Managed by vibepanel` vhost (written beside the old one and renamed over
+  it; the previous file is put back on error), obtains a Let's Encrypt
+  certificate via HTTP-01 webroot and reloads nginx. One provision runs at a
+  time. The origin is saved only if the check then passes; otherwise the
+  report says what is missing and the setting is left alone. A vhost already
+  serving HTTPS keeps serving it while its certificate is renewed.
+  Hosts without automated provisioning receive a ready-to-paste nginx snippet.
+
+Both write the audit log on every call, refused and failed ones included:
+`sharing.origin_checked`, `sharing.origin_provision_refused`,
+`sharing.origin_provision_failed`, `sharing.origin_provisioned`.
 
 ## 10. Decisions taken
 

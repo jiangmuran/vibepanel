@@ -1487,9 +1487,88 @@ as `share.rotated`.
 ### `GET /api/settings/sharing`
 ### `PUT /api/settings/sharing`
 
-`{"visitorWrites": true}`: whether any visitor action on any link may run. On by
-default; turning it off refuses the next action on every interactive link.
-`PUT` requires the field and is audited as `sharing.visitor_writes`.
+`{"visitorWrites": true, "shareOrigin": ""}`: panel-wide sharing settings.
+
+- `visitorWrites` (default `true`): whether any visitor action on any link may
+  run. Turning it off refuses the next action on every interactive link. Audited
+  as `sharing.visitor_writes`.
+- `shareOrigin` (default `""`): an optional dedicated `scheme://host[:port]`
+  origin (such as `https://share.example.com`) for handed-out share links.
+  When set, `POST /api/settings/shares`, `GET /api/settings/shares/{id}/url` and
+  `POST /api/settings/shares/{id}/rotate` build `url` under this origin, and
+  requests arriving on its host reach only `/share/{token}*` and
+  `/api/share/{token}/*` for handed-out links — every other path (including `/`,
+  `/api/health`, `/api/auth/*`, `/ws`, previews and admin pages) answers `404`
+  so the panel's sign-in screen is never exposed on the share domain. The share
+  host is recognised by name: that hostname on any port, with or without a
+  trailing dot, is the share host, and a path whose escaped form differs from
+  its share prefix (`/share%2Fx`) is refused there. While the setting cannot be
+  read, every host answers `503` rather than the panel. Setting it to the
+  panel's own name is refused with `400`, on any port: a name in
+  `VIBEPANEL_DOMAIN`, `VIBEPANEL_ADDR`, `VIBEPANEL_PUBLIC_ORIGINS` or an
+  approved origin, the name the request arrived on, or a name an unexpired
+  sign-in session is bound to. Setting `""` returns to the panel's own
+  address. Audited as `sharing.origin_changed`.
+
+`PUT` accepts either or both fields and refuses an empty `{}` with `400`.
+
+### `POST /api/settings/sharing/check`
+
+`{"origin": "https://share.example.com"}` (bare hostnames default to `https://`).
+Checks whether the candidate share domain actually reaches this panel right now:
+resolves DNS against the panel's known host IPs, mints a short-lived 128-bit
+nonce served at `GET /.well-known/vibepanel-probe/{nonce}`, probes the origin
+over strict HTTPS (falling back to TLS/port-80 diagnostics on failure) to confirm
+valid HTTPS and `Host` header forwarding, and reports whether one-click HTTPS
+provisioning is available (`provision.mode`: `acme`, `nginx-certbot`, or
+`manual` with a ready-to-paste nginx vhost snippet). Returns `status` in
+`ready`, `needs_dns`, `not_public`, `needs_https`, `needs_proxy`,
+`host_mismatch`, `unreachable`.
+
+The origin must be `https://` on a domain name: an address literal or an
+`http://` origin is refused with `400` before anything is resolved, and so is
+the panel's own name. Every address the name resolves to must be public (the
+rule page sources use: no loopback, private, link-local, CGNAT, metadata or
+reserved address); otherwise `status` is `not_public`, `reachError` is one fixed
+sentence and no connection is attempted. The connection goes to the address
+that was checked, never to a second resolution, and no redirect is followed.
+A domain pointing at this machine's public address passes like any other.
+Every call is audited as `sharing.origin_checked` with the host and the
+status, or the reason it was refused.
+
+### `POST /api/settings/sharing/provision`
+
+`{"origin": "https://share.example.com"}`. One-click HTTPS provisioning for a
+dedicated share domain:
+
+- Under `--tls acme`, adds the hostname live to the running ACME SNI config
+  (`certmagic`) with automatic renewal and no restart.
+- Under `--tls off` behind nginx with certbot and writable nginx/webroot paths,
+  detects the active SSL listen address (including `stream` SNI multiplexers on
+  port 443), writes an isolated `# Managed by vibepanel` vhost (a temporary
+  file renamed over the old one, and the previous file put back on failure),
+  obtains a Let's Encrypt certificate via HTTP-01 webroot (or reuses a valid
+  certificate already on disk), and reloads nginx. The vhost proxies with
+  `Host` set to the literal share hostname, never `$host`. A managed HTTPS
+  vhost that is already serving stays in place while its certificate is
+  renewed.
+
+Refuses before contacting Let's Encrypt if DNS does not resolve yet (`400`), or
+if another unmanaged nginx site already declares `server_name <hostname>`.
+One provision runs at a time; a second while one is running answers `409`.
+
+Returns `{origin, mode, shareOrigin, check}`. `sharing.origin` is saved only
+when `check.ready` is true after the certificate and proxy are in place;
+`shareOrigin` is the setting as it stands afterwards, so it equals `origin`
+exactly when it was saved. When the check does not pass the answer is still
+`200`, with `check.status` saying what is missing, and the setting is left as
+it was.
+
+Every attempt is audited with the host and the outcome:
+`sharing.origin_provision_refused` (a `400` or `409`),
+`sharing.origin_provision_failed` (the CA, nginx or certbot said no, `502`),
+`sharing.origin_provisioned` (`saved`, or `not saved` with the check's status),
+and `sharing.origin_changed` when the setting changed.
 
 ### `POST /api/settings/shares/{shareID}/view`
 

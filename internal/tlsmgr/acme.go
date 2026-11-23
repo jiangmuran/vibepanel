@@ -32,14 +32,24 @@ type ACMEOptions struct {
 // ErrNoDNSToken means the provider credential is missing.
 var ErrNoDNSToken = errors.New("tlsmgr: no DNS API token; set CLOUDFLARE_API_TOKEN")
 
-// NewACME obtains a certificate and returns a TLS configuration that keeps it
-// renewed.
+// ACMESource owns a certmagic cache and config so additional domains (such as
+// a dedicated share origin) can be issued and auto-renewed live via SNI
+// without restarting the server.
+type ACMESource struct {
+	cache  *certmagic.Cache
+	cfg    *certmagic.Config
+	tlsCfg *tls.Config
+	log    *slog.Logger
+}
+
+// NewACMESource obtains the initial certificate for o.Domain and returns a
+// live source capable of adding more managed domains afterwards.
 //
 // DNS-01 rather than HTTP-01, because the panel is expected to listen on a
 // non-standard port and HTTP-01 requires port 80 — which either is not free or
 // means running something else in front, defeating the point of a single
 // binary.
-func NewACME(ctx context.Context, o ACMEOptions) (*tls.Config, error) {
+func NewACMESource(ctx context.Context, o ACMEOptions) (*ACMESource, error) {
 	if o.Domain == "" {
 		return nil, errors.New("tlsmgr: acme needs a domain")
 	}
@@ -48,12 +58,13 @@ func NewACME(ctx context.Context, o ACMEOptions) (*tls.Config, error) {
 		return nil, err
 	}
 
-	_, cfg := newManaged(o, solver)
+	cache, cfg := newManaged(o, solver)
 
 	// Synchronous: a panel that starts, listens, and only then discovers it
 	// has no certificate would greet its first visitor with a handshake error
 	// and nothing to explain it.
 	if err := cfg.ManageSync(ctx, []string{o.Domain}); err != nil {
+		cache.Stop()
 		return nil, fmt.Errorf("tlsmgr: obtain certificate for %s: %w", o.Domain, err)
 	}
 	if o.Log != nil {
@@ -65,7 +76,43 @@ func NewACME(ctx context.Context, o ACMEOptions) (*tls.Config, error) {
 	// certmagic sets NextProtos for its own HTTP-01 solver; the panel speaks
 	// HTTP/1.1 and HTTP/2 and nothing else.
 	tlsCfg.NextProtos = []string{"h2", "http/1.1"}
-	return tlsCfg, nil
+	return &ACMESource{cache: cache, cfg: cfg, tlsCfg: tlsCfg, log: o.Log}, nil
+}
+
+// TLSConfig returns the SNI-capable TLS configuration for the HTTP server.
+func (a *ACMESource) TLSConfig() *tls.Config { return a.tlsCfg }
+
+// Manage obtains and begins maintaining a certificate for an additional domain
+// on the live TLS listener without restarting.
+func (a *ACMESource) Manage(ctx context.Context, domain string) error {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return errors.New("tlsmgr: domain is required")
+	}
+	if err := a.cfg.ManageSync(ctx, []string{domain}); err != nil {
+		return fmt.Errorf("tlsmgr: obtain certificate for %s: %w", domain, err)
+	}
+	if a.log != nil {
+		a.log.Info("certificate ready", "domain", domain)
+	}
+	return nil
+}
+
+// Close stops background certificate maintenance.
+func (a *ACMESource) Close() {
+	if a != nil && a.cache != nil {
+		a.cache.Stop()
+	}
+}
+
+// NewACME obtains a certificate and returns a TLS configuration that keeps it
+// renewed.
+func NewACME(ctx context.Context, o ACMEOptions) (*tls.Config, error) {
+	src, err := NewACMESource(ctx, o)
+	if err != nil {
+		return nil, err
+	}
+	return src.TLSConfig(), nil
 }
 
 // newManaged builds the certificate cache and the config that maintains what

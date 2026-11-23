@@ -35,6 +35,8 @@ import type {
   SharePageServerLogLine,
   SharePageSource,
   SharingSettings,
+  ShareOriginCheck,
+  ShareOriginProvisionResult,
   ShareParamValue,
   SystemSample,
   TokenUsage,
@@ -751,6 +753,7 @@ export const api = {
       scope: string
       remark: string
       locked: boolean
+      url: string
       expiresAt: number
       createdAt: number
     }>('/api/settings/shares', {
@@ -865,8 +868,20 @@ export const api = {
 
   sharingSettings: () => request<SharingSettings>('/api/settings/sharing'),
 
-  setSharingSettings: (s: SharingSettings) =>
+  setSharingSettings: (s: Partial<SharingSettings>) =>
     request<SharingSettings>('/api/settings/sharing', { method: 'PUT', body: JSON.stringify(s) }),
+
+  checkShareOrigin: (origin: string) =>
+    request<ShareOriginCheck>('/api/settings/sharing/check', {
+      method: 'POST',
+      body: JSON.stringify({ origin }),
+    }),
+
+  provisionShareOrigin: (origin: string) =>
+    request<ShareOriginProvisionResult>('/api/settings/sharing/provision', {
+      method: 'POST',
+      body: JSON.stringify({ origin }),
+    }),
 
   pageData: (id: string, ns: SharePageDataNamespace = 'live') =>
     request<SharePageData>(`/api/settings/pages/${encodeURIComponent(id)}/data?ns=${ns}`),

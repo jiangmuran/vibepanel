@@ -442,7 +442,7 @@ func cmdServe(args []string) error {
 
 	case config.TLSACME:
 		fmt.Printf("  tls          requesting a certificate for %s…\n", a.cfg.Domain)
-		tlsCfg, terr := tlsmgr.NewACME(ctx, tlsmgr.ACMEOptions{
+		acmeSrc, terr := tlsmgr.NewACMESource(ctx, tlsmgr.ACMEOptions{
 			Domain:     a.cfg.Domain,
 			Email:      a.cfg.ACMEEmail,
 			Directory:  a.cfg.ACMEDirectory,
@@ -453,7 +453,15 @@ func cmdServe(args []string) error {
 		if terr != nil {
 			return terr
 		}
-		httpServer.TLSConfig = tlsCfg
+		defer acmeSrc.Close()
+		srv.ManageTLS = acmeSrc.Manage
+		if shareHost := srv.ShareOriginHostname(ctx); shareHost != "" && !strings.EqualFold(shareHost, a.cfg.Domain) {
+			fmt.Printf("  tls          requesting a certificate for share origin %s…\n", shareHost)
+			if serr := acmeSrc.Manage(ctx, shareHost); serr != nil {
+				logger.Warn("share origin certificate not ready at startup", "domain", shareHost, "err", serr)
+			}
+		}
+		httpServer.TLSConfig = acmeSrc.TLSConfig()
 		serveTLS = true
 	}
 

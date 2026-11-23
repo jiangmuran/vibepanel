@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -125,4 +126,42 @@ func storeCert(t *testing.T, storage certmagic.Storage, issuerKey, domain string
 		}
 	}
 	return tmpl.NotAfter
+}
+
+// ACMESource.Manage adds a second domain (such as a dedicated share origin) to
+// the running SNI listener without restarting the server.
+func TestACMESourceManagesAdditionalDomainBySNI(t *testing.T) {
+	const panelDom = "panel.example.test"
+	const shareDom = "share.example.test"
+	t.Setenv("CLOUDFLARE_API_TOKEN", "not-used-by-this-test")
+
+	solver, err := dnsSolver("cloudflare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, cfg := newManaged(ACMEOptions{
+		Domain:     panelDom,
+		Email:      "nobody@example.test",
+		Directory:  "https://127.0.0.1:1/acme/directory",
+		Provider:   "cloudflare",
+		StorageDir: t.TempDir(),
+	}, solver)
+	defer cache.Stop()
+
+	ctx := context.Background()
+	issuerKey := cfg.Issuers[0].IssuerKey()
+	storeCert(t, cfg.Storage, issuerKey, panelDom, -time.Hour, 60*24*time.Hour)
+	storeCert(t, cfg.Storage, issuerKey, shareDom, -time.Hour, 60*24*time.Hour)
+
+	src := &ACMESource{cache: cache, cfg: cfg, tlsCfg: cfg.TLSConfig()}
+	if err := src.Manage(ctx, panelDom); err != nil {
+		t.Fatalf("manage panel domain: %v", err)
+	}
+	if err := src.Manage(ctx, shareDom); err != nil {
+		t.Fatalf("manage share domain: %v", err)
+	}
+	cert, err := src.TLSConfig().GetCertificate(&tls.ClientHelloInfo{ServerName: shareDom})
+	if err != nil || cert == nil || cert.Leaf == nil || cert.Leaf.Subject.CommonName != shareDom {
+		t.Fatalf("SNI cert for %s = (%v, %v), want CN=%s", shareDom, cert, err, shareDom)
+	}
 }

@@ -163,8 +163,10 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	}
 	token := chi.URLParam(r, "token")
 	link, err := s.DB.ShareLinkByToken(ctx, auth.HashToken(token))
-	if err != nil || link.PageID == "" {
-		// Unknown, expired, revoked, or a database hiccup. A page of its own,
+	shareOrigin, onShareHost := s.isShareHost(r)
+	if err != nil || link.PageID == "" || (onShareHost && link.Purpose != "") {
+		// Unknown, expired, revoked, an internal preview/peek link hit on the
+		// dedicated share host, or a database hiccup. A page of its own,
 		// with no script and nothing of the panel's in it: the address is held
 		// by somebody who is not signed in, and the one useful thing to tell
 		// them is that it no longer works. A database that is down says so,
@@ -214,8 +216,18 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	// Every response, not only the HTML: a stylesheet or a JSON file served
 	// without the sandbox is a document somebody can navigate to directly, and
 	// it would be the one running on the panel's origin.
+	//
+	// On a dedicated share host, use the configured share origin rather than
+	// requestOrigin(r): behind a TLS-terminating reverse proxy without
+	// VIBEPANEL_TRUSTED_PROXIES, requestOrigin(r) sees http:// while the
+	// browser is on https://, which would make CSP refuse vibepanel.js and
+	// /v1/snapshot.
+	cspOrigin := s.requestOrigin(r)
+	if onShareHost {
+		cspOrigin = shareOrigin
+	}
 	h.Set("Content-Security-Policy",
-		sharePageCSP(s.requestOrigin(r), token, manifest.ScriptHosts, preview))
+		sharePageCSP(cspOrigin, token, manifest.ScriptHosts, preview))
 	h.Set("Permissions-Policy", sharePagePermissions)
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Robots-Tag", "noindex, nofollow")
