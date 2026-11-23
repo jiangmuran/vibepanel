@@ -190,17 +190,22 @@ const MaxPayload = 256 << 10
 const MaxText = 16 << 10
 
 // hookDocument is the union of every field any agent's hook is read for.
-// Unknown fields are ignored, which is what lets four agents share it.
+// Unknown fields are ignored, which is what lets the agents share it; agy
+// encodes its protobuf hook context as camelCase JSON (`hookEventName`,
+// `transcriptPath`), while Claude Code, Codex, Kimi Code and zcode use
+// snake_case.
 type hookDocument struct {
-	Event            string          `json:"hook_event_name"`
-	TranscriptPath   string          `json:"transcript_path"`
-	Message          string          `json:"message"`
-	Title            string          `json:"title"`
-	NotificationType string          `json:"notification_type"`
-	LastAssistant    string          `json:"last_assistant_message"`
-	Prompt           string          `json:"prompt"`
-	ToolName         string          `json:"tool_name"`
-	ToolInput        json.RawMessage `json:"tool_input"`
+	Event               string          `json:"hook_event_name"`
+	EventCamel          string          `json:"hookEventName"`
+	TranscriptPath      string          `json:"transcript_path"`
+	TranscriptPathCamel string          `json:"transcriptPath"`
+	Message             string          `json:"message"`
+	Title               string          `json:"title"`
+	NotificationType    string          `json:"notification_type"`
+	LastAssistant       string          `json:"last_assistant_message"`
+	Prompt              string          `json:"prompt"`
+	ToolName            string          `json:"tool_name"`
+	ToolInput           json.RawMessage `json:"tool_input"`
 }
 
 // Extract reads a hook document and says what it carried.
@@ -222,6 +227,12 @@ func Extract(raw []byte) (Report, bool) {
 		// message in half. Losing the message is the right outcome; losing
 		// the state report is not, and the caller makes sure it is not lost.
 		return Report{}, false
+	}
+	if doc.Event == "" {
+		doc.Event = doc.EventCamel
+	}
+	if doc.TranscriptPath == "" {
+		doc.TranscriptPath = doc.TranscriptPathCamel
 	}
 	r := Report{Event: doc.Event, TranscriptPath: Clean(doc.TranscriptPath, 4096)}
 	switch doc.Event {

@@ -23,6 +23,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/jiangmuran/vibepanel/internal/agylog"
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/chat"
 	"github.com/jiangmuran/vibepanel/internal/claudeaccount"
@@ -59,7 +60,11 @@ type Server struct {
 	// claudeLogs follows each Claude Code session's transcript for the one
 	// thing its hooks never report, an interrupt.
 	claudeLogs claudelog.Watcher
-	Sampler    *sysmon.Sampler
+	// agyLogs reads the conversation title agy writes to annotations/*.pbtxt,
+	// matched through the presence lock agy holds open in /proc (or its hook's
+	// transcriptPath where /proc is absent), since agy never sets pane_title.
+	agyLogs agylog.Watcher
+	Sampler *sysmon.Sampler
 
 	// Resources is the memory governor. Nil where there is nothing to govern
 	// (not Linux) and in tests that do not build one.
@@ -2535,11 +2540,12 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		return err
 	}
 	s.publishResourceSessions(rows)
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	s.agyLogs.Retain(ids)
 	if s.Detector != nil {
-		ids := make([]string, 0, len(rows))
-		for _, row := range rows {
-			ids = append(ids, row.ID)
-		}
 		s.Detector.Retain(ids)
 		s.codexLogs.Retain(ids)
 		s.claudeLogs.Retain(ids)
@@ -2631,7 +2637,8 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		if live != nil {
 			ptyTitle = live.Title()
 		}
-		if title := deriveTitle(info, ptyTitle, row.Scratch); title != "" &&
+		agyTitle := s.agyTitle(ctx, row, info, now)
+		if title := deriveTitle(info, ptyTitle, agyTitle, row.Scratch); title != "" &&
 			row.TitleSource == store.TitleAuto && session.TruncateTitle(title) != row.Title {
 			// SetSessionTitle with TitleAuto is a no-op once the user has
 			// renamed the tab, so this cannot stomp a manual name; the source
@@ -2703,9 +2710,40 @@ func (s *Server) pollOnce(ctx context.Context) error {
 	return firstErr
 }
 
+// agyTitle returns the conversation title Antigravity CLI wrote for this
+// session's foreground conversation, or "" when the pane is not running agy or
+// has not named the conversation yet.
+func (s *Server) agyTitle(ctx context.Context, row store.Session, info tmux.Info, now time.Time) string {
+	if row.TitleSource != store.TitleAuto {
+		return ""
+	}
+	if info.Dead {
+		// Once agy exits, its /proc presence descriptor is gone while tmux's
+		// pane_title is still the hostname. Preserve the conversation title the
+		// row already earned so a finished remain-on-exit pane is not renamed
+		// back to "agy".
+		if info.Command == "agy" && row.Title != "" && row.Title != "agy" {
+			return row.Title
+		}
+		return ""
+	}
+	if info.Command != "agy" {
+		return ""
+	}
+	if title, fromProc := s.agyLogs.Title(row.ID, info.PID, "", now); fromProc {
+		return title
+	}
+	tr, ok, err := s.DB.GetSessionTranscript(ctx, row.ID)
+	if err != nil || !ok || tr.Tool != "agy" {
+		return ""
+	}
+	title, _ := s.agyLogs.Title(row.ID, 0, tr.Path, now)
+	return title
+}
+
 // deriveTitle picks the best automatic name for a session.
 //
-// Four fallbacks, in descending order of how much they tell the user:
+// Five fallbacks, in descending order of how much they tell the user:
 //
 //  1. The title the application set over OSC 0/2, as tmux recorded it in
 //     #{pane_title}. Agents set useful ones. Skipped when it is just the
@@ -2718,9 +2756,12 @@ func (s *Server) pollOnce(ctx context.Context) error {
 //     codex already sends its OSC 9 and OSC 52 exactly that way. The panel
 //     parsed those titles, bounded them, broadcast them to the browser, and
 //     stored none of them.
-//  3. The running command — "claude", "codex" is exactly what is being looked
+//  3. A conversation title the agent wrote on disk rather than to the terminal:
+//     agy never emits OSC 0/2, and records its title in annotations/<id>.pbtxt
+//     beside the presence lock its process holds open.
+//  4. The running command — "claude", "codex" is exactly what is being looked
 //     for.
-//  4. For a shell, the directory it sits in. Every shell is called "bash", so
+//  5. For a shell, the directory it sits in. Every shell is called "bash", so
 //     the command tells you nothing; where it is at least distinguishes the one
 //     in a worktree from the one at the repo root.
 //
@@ -2732,12 +2773,15 @@ func (s *Server) pollOnce(ctx context.Context) error {
 // The directory fallback is skipped for scratch terminals. They live in a tab
 // strip that already belongs to one session in one directory, so naming them
 // all after it produces a row of identical tabs. The UI numbers those instead.
-func deriveTitle(info tmux.Info, ptyTitle string, isScratch bool) string {
+func deriveTitle(info tmux.Info, ptyTitle, agentTitle string, isScratch bool) string {
 	if info.Title != "" && info.Title != hostname() && info.Title != info.Command {
 		return info.Title
 	}
 	if ptyTitle != "" && ptyTitle != hostname() {
 		return ptyTitle
+	}
+	if agentTitle != "" && agentTitle != hostname() {
+		return agentTitle
 	}
 	if info.Command != "" && !isShell(info.Command) {
 		return info.Command

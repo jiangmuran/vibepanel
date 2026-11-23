@@ -28187,4 +28187,37 @@ What changed across the frontend:
   gutter or arrow buttons (`scrollbar-width: thin` gated to engines without
   `::-webkit-scrollbar` so Chromium keeps the custom pill).
 
+## 2026-11-22 — Automatic session titles for agy
+
+Every `agy` (Antigravity CLI) session in the sidebar sat under `"agy"`.
+Measured on `agy` 1.5.14 across seven live sessions on this host: `#{pane_title}`
+never moves off the machine's hostname, and nothing arrives on the panel's PTY
+over `OSC 0/2`, plain or passthrough (`SetWindowTitle` is never called by the
+binary).
+
+`agy` does generate a conversation title a couple of seconds into the first
+turn -- and updates it on `/rename` -- writing both `conversation_summaries.db`
+and a ~40-byte prototext `ConversationAnnotations` file at
+`~/.gemini/antigravity-cli/annotations/<conversation-id>.pbtxt` (`title:"..."`).
+Two naive ways of matching a pane to its conversation fail on real sessions:
+
+- Matching by working directory or `history.jsonl` fails as soon as two `agy`
+  panes sit in the same repository (two of the seven here did).
+- Matching by `conversations/<id>.db` descriptors in `/proc` fails in both
+  directions: subagents (`invoke_subagent`) run in the same `agy` process, open
+  their own `conversations/<subagent>.db` with an empty title, and idle
+  conversations close `conversations/<id>.db` altogether.
+
+What `agy` holds open for the whole life of the foreground conversation -- and
+never for a subagent -- is `<appDataDir>/presence/<conversation-id>.lock`, and
+`/clear` swaps that descriptor immediately. `internal/agylog` walks `/proc` from
+the pane's PID to find that lock and reads the sibling `annotations/<id>.pbtxt`
+directly (no connection to `agy`'s WAL database, and Go `prototext`'s
+deliberate `:` vs `: ` space randomisation and nested fields handled). Where
+`/proc` is absent (macOS), `hooks.Extract` now reads `agy`'s camelCase
+`hookEventName` and `transcriptPath` so `session_transcripts` resolves the same
+annotation file when hooks are installed. A finished `remain-on-exit` pane keeps
+the title it earned after `/proc/<pid>` disappears.
+
+
 
