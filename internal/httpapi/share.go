@@ -191,6 +191,13 @@ func (s *Server) requireShareToken(next http.Handler) http.Handler {
 				"the panel cannot reach its own database")
 			return
 		}
+		if _, onShareHost := s.isShareHost(ctx, r); onShareHost && link.Purpose != "" {
+			// The dedicated share host serves only handed-out share links,
+			// never internal draft preview links or owner peek links.
+			s.auditFromOutside(ctx, "share.rejected", "", ip, "non-public link on share origin")
+			writeErr(w, http.StatusUnauthorized, "this link is not valid")
+			return
+		}
 
 		// Best effort, and rate limited. A failed stamp must not fail the
 		// request it was stamping.
@@ -1709,6 +1716,8 @@ func (s *Server) registerShareAdminRoutes(r chi.Router) {
 	r.Post("/settings/shares/{shareID}/rotate", s.handleRotateShare)
 	r.Get("/settings/sharing", s.handleGetSharing)
 	r.Put("/settings/sharing", s.handlePutSharing)
+	r.Post("/settings/sharing/check", s.handleCheckShareOrigin)
+	r.Post("/settings/sharing/provision", s.handleProvisionShareOrigin)
 	r.Patch("/settings/shares/{shareID}", s.handleUpdateShare)
 	r.Delete("/settings/shares/{shareID}", s.handleDeleteShare)
 }

@@ -109,6 +109,10 @@ var openRoutes = map[string]string{
 	"/pages/{pageID}/admin/": "the same route, with its slash",
 	"/page-admin/{grant}":    "an unknown grant is a static gone page; a live grant is the capability",
 	"/page-admin/{grant}/*":  "the same route, with a path under it",
+	// Ephemeral self-probe minted for <=15s by a signed-in owner checking a
+	// dedicated share origin. Unknown nonces answer 404; only the active
+	// 128-bit nonce echoes itself so the check proves traffic hit this panel.
+	"/.well-known/vibepanel-probe/{nonce}": "ephemeral 128-bit self-probe for share-origin check; unknown nonces answer 404",
 }
 
 // `/api/share/{token}/v1/snapshot` is deliberately NOT in the list above, and the
@@ -1206,8 +1210,9 @@ var beyondTheAllowlist = map[string]string{
 	"/api/chat/tools/sessions/{handle}/messages": "the same",
 	"/api/chat/tools/sessions/{handle}/screen":   "the same",
 	// Called by services on the internet, which verify themselves.
-	"/api/chat/hooks/{kind}":             "an IM's callback; the adapter verifies its signature",
-	"/api/plugin-hook/{pluginID}/{path}": "a plugin's inbound route; verified against its secret",
+	"/api/chat/hooks/{kind}":               "an IM's callback; the adapter verifies its signature",
+	"/api/plugin-hook/{pluginID}/{path}":   "a plugin's inbound route; verified against its secret",
+	"/.well-known/vibepanel-probe/{nonce}": "ephemeral 128-bit self-probe from this host's public IP; unknown nonces answer 404",
 	// Recorded as they are, not endorsed: both were noted by the October audit
 	// (04-F7) as surfaces a stranger reaches whatever --allow-from says.
 	// Setup was a third, until it was made to ask.

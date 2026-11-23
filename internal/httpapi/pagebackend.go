@@ -5,11 +5,14 @@ package httpapi
 // in one place and a Server built by hand in a test has all of them zeroed and
 // working.
 type pageBackend struct {
-	secrets secrets
-	actions actionDay
-	data    pageDataState
-	rates   rateBook
-	audit   actionAudit
-	sources sourcesState
-	server  serverState
+	secrets     secrets
+	origin      shareOriginCache
+	probes      shareProbeBook
+	provisioner *shareOriginProvisioner
+	actions     actionDay
+	data        pageDataState
+	rates       rateBook
+	audit       actionAudit
+	sources     sourcesState
+	server      serverState
 }

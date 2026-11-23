@@ -363,10 +363,36 @@ framing the panel, being framed), the workflow through the UI end to end, and
 every template on a TV, a laptop and a phone against `busy`, `counts`, `hostile`
 and `empty`. It is in `make verify`.
 
-## 9. What was not built
+## 9. Optional dedicated share origin
 
-- **A separate origin for pages.** The response-header sandbox on the panel's
-  origin is the boundary, as it is for directory previews.
+The response-header sandbox on the panel's own origin remains the default
+boundary, as it is for directory previews, so single-domain deployments need no
+extra DNS or TLS setup.
+
+Operators who want to keep the panel's hostname off handed-out links can set a
+dedicated `shareOrigin` (`scheme://host[:port]`, e.g. `https://share.example.com`)
+in **Settings → Sharing** (`PUT /api/settings/sharing`) or via
+`vibepanel settings share-origin` and point a reverse proxy for that host at
+the panel (forwarding `Host`). Handed-out create/copy/rotate addresses then use
+that origin, and `shareHostOnly` restricts requests arriving on that host to
+`/share/{token}*` and `/api/share/{token}/*` for handed-out links — every other
+path (including `/`, `/api/health`, `/api/auth/*`, `/ws`, previews and admin
+pages) answers `404`.
+
+To avoid guesswork when wiring a new subdomain, **Settings → Sharing** (and
+`vibepanel settings share-origin check|setup <origin>`) provides:
+
+- **Live reachability check** (`POST /api/settings/sharing/check`): resolves DNS
+  against the panel's host IPs and performs a self-probe against an ephemeral
+  128-bit nonce (`GET /.well-known/vibepanel-probe/{nonce}`) to confirm that the
+  domain actually hits this panel over valid HTTPS with `Host` preserved.
+- **One-click HTTPS** (`POST /api/settings/sharing/provision`): under
+  `--tls acme`, adds the share domain live to `certmagic` SNI management; under
+  `--tls off` behind nginx with certbot, detects the active SSL listen target
+  (including `stream` SNI multiplexers on port 443), writes an isolated
+  `# Managed by vibepanel` vhost with atomic rollback on error, obtains a Let's
+  Encrypt certificate via HTTP-01 webroot, reloads nginx, and saves the origin.
+  Hosts without automated provisioning receive a ready-to-paste nginx snippet.
 
 ## 10. Decisions taken
 

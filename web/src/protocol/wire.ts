@@ -1307,9 +1307,52 @@ export interface SharePageServerLogLine {
   text: string
 }
 
-/** Panel-wide sharing switches. */
+/** Panel-wide sharing settings. */
 export interface SharingSettings {
   visitorWrites: boolean
+  /** Optional dedicated origin (scheme://host[:port]) for handed-out share links; '' uses the panel's own address. */
+  shareOrigin: string
+}
+
+/** Whether automatic HTTPS provisioning is available for a candidate share origin. */
+export interface ShareOriginProvisionInfo {
+  mode: string
+  canProvision: boolean
+  reason: string
+  nginxListen: string
+  snippet: string
+}
+
+/** Live DNS, reverse-proxy and HTTPS diagnostic report for a candidate share origin. */
+export interface ShareOriginCheck {
+  origin: string
+  hostname: string
+  ready: boolean
+  status: string
+  dnsOk: boolean
+  dnsIps: string[]
+  hostIps: string[]
+  dnsMatchesHost: boolean
+  dnsError: string
+  reachable: boolean
+  hostForwarded: boolean
+  seenHost: string
+  reachError: string
+  tlsRequired: boolean
+  tlsOk: boolean
+  tlsIssuer: string
+  tlsNotAfter: number
+  tlsError: string
+  httpPortOpen: boolean
+  provision: ShareOriginProvisionInfo
+}
+
+/** Result of one-click HTTPS provisioning for a dedicated share origin. */
+export interface ShareOriginProvisionResult {
+  origin: string
+  mode: string
+  shareOrigin: string
+  check: ShareOriginCheck
 }
 
 export interface SharePageParam {

@@ -35,7 +35,7 @@
 
 import { chromium } from 'playwright'
 import { createServer as createNetServer } from 'node:net'
-import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { spawn, execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -761,6 +761,54 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
       pass('backend/rotate', 'a new address works and the old one is a dead link')
     } else {
       note('FAIL', 'backend/rotate', `rotate ${rotated.status}, old ${oldPage.status}, new ${newPage?.status}`)
+    }
+
+    // Dedicated share origin: set through the UI, rewrites URLs, and isolates the share host.
+    {
+      const customOrigin = 'https://share.local.test'
+      const withHost = (reqPath) =>
+        new Promise((resolve, reject) => {
+          const req = httpRequest(
+            { hostname: '127.0.0.1', port: PORT, path: reqPath, method: 'GET', headers: { Host: 'share.local.test' } },
+            (res) => {
+              let data = ''
+              res.on('data', (c) => { data += c })
+              res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }))
+            },
+          )
+          req.on('error', reject)
+          req.end()
+        })
+
+      await openSharing()
+      await ui.locator('[data-testid="share-origin-change"]').click()
+      await ui.locator('[data-testid="share-origin-input"]').fill(customOrigin)
+      await ui.locator('[data-testid="share-origin-save"]').click()
+      await ui.locator('[data-testid="share-origin-value"]').waitFor({ state: 'visible', timeout: 5000 }).catch(() => {})
+      const shownOrigin = await ui.locator('[data-testid="share-origin-value"]').textContent().catch(() => '')
+      const urlResp = await api('GET', `/api/settings/shares/${link.id}/url`)
+      const shareHit = await withHost(`/share/${newToken}/`)
+      const rootHit = await withHost('/')
+      const healthHit = await withHost('/api/health')
+      if (
+        shownOrigin?.trim() === customOrigin &&
+        urlResp.body?.url === `${customOrigin}/share/${newToken}/` &&
+        shareHit.status === 200 &&
+        String(shareHit.headers['content-security-policy'] || '').includes(`${customOrigin}/share/${newToken}/`) &&
+        rootHit.status === 404 &&
+        healthHit.status === 404
+      ) {
+        pass('backend/share-origin', 'custom origin rewrites URLs, sets https CSP and blocks panel routes on its host')
+      } else {
+        note(
+          'FAIL',
+          'backend/share-origin',
+          `shown=${shownOrigin} url=${urlResp.body?.url} share=${shareHit.status} root=${rootHit.status} health=${healthHit.status}`,
+        )
+      }
+      await ui.locator('[data-testid="share-origin-change"]').click()
+      await ui.locator('[data-testid="share-origin-reset"]').click()
+      await sleep(300)
     }
 
     // The admin page: the login in front of it, and no cookie behind it.

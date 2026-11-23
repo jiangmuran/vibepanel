@@ -175,6 +175,10 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"SharePageSource", pageSourceRow{}},
 		{"SharePageServerLogLine", serverLogLine{}},
 		{"SharePageSecret", store.PageSecret{}},
+		{"SharingSettings", sharingSettingsResponse{}},
+		{"ShareOriginProvisionInfo", shareOriginProvisionInfo{}},
+		{"ShareOriginCheck", shareOriginCheckResponse{}},
+		{"ShareOriginProvisionResult", shareOriginProvisionResult{}},
 		// Token usage. Pinned from the first commit rather than after the
 		// first drift, because this surface has more fields than anything
 		// above it and every one of them is a number somebody will believe.
@@ -444,8 +448,10 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		// A link's address replaced, and a link made able to write page data.
 		"share.rotated":             true,
 		"share.interactive_changed": true,
-		// The switch for every visitor write on the panel.
-		"sharing.visitor_writes": true,
+		// Panel-wide sharing settings: visitor writes switch and dedicated share origin.
+		"sharing.visitor_writes":     true,
+		"sharing.origin_changed":     true,
+		"sharing.origin_provisioned": true,
 		// A page's own data changed by its owner or through an admin page.
 		"page.data_changed": true,
 		// A visitor action run through a link, coalesced per minute; a grant

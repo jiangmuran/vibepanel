@@ -1456,9 +1456,54 @@ as `share.rotated`.
 ### `GET /api/settings/sharing`
 ### `PUT /api/settings/sharing`
 
-`{"visitorWrites": true}`: whether any visitor action on any link may run. On by
-default; turning it off refuses the next action on every interactive link.
-`PUT` requires the field and is audited as `sharing.visitor_writes`.
+`{"visitorWrites": true, "shareOrigin": ""}`: panel-wide sharing settings.
+
+- `visitorWrites` (default `true`): whether any visitor action on any link may
+  run. Turning it off refuses the next action on every interactive link. Audited
+  as `sharing.visitor_writes`.
+- `shareOrigin` (default `""`): an optional dedicated `scheme://host[:port]`
+  origin (such as `https://share.example.com`) for handed-out share links.
+  When set, `POST /api/settings/shares`, `GET /api/settings/shares/{id}/url` and
+  `POST /api/settings/shares/{id}/rotate` build `url` under this origin, and
+  requests arriving on its host reach only `/share/{token}*` and
+  `/api/share/{token}/*` for handed-out links — every other path (including `/`,
+  `/api/health`, `/api/auth/*`, `/ws`, previews and admin pages) answers `404`
+  so the panel's sign-in screen is never exposed on the share domain. Setting it
+  to the panel's own address is refused with `400`; setting `""` returns to the
+  panel's own address. Audited as `sharing.origin_changed`.
+
+`PUT` accepts either or both fields and refuses an empty `{}` with `400`.
+
+### `POST /api/settings/sharing/check`
+
+`{"origin": "https://share.example.com"}` (bare hostnames default to `https://`).
+Checks whether the candidate share domain actually reaches this panel right now:
+resolves DNS against the panel's known host IPs, mints a short-lived 128-bit
+nonce served at `GET /.well-known/vibepanel-probe/{nonce}`, probes the origin
+over strict HTTPS (falling back to TLS/port-80 diagnostics on failure) to confirm
+valid HTTPS and `Host` header forwarding, and reports whether one-click HTTPS
+provisioning is available (`provision.mode`: `acme`, `nginx-certbot`, or
+`manual` with a ready-to-paste nginx vhost snippet). Returns `status` in
+`ready`, `needs_dns`, `needs_https`, `needs_proxy`, `host_mismatch`,
+`unreachable`. Refuses the panel's own address with `400`.
+
+### `POST /api/settings/sharing/provision`
+
+`{"origin": "https://share.example.com"}`. One-click HTTPS provisioning for a
+dedicated share domain:
+
+- Under `--tls acme`, adds the hostname live to the running ACME SNI config
+  (`certmagic`) with automatic renewal and no restart.
+- Under `--tls off` behind nginx with certbot and writable nginx/webroot paths,
+  detects the active SSL listen address (including `stream` SNI multiplexers on
+  port 443), writes an isolated `# Managed by vibepanel` vhost with atomic
+  rollback on failure, obtains a Let's Encrypt certificate via HTTP-01 webroot
+  (or reuses a valid certificate already on disk), and reloads nginx.
+
+Refuses before contacting Let's Encrypt if DNS does not resolve yet (`400`), or
+if another unmanaged nginx site already declares `server_name <hostname>`.
+On success, saves `sharing.origin`, audits `sharing.origin_provisioned` and
+`sharing.origin_changed`, and returns `{origin, mode, shareOrigin, check}`.
 
 ### `POST /api/settings/shares/{shareID}/view`
 
