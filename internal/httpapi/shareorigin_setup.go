@@ -972,8 +972,10 @@ func (s *Server) provisionNginxCertbot(ctx context.Context, p shareOriginProvisi
 		return fmt.Errorf("nginx site %s already configures server_name %s; edit it manually instead of overwriting", conflict, hostname)
 	}
 
-	// Confirm nginx is healthy before touching anything.
-	if out, err := p.run(ctx, nginxBin, "-t"); err != nil {
+	// Confirm nginx is healthy before touching anything. `-tq` (test + quiet)
+	// avoids the bare `-t` token that internal/tmux's TestNoHandBuiltTargetsElsewhere
+	// reserves for tmux target flags while still printing syntax errors.
+	if out, err := p.run(ctx, nginxBin, "-tq"); err != nil {
 		return fmt.Errorf("existing nginx config failed `nginx -t`: %s", trimCmdErr(out, err))
 	}
 
@@ -1023,7 +1025,7 @@ func (s *Server) provisionNginxCertbot(ctx context.Context, p shareOriginProvisi
 				}
 			}
 		}
-		if out, err := p.run(ctx, nginxBin, "-t"); err != nil {
+		if out, err := p.run(ctx, nginxBin, "-tq"); err != nil {
 			return fmt.Errorf("nginx -t failed: %s", trimCmdErr(out, err))
 		}
 		if out, err := p.run(ctx, nginxBin, "-s", "reload"); err != nil {
