@@ -15,6 +15,7 @@ import { LaunchProfiles } from '../LaunchProfiles'
 import { ClaudeAccounts } from '../ClaudeAccounts'
 import { Section } from './parts'
 import { TuneClaude } from './TuneClaude'
+import { ShareSkillSettings } from './ShareSkillSettings'
 import { PasteSettings } from './PasteSettings'
 import { ArchiveSettings } from './ArchiveSettings'
 
@@ -36,6 +37,7 @@ export function SessionsGroup() {
       </Section>
       <HooksSection />
       <TuneClaude />
+      <ShareSkillSettings />
       <PasteSettings />
       <ArchiveSettings />
     </>

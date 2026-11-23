@@ -54,11 +54,18 @@ let serverLog = ''
 // left it edited. render-check has had a FAKE_HOME since it started reading
 // transcripts; this one had no reason to until it grew a step that writes.
 const FAKE_HOME = mkdtempSync(join(tmpdir(), 'vpfirst-home-'))
+// A directory named like the share skill that the panel did not write: the tour
+// has to show it as somebody else's, with no way to install over it.
+mkdirSync(join(FAKE_HOME, '.codex', 'skills', 'vibepanel-share'), { recursive: true })
 
 const server = spawn(BIN, ['serve', '--addr', `127.0.0.1:${PORT}`], {
   env: {
     ...process.env,
     HOME: FAKE_HOME,
+    // Codex and dsh honour these before HOME, so one set in the developer's
+    // shell would send the share-skill step to their real agent directories.
+    CODEX_HOME: '',
+    DSH_HOME: '',
     VIBEPANEL_DATA_DIR: join(DATA, 'data'),
     VIBEPANEL_TMUX_SOCKET: SOCKET,
   },
@@ -181,6 +188,48 @@ try {
         `the reporting step left Claude Code unwired (events: ${JSON.stringify(st.events)})`)
     }
     await page.screenshot({ path: join(SHOTS, 'tour-2.png') })
+
+    // Step 3 is Claude Code settings (tune), step 4 is the optional agent share
+    // plugin step: verify all four harnesses appear and enabling one writes its
+    // bundle inside FAKE_HOME.
+    await page.locator('[data-testid="tour-next"]').click()
+    await sleep(400)
+    await page.locator('[data-testid="tour-next"]').click()
+    await sleep(600)
+    if ((await page.locator('[data-tour-shareskill]').count()) !== 4) {
+      note('FAIL', 'tour', 'the share plugin step does not offer all four agents')
+    }
+    const skillBtn = page.locator('[data-testid="tour-shareskill-claude"]')
+    if (await skillBtn.count()) {
+      await skillBtn.click()
+      await sleep(1200)
+    }
+    const skillSt = await page.evaluate(() => fetch('/api/settings/share-skill').then((r) => r.json()))
+    const claudeSkill = skillSt.agents?.find((a) => a.id === 'claude')
+    if (!claudeSkill?.installed) {
+      note('FAIL', 'tour',
+        `the share plugin step left Claude Code uninstalled (${JSON.stringify(claudeSkill)})`)
+    }
+    await page.screenshot({ path: join(SHOTS, 'tour-4-shareskill.png') })
+    if (!(await page.locator('[data-testid="tour-shareskill-codex-foreign"]').isVisible().catch(() => false)) ||
+        (await page.locator('[data-testid="tour-shareskill-codex"]').count())) {
+      note('FAIL', 'tour', 'a directory the panel did not create at the Codex path is not shown as foreign, or still offers an install')
+    }
+
+    // "Continue in settings" opens Settings from inside the tour. It has to
+    // land above the tour's backdrop, or it is there and cannot be clicked.
+    await page.locator('[data-testid="tour-to-shareskill"]').click()
+    await sleep(800)
+    const onTop = await page.evaluate(() => {
+      const d = document.querySelector('[data-testid="settings"]')
+      if (!d) return 'no settings dialog'
+      const r = d.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 20)
+      return hit && d.contains(hit) ? 'ok' : 'the tour covers the settings dialog'
+    })
+    if (onTop !== 'ok') note('FAIL', 'tour', `settings opened from the tour: ${onTop}`)
+    await page.locator('[data-testid="settings-close"]').click().catch(() => {})
+    await sleep(400)
 
     // And it goes away for good.
     await page.locator('[data-testid="tour-skip"]').click()

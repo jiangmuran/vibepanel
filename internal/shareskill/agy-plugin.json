@@ -1,0 +1,7 @@
+{
+  "name": "vibepanel-share",
+  "displayName": "vibepanel Share",
+  "version": "1.0.0",
+  "description": "Create, validate, publish, and share vibepanel share pages from any project.",
+  "logo": "assets/logo.svg"
+}

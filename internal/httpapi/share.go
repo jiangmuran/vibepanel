@@ -1828,6 +1828,22 @@ func (s *Server) scopeFor(ctx context.Context, kind, id string) (store.ShareScop
 	return scope, id, nil
 }
 
+// validateShareTerms is the disclosure level and lifetime a new link may have,
+// shared by the settings route and `vibepanel page link` so the CLI cannot mint
+// a link the route would refuse. An empty detail is the quieter counts mode.
+func validateShareTerms(detail store.ShareDetail, expiresIn int64) (store.ShareDetail, error) {
+	if detail == "" {
+		detail = store.ShareCounts
+	}
+	if !store.ValidShareDetail(detail) {
+		return "", errors.New("detail must be counts or names")
+	}
+	if expiresIn < 0 || expiresIn > maxShareSeconds {
+		return "", errors.New("expiresIn must be between 0 and a year, in seconds")
+	}
+	return detail, nil
+}
+
 // handleCreateShare mints a link, and is the only time its token is readable.
 //
 // The same shape as an API token and for the same reason: the database keeps a
@@ -1850,16 +1866,9 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 
 	// Default to the quieter mode. A default that discloses names would be one
 	// nobody chose, on a screen chosen because other people can see it.
-	detail := store.ShareDetail(strings.TrimSpace(req.Detail))
-	if detail == "" {
-		detail = store.ShareCounts
-	}
-	if !store.ValidShareDetail(detail) {
-		writeErr(w, http.StatusBadRequest, "detail must be counts or names")
-		return
-	}
-	if req.ExpiresIn < 0 || req.ExpiresIn > maxShareSeconds {
-		writeErr(w, http.StatusBadRequest, "expiresIn must be between 0 and a year, in seconds")
+	detail, err := validateShareTerms(store.ShareDetail(strings.TrimSpace(req.Detail)), req.ExpiresIn)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	scope, scopeID, err := s.scopeFor(r.Context(), req.Scope, req.ScopeID)

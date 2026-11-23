@@ -958,6 +958,9 @@ viewer outside a project".
 ### `PUT /api/settings/env`
 ### `GET /api/settings/tune`
 ### `POST /api/settings/tune`
+### `GET /api/settings/share-skill`
+### `POST /api/settings/share-skill`
+### `DELETE /api/settings/share-skill`
 ### `GET /api/settings/tokens`
 ### `POST /api/settings/tokens`
 ### `DELETE /api/settings/tokens/{tokenID}`
@@ -993,6 +996,26 @@ agent writes into your git history. Each row carries the key, what it does in
 both languages, the value on disk and the value that would be written. `POST`
 writes them, copying the file beside itself first and touching nothing else in
 it. Both are the same list `vibepanel tune claude` prints.
+
+`GET /api/settings/share-skill` reports the optional `vibepanel-share`
+skill/plugin bundle for `claude` (`~/.claude/skills/vibepanel-share/`),
+`codex` (`$CODEX_HOME/skills/vibepanel-share/SKILL.md`), `agy`
+(`~/.gemini/config/plugins/vibepanel-share/`) and `dsh`
+(`$DSH_HOME/skills/vibepanel-share/SKILL.md`), together with the exact
+`SKILL.md` body that would be written. `POST /api/settings/share-skill` and
+`DELETE /api/settings/share-skill` take `?agent=` or JSON `{"agent": "..."}` /
+`{"agents": [...]}` (each one of `claude`, `codex`, `agy`, `dsh`, or `all`;
+empty or unrecognised names answer `400`). Each target owns only its
+`vibepanel-share` directory and never edits existing configuration files.
+Audited as `shareskill.installed` and `shareskill.removed`.
+
+The panel writes a `.vibepanel-owned` marker into every directory it creates and
+overwrites or removes only a directory that has it. Each agent row carries
+`foreign: true` when something else is at that path (no marker, or a symlink);
+`POST` and `DELETE` for it answer `409` and change nothing. A relative
+`CODEX_HOME` or `DSH_HOME` is ignored in favour of the default. A row whose path
+could not be resolved (no home directory) carries `error` instead of failing the
+whole listing.
 
 `POST /api/settings/hooks` merges the state-reporting hooks into the agent's own
 configuration file, backing it up first and tagging every entry so removing them

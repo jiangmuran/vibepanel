@@ -38,6 +38,8 @@ import type {
   ShareOriginCheck,
   ShareOriginProvisionResult,
   ShareParamValue,
+  ShareSkillAgentId,
+  ShareSkillStatus,
   SystemSample,
   TokenUsage,
   UsageSample,
@@ -881,6 +883,18 @@ export const api = {
     request<ShareOriginProvisionResult>('/api/settings/sharing/provision', {
       method: 'POST',
       body: JSON.stringify({ origin }),
+    }),
+
+  shareSkillStatus: () => request<ShareSkillStatus>('/api/settings/share-skill'),
+
+  installShareSkill: (agent: ShareSkillAgentId | 'all') =>
+    request<ShareSkillStatus>(`/api/settings/share-skill?agent=${encodeURIComponent(agent)}`, {
+      method: 'POST',
+    }),
+
+  removeShareSkill: (agent: ShareSkillAgentId | 'all') =>
+    request<ShareSkillStatus>(`/api/settings/share-skill?agent=${encodeURIComponent(agent)}`, {
+      method: 'DELETE',
     }),
 
   pageData: (id: string, ns: SharePageDataNamespace = 'live') =>

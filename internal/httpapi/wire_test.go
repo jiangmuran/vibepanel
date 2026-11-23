@@ -17,6 +17,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/plugins"
 	"github.com/jiangmuran/vibepanel/internal/resources"
+	"github.com/jiangmuran/vibepanel/internal/shareskill"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
 )
@@ -73,6 +74,8 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// and the field that says which agents it offers is added here rather
 		// than in a package that has no database to read it from.
 		{"HookStatus", hookStatusResponse{}},
+		{"ShareSkillStatus", shareskill.Status{}},
+		{"ShareSkillAgent", shareskill.AgentStatus{}},
 		{"FileListing", browse.Listing{}},
 		{"SystemSample", sysmon.Sample{}},
 		// The per-session and per-process usage the monitor's detail view
@@ -413,6 +416,8 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		// "what did the panel write into an agent's configuration" is one
 		// question and one GROUP BY.
 		"hooks.tuned":             true,
+		"shareskill.installed":    true,
+		"shareskill.removed":      true,
 		"panel.restarted":         true,
 		"env.changed":             true,
 		"hook.rejected":           true,

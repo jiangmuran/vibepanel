@@ -1312,6 +1312,43 @@ const DICT = {
   'tune.applied': { zh: '改了 {n} 条。', en: 'Changed {n}.' },
   'tune.backup': { zh: '先备份 {p}，其他内容不动', en: 'copies {p} first; nothing else in it changes' },
 
+  // Optional agent skill/plugin for creating and publishing share pages in one prompt.
+  'shareSkill.title': { zh: 'Agent 分享插件', en: 'Agent share plugin' },
+  'shareSkill.why': {
+    zh: 'Agent 可在任意项目发布分享页并返回链接。',
+    en: 'Agents in any project can publish a share page and return its link.',
+  },
+  'shareSkill.note': {
+    zh: '只写专属 vibepanel-share 目录，不改已有配置，可随时开关。',
+    en: 'Writes only its own vibepanel-share folder; never edits existing config files.',
+  },
+  'shareSkill.enabledPlugin': { zh: '已启用插件', en: 'Plugin enabled' },
+  'shareSkill.enabledSkill': { zh: '已启用技能', en: 'Skill enabled' },
+  'shareSkill.stale': { zh: '可更新', en: 'Update available' },
+  'shareSkill.update': { zh: '更新', en: 'Update' },
+  'shareSkill.detected': { zh: '本机已检测到', en: 'Detected' },
+  'shareSkill.showContent': { zh: '查看写入内容（SKILL.md）', en: 'Preview SKILL.md' },
+  'shareSkill.hideContent': { zh: '收起内容', en: 'Hide preview' },
+  'shareSkill.summaryOn': { zh: '已启用 {n}/{total}', en: '{n}/{total} enabled' },
+  'shareSkill.summaryOff': { zh: '未启用', en: 'Not enabled' },
+  'shareSkill.manage': { zh: '配置', en: 'Configure' },
+  'shareSkill.hide': { zh: '收起', en: 'Hide' },
+  'shareSkill.foreign': {
+    zh: '此路径已有一个不是面板创建的目录',
+    en: 'A directory the panel did not create is at this path',
+  },
+  'shareSkill.unavailable': { zh: '无法确定路径', en: 'Path unavailable' },
+
+  'tour.shareSkillH': { zh: '让 Agent 一句话发布分享页（可选）', en: 'Publish share pages from any agent (optional)' },
+  'tour.shareSkill1': {
+    zh: '为 Claude Code、Codex、agy 或 dsh 启用分享插件，在任意项目一句话发预览页。',
+    en: 'Enable the vibepanel-share plugin for Claude Code, Codex, agy, or dsh to publish preview pages from any project.',
+  },
+  'tour.shareSkill2': {
+    zh: '每项都可选，只写独立目录、不改现有配置，之后在设置或分享页可随时开关。',
+    en: 'Every agent is opt-in, stays in its own folder, and can be toggled later in Settings or Sharing.',
+  },
+
   // The service's environment file, as fields.
   'env.title': { zh: '网络与访问', en: 'Network and access' },
   'env.what': {

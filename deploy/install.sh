@@ -31,6 +31,9 @@ BIN_SRC="$SRC/../vibepanel"
 # Whether --tune-claude was said: yes, never, or unset (ask, when there is
 # somebody to ask and a claude to ask about).
 TUNE_CLAUDE_FLAG=
+# Whether --share-skill was said: yes, never, or unset (ask, when there is
+# somebody to ask and at least one supported coding agent is detected).
+SHARE_SKILL_FLAG=
 
 # ── the overrides that exist only so this script can be tested ────────────
 #
@@ -317,6 +320,12 @@ mstr() { # mstr <key>  -> MS_EN / MS_ZH; non-zero if there is no such key
                                 is offered only when there is somebody to ask
                                 and a claude on PATH -- never under --yes.
       --no-tune-claude          do not offer it at all
+      --share-skill             install the optional vibepanel-share skill/plugin
+                                for detected agents (Claude Code, Codex,
+                                Antigravity, DeepSeek Harness) so they can
+                                publish share pages in one prompt. Off under
+                                --yes unless passed explicitly.
+      --no-share-skill          do not offer the agent share plugin at all
 
   The panel'"'"'s first account. Without any of these, the panel prints a one-time
   setup token at startup and you create the account in the browser -- that path
@@ -375,6 +384,10 @@ systemctl --user versus launchctl.'
                                 参数时，只有在有人可问、且 PATH 上有 claude 的情况
                                 下才会问一次 —— --yes 下永远不问。
       --no-tune-claude          完全不提这件事
+      --share-skill             为检测到的 agent（Claude Code、Codex、Antigravity、
+                                DeepSeek Harness）安装可选的 vibepanel-share 插件，
+                                方便一句话发布分享页。--yes 下默认不安装。
+      --no-share-skill          完全不提分享插件这件事
 
   面板的第一个账号。一个都不给时，面板会在启动时打印一次性的 setup token，
   你在浏览器里创建账号 —— 那条路没有变，仍然能用。
@@ -783,6 +796,35 @@ machine and what the agent writes into your git history:'
     plan.claude)
       MS_EN='  adjust   %1$s (copied beside itself first)'
       MS_ZH='  调整     %1$s（会先把原文件复制到旁边）' ;;
+    shareskill.found)
+      MS_EN='Detected coding agents: %1$s'
+      MS_ZH='本机检测到以下 agent：%1$s' ;;
+    shareskill.what)
+      MS_EN='You can also install the optional vibepanel-share plugin/skill so these
+agents can create, check, and publish share pages from any project in one
+prompt. It writes only its own vibepanel-share directory and never edits
+your existing agent config files.'
+      MS_ZH='还可以安装可选的 vibepanel-share 插件/技能，让这些 agent 在任意项目里
+一句话创建、校验并发布分享页。只写各自的 vibepanel-share 专属目录，
+不会修改你现有的 agent 配置文件。' ;;
+    shareskill.ask)
+      MS_EN='Enable the vibepanel-share plugin for these agents?'
+      MS_ZH='要为这些 agent 启用 vibepanel-share 分享插件吗？' ;;
+    shareskill.none)
+      MS_EN='  skipped  vibepanel-share plugin: no supported coding agent was detected
+           (Claude Code, Codex, Antigravity, DeepSeek Harness). Install one, then run
+           `vibepanel page skill install --agent detected`.'
+      MS_ZH='  跳过     vibepanel-share 插件：没有检测到受支持的 agent
+           （Claude Code、Codex、Antigravity、DeepSeek Harness）。装好后运行
+           `vibepanel page skill install --agent detected`。' ;;
+    shareskill.asroot)
+      MS_EN='  skipped  vibepanel-share plugin: this is running as root and the agents
+           belong to %1$s. Run `vibepanel page skill install --agent detected` as %1$s.'
+      MS_ZH='  跳过     vibepanel-share 插件：现在是以 root 运行，而 agent 配置属于 %1$s。
+           请以 %1$s 的身份运行 `vibepanel page skill install --agent detected`。' ;;
+    plan.shareskill)
+      MS_EN='  plugin   vibepanel-share for %1$s'
+      MS_ZH='  插件     为 %1$s 安装 vibepanel-share' ;;
     plan.port)
       MS_EN='  WARNING: something is already listening on port %1$s, so the panel will
            start, fail to bind and be restarted on a three-second loop.
@@ -1146,6 +1188,8 @@ while [ $# -gt 0 ]; do
     # Off unless said, including under --yes. See the section it controls.
     --tune-claude) TUNE_CLAUDE_FLAG=yes ;;
     --no-tune-claude) TUNE_CLAUDE_FLAG=never ;;
+    --share-skill) SHARE_SKILL_FLAG=yes ;;
+    --no-share-skill) SHARE_SKILL_FLAG=never ;;
     --username) shift; [ $# -gt 0 ] || { me arg.username; exit 2; }; ACCT_USER="$1" ;;
     --username=*) ACCT_USER="${1#--username=}" ;;
     --password-stdin) ACCT_STDIN=yes ;;
@@ -1940,6 +1984,35 @@ elif [ -n "$CLAUDE_BIN" ] && [ "$INTERACTIVE" = yes ]; then
   fi
 fi
 
+# Optional agent share-page plugin/skill (Claude Code, Codex, agy, dsh).
+# Off by default under --yes unless --share-skill was passed explicitly.
+SHARE_SKILL=no
+SHARE_SKILL_DETECTED=
+if [ "$SHARE_SKILL_FLAG" = never ]; then
+  SHARE_SKILL=no
+elif [ "$SHARE_SKILL_FLAG" = yes ]; then
+  SHARE_SKILL_DETECTED="$("$BIN_SRC" page skill status --detected-names 2>/dev/null || true)"
+  # Asked for by name and nothing to install into: say so, rather than run an
+  # install that fails quietly behind `|| true` and leave the plan claiming it.
+  if [ -n "$SHARE_SKILL_DETECTED" ]; then
+    SHARE_SKILL=yes
+  else
+    echo
+    m shareskill.none
+  fi
+elif [ "$INTERACTIVE" = yes ]; then
+  SHARE_SKILL_DETECTED="$("$BIN_SRC" page skill status --detected-names 2>/dev/null || true)"
+  if [ -n "$SHARE_SKILL_DETECTED" ]; then
+    echo
+    m shareskill.found "$SHARE_SKILL_DETECTED"
+    m shareskill.what
+    echo
+    if yesno "$(m shareskill.ask)" n; then
+      SHARE_SKILL=yes
+    fi
+  fi
+fi
+
 # ── the plan, before anything happens ─────────────────────────────────────
 echo
 m plan.head
@@ -1988,6 +2061,9 @@ if [ -n "$ACCT_USER" ]; then
 fi
 if [ "$TUNE_CLAUDE" = yes ]; then
   m plan.claude "$HOME/.claude/settings.json"
+fi
+if [ "$SHARE_SKILL" = yes ]; then
+  m plan.shareskill "$SHARE_SKILL_DETECTED"
 fi
 if [ "$PORT_TAKEN" = yes ]; then
   echo
@@ -2054,6 +2130,16 @@ if [ "$TUNE_CLAUDE" = yes ]; then
   else
     echo
     "$BIN_DIR/vibepanel" tune claude --apply --lang "$VP_LANG" || true
+    echo
+  fi
+fi
+
+if [ "$SHARE_SKILL" = yes ]; then
+  if [ "$(id -u)" = 0 ] && [ "$WHO" != root ]; then
+    m shareskill.asroot "$WHO"
+  else
+    echo
+    "$BIN_DIR/vibepanel" page skill install --agent detected || true
     echo
   fi
 fi

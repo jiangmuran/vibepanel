@@ -6,8 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"time"
 
+	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/pages"
+	"github.com/jiangmuran/vibepanel/internal/secret"
+	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -161,4 +170,207 @@ func RunPageServer(ctx context.Context, db *store.DB, page store.SharePage, what
 		return finish(s.runAction(ctx, page, ns, m, name, action, input, "cli", who, visitor, 0))
 	}
 	return out, fmt.Errorf("run transform, schedule or action, not %q", what)
+}
+
+// ShareLinkOptions configures `vibepanel page link` and `page publish --link`.
+type ShareLinkOptions struct {
+	Name        string
+	Detail      store.ShareDetail
+	ExpiresIn   int64
+	Interactive bool
+	ForceNew    bool
+}
+
+// ShareLinkResult is the resolved or newly minted handed-out share link.
+type ShareLinkResult struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	PageID    string `json:"pageId"`
+	URL       string `json:"url"`
+	Detail    string `json:"detail"`
+	ExpiresAt int64  `json:"expiresAt"`
+	Created   bool   `json:"created"`
+	Reused    bool   `json:"reused"`
+	// Warnings are things the caller should say on stderr and that do not
+	// change the link: it only opens locally, or an audit row was not written.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// EnsurePageShareLink returns a clickable handed-out share link for a published
+// page. Unless opts.ForceNew is true, it reuses the newest active copyable link
+// on that page with matching detail and interactivity so repeated publishes keep
+// the same URL.
+//
+// A reused link must be exactly what was asked for, because the caller prints
+// it as the answer: a locked link is never reused (it is somebody's fixed
+// arrangement), a request with an expiry always mints a fresh link (an older
+// link's expiry is not the one asked for), and a request without one reuses
+// only a link that never expires.
+func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
+	page store.SharePage, opts ShareLinkOptions) (ShareLinkResult, error) {
+	if page.PublishedVersion == 0 {
+		return ShareLinkResult{}, errors.New("this page has not been published yet; run `vibepanel page publish` first")
+	}
+	detail, err := validateShareTerms(opts.Detail, opts.ExpiresIn)
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+
+	box, err := secret.Open(filepath.Join(cfg.DataDir, secret.KeyFile))
+	if err != nil {
+		return ShareLinkResult{}, fmt.Errorf("open secrets key: %w", err)
+	}
+	base, local := cliShareBaseOrigin(ctx, db, cfg)
+	var warnings []string
+	if local {
+		warnings = append(warnings, "this link only opens on this machine ("+base+"); set a share origin in Settings > Sharing, or start the panel with --domain, for a link others can open")
+	}
+
+	if !opts.ForceNew {
+		links, lerr := db.ListShareLinks(ctx)
+		if lerr != nil {
+			return ShareLinkResult{}, lerr
+		}
+		for _, l := range links {
+			if l.PageID != page.ID || l.Purpose != "" || !l.Copyable || l.Locked {
+				continue
+			}
+			if opts.ExpiresIn > 0 || l.ExpiresAt != 0 {
+				continue
+			}
+			if store.ShareDetail(l.Detail) != detail || l.Interactive != opts.Interactive {
+				continue
+			}
+			enc, eerr := db.ShareLinkTokenEnc(ctx, l.ID)
+			if eerr != nil || len(enc) == 0 {
+				continue
+			}
+			tok, uerr := box.Unseal(enc, shareTokenContext(l.ID))
+			if uerr != nil || len(tok) == 0 {
+				continue
+			}
+			return ShareLinkResult{
+				ID:        l.ID,
+				Name:      l.Name,
+				PageID:    l.PageID,
+				URL:       base + "/share/" + string(tok) + "/",
+				Detail:    l.Detail,
+				ExpiresAt: l.ExpiresAt,
+				Reused:    true,
+				Warnings:  warnings,
+			}, nil
+		}
+	}
+
+	v, err := db.SharePageVersionByNumber(ctx, page.ID, page.PublishedVersion)
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+	params, err := pages.ValidateParamValues(pages.DecodeStored(v.Manifest).Params, nil)
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+	owner, err := db.SharePageOwner(ctx, page.ID)
+	if err != nil {
+		owner, err = db.FirstUserID(ctx)
+		if err != nil {
+			return ShareLinkResult{}, errors.New("the panel has no account yet; finish setup first")
+		}
+	}
+	name := session.TruncateTitle(strings.TrimSpace(opts.Name))
+	if name == "" {
+		name = session.TruncateTitle(strings.TrimSpace(page.Name))
+	}
+	if name == "" {
+		name = "screen"
+	}
+	token, err := auth.NewToken()
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+	prefix := token
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	var expiresAt int64
+	if opts.ExpiresIn > 0 {
+		expiresAt = time.Now().Add(time.Duration(opts.ExpiresIn) * time.Second).Unix()
+	}
+	linkID := id.New()
+	rec, err := db.CreateShareLink(ctx, store.NewShareLink{
+		ID:          linkID,
+		TokenHash:   auth.HashToken(token),
+		TokenEnc:    box.Seal([]byte(token), shareTokenContext(linkID)),
+		Prefix:      prefix,
+		Name:        name,
+		Detail:      detail,
+		Scope:       store.ShareWhole,
+		UserID:      owner,
+		ExpiresAt:   expiresAt,
+		PageID:      page.ID,
+		Params:      params,
+		Interactive: opts.Interactive,
+	})
+	if err != nil {
+		return ShareLinkResult{}, err
+	}
+	// A failed audit write is said, not dropped: the link exists either way,
+	// and the owner reading the trail should know it is missing a row.
+	if aerr := db.Audit(ctx, store.AuditEntry{
+		Event:    "share.created",
+		Username: "cli",
+		Detail:   name + " (" + string(detail) + ", page " + page.ID + ")",
+	}); aerr != nil {
+		warnings = append(warnings, "not recorded in the audit log: "+aerr.Error())
+	}
+	// Interactive is a decision about what a visitor may do, and the HTTP route
+	// audits it (red line 8); the CLI is the same decision from a shell.
+	if opts.Interactive {
+		if aerr := db.Audit(ctx, store.AuditEntry{
+			Event: "share.interactive_changed", Username: "cli", Detail: name + " on",
+		}); aerr != nil {
+			warnings = append(warnings, "interactive not recorded in the audit log: "+aerr.Error())
+		}
+	}
+	return ShareLinkResult{
+		ID:        rec.ID,
+		Name:      rec.Name,
+		PageID:    rec.PageID,
+		URL:       base + "/share/" + token + "/",
+		Detail:    rec.Detail,
+		ExpiresAt: rec.ExpiresAt,
+		Created:   true,
+		Warnings:  warnings,
+	}, nil
+}
+
+// cliShareBaseOrigin resolves the public origin a CLI-generated share URL
+// should use: the configured dedicated share origin first, then the panel's
+// public HTTPS/HTTP origin, and finally its loopback address. The second result
+// is true only for that last fallback, where the link opens on this machine
+// alone.
+func cliShareBaseOrigin(ctx context.Context, db *store.DB, cfg config.Config) (string, bool) {
+	if raw, err := db.GetSetting(ctx, shareOriginKey, ""); err == nil {
+		if origin, _, _, perr := parseShareOrigin(raw); perr == nil && origin != "" {
+			return origin, false
+		}
+	}
+	if cfg.Domain != "" {
+		for _, raw := range cfg.PublicOrigins {
+			u, err := url.Parse(strings.TrimRight(strings.TrimSpace(raw), "/"))
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				continue
+			}
+			if strings.EqualFold(u.Hostname(), cfg.Domain) {
+				return strings.ToLower(u.Scheme) + "://" + u.Host, false
+			}
+		}
+		// Behind an HTTPS reverse proxy (`--tls off --public-port 443`),
+		// PublicURL() formats http://<domain>:443. Prefer https://<domain>.
+		if cfg.TLSMode == config.TLSOff && cfg.PublicPort == 443 {
+			return "https://" + cfg.Domain, false
+		}
+		return cfg.PublicURL(), false
+	}
+	return cfg.LoopbackURL(), true
 }
