@@ -1828,11 +1828,6 @@ func (s *Server) scopeFor(ctx context.Context, kind, id string) (store.ShareScop
 	return scope, id, nil
 }
 
-// handleCreateShare mints a link, and is the only time its token is readable.
-//
-// The same shape as an API token and for the same reason: the database keeps a
-// SHA-256, so this response is the only copy. The settings page says so before
-// the button rather than after.
 // validateShareTerms is the disclosure level and lifetime a new link may have,
 // shared by the settings route and `vibepanel page link` so the CLI cannot mint
 // a link the route would refuse. An empty detail is the quieter counts mode.
@@ -1849,6 +1844,11 @@ func validateShareTerms(detail store.ShareDetail, expiresIn int64) (store.ShareD
 	return detail, nil
 }
 
+// handleCreateShare mints a link, and is the only time its token is readable.
+//
+// The same shape as an API token and for the same reason: the database keeps a
+// SHA-256, so this response is the only copy. The settings page says so before
+// the button rather than after.
 func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	var req createShareRequest
 	if !decode(w, r, &req) {
