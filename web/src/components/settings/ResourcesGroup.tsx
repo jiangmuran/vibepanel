@@ -1,37 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Archive,
-  ChevronDown,
-  ChevronRight,
-  ChevronsDown,
-  ChevronsUp,
-  Pause,
-  Play,
-  ShieldAlert,
-  ShieldCheck,
-} from 'lucide-react'
+import { ChevronsUp, ShieldAlert, ShieldCheck } from 'lucide-react'
 
 import { api } from '../../protocol/api'
-import type {
-  ResourceAction,
-  ResourceMode,
-  ResourcePolicy,
-  ResourceProc,
-  ResourceSession,
-  ResourcesView,
-  Session,
-} from '../../protocol/wire'
+import type { ResourceAction, ResourceMode, ResourcePolicy, ResourcesView, Session } from '../../protocol/wire'
 import { t, tKey, useLang } from '../../i18n'
 import type { Lang } from '../../i18n'
-import { askConfirm } from '../ask'
 import { formatBytes } from '../bytes'
 import { sessionLabel } from '../label'
 import { HeldBar, LevelIcon } from '../resources/level'
 import { levelTone } from '../resources/tone'
 import { policyOnly, pollStillCurrent, wholeNumber } from './resourcesPolicy'
-import { StateDot } from '../StateDot'
 import { safeText } from '../text'
 import { Section } from './parts'
+import { MachineList } from './resources/MachineList'
+import { ProjectBlock } from './resources/SessionRows'
+import { groupSessions } from './resources/group'
+import { reducedMotion } from './resources/time'
 
 /** How often the page reads the governor while it is open. Its own tick is two seconds. */
 const POLL_MS = 2000
@@ -49,10 +33,11 @@ const MODE_LABEL = {
  * How much of the machine the sessions get, and what the panel does when that
  * runs out.
  *
- * Four blocks, in the order somebody arriving from the memory question reads
- * them: is anything wrong and how wrong (memory), what the panel is allowed to
- * do about it (allocation), which session it is (by session), and what has
- * already been done (recent).
+ * Five blocks, in the order somebody arriving from the memory question reads
+ * them: is anything wrong and how wrong (memory), which of the sessions
+ * holds it (by project, ended from here), what else on the machine does
+ * (read-only), what the panel is allowed to do about it (allocation), and what
+ * has already been done (recent).
  *
  * Built on a container query, because this is the settings body: a third of a
  * wide window and the whole of a phone.
@@ -62,6 +47,25 @@ export function ResourcesGroup({ sessions, focus }: { sessions: Session[]; focus
   const [view, setView] = useState<ResourcesView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const generation = useRef(0)
+  // The session the memory question named is open from the start.
+  const [open, setOpen] = useState<string | null>(focus ?? null)
+  const root = useRef<HTMLDivElement>(null)
+
+  // A session named in the machine list: open it and bring its row into view
+  // once it has been drawn open. A counter, so choosing the same session twice
+  // scrolls twice.
+  const [revealed, setRevealed] = useState<{ id: string; n: number } | null>(null)
+  const reveal = useCallback((id: string) => {
+    setOpen(id)
+    setRevealed((r) => ({ id, n: (r?.n ?? 0) + 1 }))
+  }, [])
+  useEffect(() => {
+    if (!revealed) return
+    const row = [...(root.current?.querySelectorAll<HTMLElement>('[data-session]') ?? [])].find(
+      (el) => el.dataset.session === revealed.id,
+    )
+    row?.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' })
+  }, [revealed])
 
   const load = useCallback(async () => {
     const asked = generation.current
@@ -100,12 +104,13 @@ export function ResourcesGroup({ sessions, focus }: { sessions: Session[]; focus
   if (!view) return null
 
   return (
-    <div className="@container" data-testid="resources">
+    <div ref={root} className="@container" data-testid="resources">
       <MemorySection view={view} />
       {view.supported && (
         <>
+          <UsageSection view={view} sessions={sessions} open={open} setOpen={setOpen} onChanged={load} />
+          <MachineSection view={view} onReveal={reveal} />
           <AllocationSection view={view} lang={lang} onView={changed} />
-          <UsageSection view={view} sessions={sessions} focus={focus} onChanged={load} />
           {view.actions.length > 0 && <RecentSection actions={view.actions} sessions={sessions} lang={lang} />}
         </>
       )}
@@ -450,15 +455,16 @@ function CustomFields({
 function UsageSection({
   view,
   sessions,
-  focus,
+  open,
+  setOpen,
   onChanged,
 }: {
   view: ResourcesView
   sessions: Session[]
-  focus?: string
+  open: string | null
+  setOpen: (id: string | null) => void
   onChanged: () => Promise<void>
 }) {
-  const [open, setOpen] = useState<string | null>(focus ?? null)
   const byId = new Map(sessions.map((s) => [s.id, s]))
   // The scale every row is drawn against: the pool when there is one, so the
   // bars add up to the pool's bar above them; the machine otherwise.
@@ -467,20 +473,21 @@ function UsageSection({
   // hiding a project frees nothing, and a page about memory that stopped
   // listing a session the moment its project was archived would be showing a
   // machine with less in use than it has.
-  const rows = view.sessions
+  const groups = groupSessions(view.sessions)
   return (
     <Section id="usage" title={t('res.sessions')}>
-      {rows.length === 0 && <p className="text-vp-base text-ink-2">{t('res.none')}</p>}
+      {groups.length === 0 && <p className="text-vp-base text-ink-2">{t('res.none')}</p>}
       <div className="divide-y divide-hairline" data-testid="resources-sessions">
-        {rows.map((r) => (
-          <UsageRow
-            key={r.id}
-            row={r}
-            session={byId.get(r.id)}
+        {groups.map((g) => (
+          <ProjectBlock
+            key={g.key}
+            group={g}
+            sessions={byId}
             scale={scale}
             isolated={view.isolation.state === 'isolated'}
-            open={open === r.id}
-            onToggle={() => setOpen(open === r.id ? null : r.id)}
+            now={view.at}
+            open={open}
+            onToggle={(id) => setOpen(open === id ? null : id)}
             onChanged={onChanged}
           />
         ))}
@@ -489,166 +496,12 @@ function UsageSection({
   )
 }
 
-function UsageRow({
-  row,
-  session,
-  scale,
-  isolated,
-  open,
-  onToggle,
-  onChanged,
-}: {
-  row: ResourceSession
-  /** Absent for a session the snapshot does not carry: an archived project's. */
-  session: Session | undefined
-  scale: number
-  isolated: boolean
-  open: boolean
-  onToggle: () => void
-  onChanged: () => Promise<void>
-}) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const name = session ? sessionLabel(session) : safeText(row.title)
-
-  const act = async (run: () => Promise<unknown>) => {
-    setBusy(true)
-    try {
-      await run()
-      setError(null)
-      await onChanged()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const end = async (p: ResourceProc) => {
-    const ok = await askConfirm({
-      title: t('res.endTitle', { name: safeText(p.name), pid: p.pid, rss: formatBytes(p.rss) }),
-      body: p.root ? t('res.endRootBody') : t('res.endBody'),
-      confirm: t('res.end'),
-      cancel: t('res.cancel'),
-      destructive: true,
-    })
-    if (ok) await act(() => api.killProcess(row.id, p))
-  }
-
-  const freeze = async () => {
-    if (!row.frozen) {
-      const ok = await askConfirm({
-        title: t('res.pauseTitle'),
-        body: t('res.pauseBody'),
-        confirm: t('res.pause'),
-        cancel: t('res.cancel'),
-      })
-      if (!ok) return
-    }
-    await act(() => api.freezeSession(row.id, !row.frozen))
-  }
-
-  const Chevron = open ? ChevronDown : ChevronRight
-  // A row holding next to nothing draws no bar: a column of empty tracks is
-  // noise between the rows that matter.
-  const drawBar = row.memory >= scale / 200
+function MachineSection({ view, onReveal }: { view: ResourcesView; onReveal: (id: string) => void }) {
+  const known = new Set(view.sessions.map((s) => s.id))
   return (
-    <div className="py-1.5" data-testid="resources-session" data-session={row.id}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className="vp-press flex w-full min-w-0 items-center gap-1.5 text-left"
-      >
-        <Chevron size={13} className="shrink-0 text-ink-3" aria-hidden="true" />
-        {session ? (
-          <StateDot state={session.state} size={9} exited={session.exited} exitStatus={session.exitStatus} />
-        ) : (
-          <span title={t('res.inArchived')} className="inline-flex shrink-0 text-ink-3" data-testid="resources-session-archived">
-            <Archive size={10} aria-hidden="true" />
-            <span className="sr-only">{t('res.inArchived')}</span>
-          </span>
-        )}
-        <span className="min-w-0 flex-1 truncate text-vp-base text-ink" title={name}>
-          {name}
-        </span>
-        {row.frozen && (
-          <span className="inline-flex shrink-0 items-center gap-0.5 text-vp-xs" style={{ color: 'var(--vp-state-waiting)' }}>
-            <Pause size={11} aria-hidden="true" />
-            {t('res.frozen')}
-          </span>
-        )}
-        {row.priority === 'low' && (
-          <span className="inline-flex shrink-0 items-center gap-0.5 text-vp-xs text-ink-2" title={t('res.loweredTitle')}>
-            <ChevronsDown size={11} aria-hidden="true" />
-            <span className="hidden @md:inline">{t('res.lowered')}</span>
-          </span>
-        )}
-        {row.priority === 'high' && (
-          <span className="inline-flex shrink-0 items-center gap-0.5 text-vp-xs text-accent" title={t('res.priorityTitle')}>
-            <ChevronsUp size={11} aria-hidden="true" />
-            <span className="hidden @md:inline">{t('res.priority')}</span>
-          </span>
-        )}
-        <span className="tabular hidden w-20 shrink-0 text-right text-vp-sm text-ink-2 @md:inline" title={t('res.cpuTitle')}>
-          CPU {row.cpuPercent.toFixed(row.cpuPercent < 10 ? 1 : 0)}%
-        </span>
-        <span
-          className="tabular w-20 shrink-0 text-right text-vp-sm text-ink"
-          title={`${t('res.held', { n: formatBytes(row.held) })} · ${t('res.cache', { n: formatBytes(Math.max(0, row.memory - row.held)) })}`}
-        >
-          {formatBytes(row.memory)}
-        </span>
-      </button>
-      {drawBar && (
-        <div className="mt-1 ml-5">
-          <HeldBar held={row.held} current={row.memory} scale={scale} tone="var(--vp-accent)" height="h-1" />
-        </div>
-      )}
-
-      {open && (
-        <div className="mt-2 ml-5 space-y-1" data-testid="resources-session-detail">
-          {(row.top ?? []).map((p) => (
-            <div key={`${p.pid}-${p.start}`} className="flex min-w-0 items-center gap-2 text-vp-sm">
-              <span className="min-w-0 flex-1 truncate text-ink" title={safeText(p.cmd || p.name)}>
-                {/* What it runs: comm is "bash" for every command an agent
-                    starts, and this is where somebody decides which to end. */}
-                <span className="font-mono">{safeText(p.cmd || p.name)}</span>
-                <span className="ml-1.5 text-vp-xs text-ink-3">{p.root ? t('res.rootProc') : `pid ${p.pid}`}</span>
-              </span>
-              <span className="tabular shrink-0 text-ink-2">{formatBytes(p.rss)}</span>
-              <button
-                type="button"
-                data-testid="resources-end"
-                disabled={busy}
-                onClick={() => void end(p)}
-                aria-label={t('res.endAria', { name: safeText(p.name), pid: p.pid })}
-                className="vp-outline shrink-0 text-vp-sm"
-                style={{ color: 'var(--vp-state-crashed)' }}
-              >
-                {t('res.end')}
-              </button>
-            </div>
-          ))}
-          {row.procs > (row.top ?? []).length && (
-            <p className="text-vp-xs text-ink-3">{t('res.moreProcs', { n: row.procs - (row.top ?? []).length })}</p>
-          )}
-          {isolated && (
-            <button
-              type="button"
-              data-testid="resources-freeze"
-              disabled={busy}
-              onClick={() => void freeze()}
-              className="vp-outline text-vp-sm"
-            >
-              {row.frozen ? <Play size={13} aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
-              {row.frozen ? t('res.resume') : t('res.pause')}
-            </button>
-          )}
-          {error && <p className="text-vp-sm text-state-crashed">{safeText(error)}</p>}
-        </div>
-      )}
-    </div>
+    <Section id="machine" title={t('res.machine')}>
+      <MachineList procs={view.machine ?? []} known={known} now={view.at} onReveal={onReveal} />
+    </Section>
   )
 }
 

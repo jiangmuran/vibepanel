@@ -73,6 +73,15 @@ type SessionMeta struct {
 	// slow costs a human's time rather than a machine's.
 	Waiting   bool
 	LastInput time.Time
+	// What a page shows beside the session. ProjectName and Archived are the
+	// project's as the poller last read it; CreatedAt and LastOutput are unix
+	// seconds, LastOutput being when the pane last printed (the store's
+	// last_output_at, debounced).
+	ProjectID   string
+	ProjectName string
+	Archived    bool
+	CreatedAt   int64
+	LastOutput  int64
 }
 
 // Env is everything the governor reads or calls outside this package. What
@@ -190,8 +199,20 @@ type SessionView struct {
 	// Title is the session's name, for a row the page cannot name from its
 	// snapshot: a session in an archived project is not in the snapshot, and
 	// is still using exactly as much memory as it was before it was hidden.
-	Title  string `json:"title"`
-	Memory uint64 `json:"memory"`
+	Title string `json:"title"`
+	// ProjectID and ProjectName say whose it is, Archived that the project is
+	// archived: its sessions are hidden from the sidebar and still hold every
+	// byte they held.
+	ProjectID   string `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	Archived    bool   `json:"archived"`
+	CreatedAt   int64  `json:"createdAt"`
+	// LastUsedAt is the later of the last time somebody typed into it and the
+	// last time it printed, in unix seconds; 0 when neither is known. Typing
+	// is only remembered while the panel runs, so after a restart it is the
+	// output alone.
+	LastUsedAt int64  `json:"lastUsedAt"`
+	Memory     uint64 `json:"memory"`
 	// Held is the part of Memory that only leaves when a process does: anon
 	// and shmem. The rest is page cache. See Reading.PoolHeld.
 	Held       uint64  `json:"held"`
@@ -288,9 +309,12 @@ type View struct {
 	Panel     uint64        `json:"panel"`
 	Tmux      uint64        `json:"tmux"`
 	Sessions  []SessionView `json:"sessions"`
-	Alert     *Alert        `json:"alert"`
-	Actions   []Action      `json:"actions"`
-	At        int64         `json:"at"`
+	// Machine is the largest processes on the whole machine, read when
+	// somebody looks. See machine.go.
+	Machine []MachineProc `json:"machine"`
+	Alert   *Alert        `json:"alert"`
+	Actions []Action      `json:"actions"`
+	At      int64         `json:"at"`
 }
 
 // PoolView is the sessions' budget.
@@ -328,6 +352,8 @@ type Governor struct {
 	actions  []Action
 	quiet    time.Time
 	lastEmit time.Time
+
+	mc machineCache
 }
 
 type tickState struct {
@@ -590,6 +616,7 @@ func (g *Governor) View() View {
 	if v.Sessions == nil {
 		v.Sessions = []SessionView{}
 	}
+	v.Machine = g.machine(ro)
 	return v
 }
 

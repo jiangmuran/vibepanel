@@ -1209,6 +1209,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ sessionId, pid: proc.pid, start: proc.start }),
     }),
+  /** Ends every session of a project, archived or not; the project stays. */
+  endProjectSessions: (projectId: string) =>
+    request<{ ended: number }>(`/api/resources/projects/${encodeURIComponent(projectId)}/end`, { method: 'POST' }),
   freezeSession: (sessionId: string, on: boolean) =>
     request<ResourceAction>(
       `/api/resources/sessions/${encodeURIComponent(sessionId)}/${on ? 'freeze' : 'thaw'}`,

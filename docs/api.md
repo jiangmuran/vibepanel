@@ -1058,13 +1058,25 @@ disappear the moment somebody pressed Install.
 ### `PUT /api/resources/policy`
 ### `POST /api/resources/boost`
 ### `POST /api/resources/kill`
+### `POST /api/resources/projects/{id}/end`
 ### `POST /api/resources/sessions/{id}/freeze`
 ### `POST /api/resources/sessions/{id}/thaw`
 ### `POST /api/resources/alerts/{id}/snooze`
 
 `GET /api/resources` is the governor's last reading (`internal/resources`,
 every two seconds), plus each session's five largest processes read at the
-moment of the request. `isolation.state` is `isolated` when the sessions run in
+moment of the request. A session row carries its project (`projectId`,
+`projectName`, `archived` when the project is), `createdAt`, and `lastUsedAt`:
+the later of the last input to it and the last time it printed, in unix
+seconds, `0` when neither is known. Input is remembered only while the panel
+runs. `machine` is the twelve processes holding the most memory on the whole
+machine, RAM and swap together, each with `rss`, `swap`, `user`, `startedAt`
+and `where`: `kind` is `session`, `panel`, `tmux`, `plugin`, `container`,
+`unit`, `user`, `kernel` or `other`, read from the process's cgroup, with
+`label` for the container's short id, the unit or the plugin, and the session's
+id, title and project when it is one of the panel's. It is read when somebody
+asks, cached for four seconds, and read-only: ending a process of a session is
+`POST /api/resources/kill`, and nothing here ends anything else. `isolation.state` is `isolated` when the sessions run in
 a systemd scope of their own; otherwise `reason` says why (`not-a-service`,
 `unit-outdated`, `cgroup-v1`, ...). `pool` is the sessions' budget: `current`
 counts page cache and `held` does not, and it is `held` the thresholds compare.
@@ -1087,6 +1099,14 @@ start time are not, so a process that has exited since is `410` rather than a
 signal sent to whatever has the number now. A process that is not in that
 session is `403`. It sends SIGTERM, then SIGKILL five seconds later if the same
 process is still there.
+
+`POST /api/resources/projects/{id}/end` ends every session of the project,
+archived or not, the way `DELETE /api/sessions/{id}` ends one (tmux, whatever
+the pane left running in the session's cgroup, then the row), and answers
+`{"ended": n}`. The project is neither deleted nor archived. An unknown project
+is `404`. One `resources.project_end` audit row carries the project's name and
+the count; if some session could not be ended the rest still are, and the
+answer is a `500` saying how many of how many.
 
 `freeze` and `thaw` use the cgroup freezer, and answer `409` when the sessions
 are not isolated. `snooze` takes `{"sessionId", "minutes"}` and stops a warning

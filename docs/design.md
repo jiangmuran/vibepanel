@@ -805,6 +805,29 @@ or the panel. It never asks tmux anything on the request path or on its own
 tick, beyond the server's pid when it has changed -- the moment the page matters
 is the moment tmux is slowest to answer.
 
+**The Resources tab is organised around ending things.** Sessions are listed
+by project (the heaviest first), each with when it was made and last used and
+whether its project is archived, because an archived project's sessions keep
+running and are listed nowhere else. Below them, the twelve processes holding
+the most memory on the whole machine, with where each comes from, read from its
+cgroup path (a session's leaf, a container's `docker-<id>.scope`, a unit, a
+login). That list is read-only: the panel ends what it can prove belongs to a
+session and shows the rest, since a process outside the sessions is somebody
+else's to end. It ranks by RAM plus swap and so reads `VmSwap` from every
+process's status: a VM sitting mostly in swap has a small RSS and is the thing
+being looked for. Measured at 23 ms on a box with a few thousand processes,
+and cached four seconds.
+
+Ending a session or a whole project is two presses on the same button, not a
+dialog: the first arms it and changes its words, a fill drains over three
+seconds and is the timeout, the second runs it. A real double-click confirms.
+"End" on a session is the sidebar's `DELETE /api/sessions/{id}`, and ending a
+project is that for each of its sessions, so there is one meaning of "end":
+tmux, then everything the pane left in the session's cgroup (`cgroup.kill`,
+which reaches a `nohup` or `setsid` process the pane's tree does not), then the
+row. Without isolation there is no cgroup to ask, and a detached process
+outlives its session.
+
 ## Small decisions that keep being questioned
 
 **Per-session CPU is a share of the whole machine, not top's.** top means "one

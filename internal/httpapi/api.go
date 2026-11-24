@@ -2158,17 +2158,39 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	// leave the project's shells alone -- the build and the `git log` in them
 	// were never about that agent. The project's own delete is what takes
 	// them, and it already walks every session it owns.
-	if err := s.tearDownSession(opCtx, rec.ID, rec.TmuxName); err != nil {
-		writeErr(w, http.StatusInternalServerError, "kill "+rec.TmuxName+": "+err.Error())
-		return
-	}
-	if err := s.DB.DeleteSession(opCtx, sid); err != nil {
+	if err := s.endSession(opCtx, rec); err != nil {
+		var te *tearDownError
+		if errors.As(err, &te) {
+			writeErr(w, http.StatusInternalServerError, "kill "+rec.TmuxName+": "+te.err.Error())
+			return
+		}
 		s.writeStoreErr(w, err)
 		return
 	}
-	s.pluginEventRaised(pluginEvent{Name: "session.gone", SessionID: rec.ID, ProjectID: rec.ProjectID})
 	s.notifyState()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// tearDownError says the tmux session could not be ended, as opposed to its
+// row not being deleted: the two are different statuses to the caller.
+type tearDownError struct{ err error }
+
+func (e *tearDownError) Error() string { return e.err.Error() }
+func (e *tearDownError) Unwrap() error { return e.err }
+
+// endSession is what "end this session" means everywhere: the sidebar's close
+// and the resources page's End both come here, so there is one meaning of it.
+// tmux and everything the pane left running, then the row, then the plugins
+// are told.
+func (s *Server) endSession(ctx context.Context, rec store.Session) error {
+	if err := s.tearDownSession(ctx, rec.ID, rec.TmuxName); err != nil {
+		return &tearDownError{err}
+	}
+	if err := s.DB.DeleteSession(ctx, rec.ID); err != nil {
+		return err
+	}
+	s.pluginEventRaised(pluginEvent{Name: "session.gone", SessionID: rec.ID, ProjectID: rec.ProjectID})
+	return nil
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
@@ -2558,7 +2580,10 @@ func (s *Server) pollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.publishResourceSessions(rows)
+	// A failed read leaves the project names empty for this tick rather than
+	// failing the poll: the governor's tick must not depend on this.
+	allProjects, _ := s.DB.ListAllProjects(ctx)
+	s.publishResourceSessions(rows, allProjects)
 	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
 		ids = append(ids, row.ID)

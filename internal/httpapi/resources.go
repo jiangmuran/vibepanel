@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -54,6 +55,7 @@ func (s *Server) registerResourceRoutes(r chi.Router) {
 	r.Put("/resources/policy", s.handlePutResourcePolicy)
 	r.Post("/resources/boost", s.handleResourceBoost)
 	r.Post("/resources/kill", s.handleResourceKill)
+	r.Post("/resources/projects/{id}/end", s.handleResourceEndProject)
 	r.Post("/resources/sessions/{id}/freeze", s.handleResourceFreeze(true))
 	r.Post("/resources/sessions/{id}/thaw", s.handleResourceFreeze(false))
 	r.Post("/resources/alerts/{id}/snooze", s.handleResourceSnooze)
@@ -93,11 +95,22 @@ func (s *Server) ResourceSessions() []resources.SessionMeta {
 }
 
 // publishResourceSessions is called by the poller with the rows it just read.
-func (s *Server) publishResourceSessions(rows []store.Session) {
+//
+// projects are every project, archived ones included: the page names a session
+// by its project and marks the archived ones, and an archived project's
+// sessions are exactly the ones nobody can see anywhere else.
+func (s *Server) publishResourceSessions(rows []store.Session, projects []store.Project) {
+	byProject := make(map[string]store.Project, len(projects))
+	for _, p := range projects {
+		byProject[p.ID] = p
+	}
 	metas := make([]resources.SessionMeta, 0, len(rows))
 	for _, row := range rows {
+		p := byProject[row.ProjectID]
 		metas = append(metas, resources.SessionMeta{
 			ID: row.ID, TmuxName: row.TmuxName, Title: row.Title, Waiting: row.State == session.StateWaiting,
+			ProjectID: row.ProjectID, ProjectName: p.Name, Archived: p.ArchivedAt != nil,
+			CreatedAt: row.CreatedAt, LastOutput: row.LastOutputAt,
 		})
 	}
 	s.res.mu.Lock()
@@ -224,7 +237,7 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 	if s.Resources == nil {
 		writeJSON(w, http.StatusOK, resources.View{
 			Supported: false, Isolation: resources.Isolation{State: "none", Reason: resources.NonePlatform},
-			Sessions: []resources.SessionView{}, Actions: []resources.Action{},
+			Sessions: []resources.SessionView{}, Actions: []resources.Action{}, Machine: []resources.MachineProc{},
 		})
 		return
 	}
@@ -350,6 +363,55 @@ func (s *Server) handleResourceKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, act)
+}
+
+// handleResourceEndProject ends every session of one project, the way the
+// sidebar ends one: the same teardown, so a session ended from here and from
+// there is the same thing. The project itself is neither deleted nor archived.
+//
+// Archived projects are accepted: their sessions are running and holding
+// memory, and this page is the one place that lists them.
+func (s *Server) handleResourceEndProject(w http.ResponseWriter, r *http.Request) {
+	// Detached and bounded, for the reason handleDeleteProject gives: a tab
+	// closed after the click must not leave half a project ended.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer cancel()
+	p, err := s.DB.GetProject(ctx, chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	rows, err := s.DB.ListProjectSessions(ctx, p.ID)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	ended := 0
+	var failed error
+	for _, rec := range rows {
+		// The rest are still ended when one cannot be: a project half ended
+		// with the error at the first failure is the worse answer.
+		if err := s.endSession(ctx, rec); err != nil {
+			if failed == nil {
+				failed = err
+			}
+			continue
+		}
+		ended++
+	}
+	who := ""
+	if u, ok := currentUserFrom(r); ok {
+		who = u.Username
+	}
+	s.audit(ctx, "resources.project_end", who, s.clientIP(r), fmt.Sprintf("%s: %d", p.Name, ended))
+	if ended > 0 {
+		s.notifyState()
+	}
+	if failed != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Sprintf("ended %d of %d: %v", ended, len(rows), failed))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"ended": ended})
 }
 
 func (s *Server) handleResourceFreeze(on bool) http.HandlerFunc {

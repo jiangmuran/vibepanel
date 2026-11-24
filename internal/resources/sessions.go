@@ -23,7 +23,9 @@ func (g *Governor) readSessions(l *Layout, ro roster, now time.Time) []SessionVi
 	out := make([]SessionView, 0, len(ro.metas))
 	seen := map[string]bool{}
 	for _, m := range ro.metas {
-		v := SessionView{ID: m.ID, TmuxName: m.TmuxName, Title: m.Title, Priority: PriorityNormal}
+		v := SessionView{ID: m.ID, TmuxName: m.TmuxName, Title: m.Title, Priority: PriorityNormal,
+			ProjectID: m.ProjectID, ProjectName: m.ProjectName, Archived: m.Archived,
+			CreatedAt: m.CreatedAt, LastUsedAt: lastUsed(m)}
 		// heldKnown says the growth sample below is a reading rather than a
 		// read that failed: a zero sample in the window reads as the session
 		// having just released everything, and growth picks culprit.
@@ -91,6 +93,16 @@ func (g *Governor) readSessions(l *Layout, ro roster, now time.Time) []SessionVi
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Held > out[j].Held })
 	return out
+}
+
+// lastUsed is the later of the person's last input and the session's last
+// output, in unix seconds.
+func lastUsed(m SessionMeta) int64 {
+	at := m.LastOutput
+	if !m.LastInput.IsZero() && m.LastInput.Unix() > at {
+		at = m.LastInput.Unix()
+	}
+	return at
 }
 
 // noteOOM records the kernel's OOM kills in a session since the last tick.

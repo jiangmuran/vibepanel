@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/resources"
+	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 )
 
@@ -149,5 +151,93 @@ func TestAPolicyThatCannotBeReadIsNotSavedOver(t *testing.T) {
 	got := srv.ResourcePolicy(ctx)
 	if got.Mode != resources.Custom || got.AutoAct || got.PoolPercent != 60 || got.BoostUntil != 0 {
 		t.Fatalf("the stored policy changed: %+v", got)
+	}
+}
+
+func tmuxNames(t *testing.T, srv *Server) map[string]bool {
+	t.Helper()
+	live, err := srv.Tmux.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, i := range live {
+		out[i.Name] = true
+	}
+	return out
+}
+
+// Ending a project's sessions from the resources page is the sidebar's end,
+// repeated: tmux, the row, and one audit row for the whole. The project and
+// the other project's sessions stay.
+func TestEndingAProjectEndsItsSessionsAndOnlyThose(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	mine := postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+t.TempDir()+`","name":"mine"}`)
+	other := postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+t.TempDir()+`","name":"other"}`)
+	var ended []store.Session
+	for range 2 {
+		ended = append(ended, postJSON[store.Session](t, ts, "/api/sessions", `{"projectId":"`+mine.ID+`","command":["sleep","300"]}`))
+	}
+	kept := postJSON[store.Session](t, ts, "/api/sessions", `{"projectId":"`+other.ID+`","command":["sleep","300"]}`)
+	// An archived project's sessions are the ones nothing else lists.
+	postJSON[store.Project](t, ts, "/api/projects/"+mine.ID+"/archive", `{}`)
+
+	code, body := doJSON(t, ts, http.MethodPost, "/api/resources/projects/"+mine.ID+"/end", ``)
+	if code != http.StatusOK || string(body) != "{\"ended\":2}\n" {
+		t.Fatalf("end: %d %s", code, body)
+	}
+	live := tmuxNames(t, srv)
+	for _, s := range ended {
+		if live[s.TmuxName] {
+			t.Errorf("%s is still running", s.TmuxName)
+		}
+		if _, err := srv.DB.GetSession(ctx, s.ID); err == nil {
+			t.Errorf("%s still has a row", s.ID)
+		}
+	}
+	if !live[kept.TmuxName] {
+		t.Error("another project's session was ended")
+	}
+	if _, err := srv.DB.GetSession(ctx, kept.ID); err != nil {
+		t.Errorf("another project's row: %v", err)
+	}
+	if p, err := srv.DB.GetProject(ctx, mine.ID); err != nil || p.ArchivedAt == nil {
+		t.Errorf("the project was deleted or restored: %+v %v", p, err)
+	}
+	rows, _ := srv.DB.RecentAuditPrefix(ctx, "resources.project_end", 5)
+	if len(rows) != 1 || rows[0].Detail != "mine: 2" {
+		t.Errorf("audit: %+v", rows)
+	}
+}
+
+func TestEndingAProjectNeedsAProjectAndASignedInPerson(t *testing.T) {
+	ts, _ := newTestServer(t)
+	if code, _ := doJSON(t, ts, http.MethodPost, "/api/resources/projects/nope/end", ``); code != http.StatusNotFound {
+		t.Errorf("an unknown project = %d, want 404", code)
+	}
+	p := postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+t.TempDir()+`","name":"p"}`)
+	anon := &http.Client{}
+	res, err := anon.Post(ts.URL+"/api/resources/projects/"+p.ID+"/end", "application/json", strings.NewReader(``))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("without a credential = %d, want 401", res.StatusCode)
+	}
+}
+
+// What a page shows beside a session comes from the poller's rows.
+func TestTheResourcePageNamesASessionsProjectAndWhetherItIsArchived(t *testing.T) {
+	_, srv := newTestServer(t)
+	at := int64(1700000000)
+	srv.publishResourceSessions(
+		[]store.Session{{ID: "s1", ProjectID: "p1", TmuxName: "vp_1", Title: "t", CreatedAt: 5, LastOutputAt: at}},
+		[]store.Project{{ID: "p1", Name: "old", ArchivedAt: &at}})
+	srv.noteResourceInput("s1")
+	got := srv.ResourceSessions()
+	if len(got) != 1 || got[0].ProjectName != "old" || !got[0].Archived || got[0].CreatedAt != 5 || got[0].LastOutput != at || got[0].LastInput.IsZero() {
+		t.Fatalf("%+v", got)
 	}
 }

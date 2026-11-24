@@ -42,10 +42,11 @@ export function agoParts(when: number, now: number): { value: number; unit: Intl
  * a todo with no doneAt, a note the server has not written yet — and returns
  * the empty string rather than "56 years ago".
  */
-export function formatAgo(when: number, now: number): string {
+export function formatAgo(when: number, now: number, style: 'long' | 'narrow' = 'long'): string {
   if (!Number.isFinite(when) || when <= 0) return ''
   const { value, unit } = agoParts(when, now)
-  const fmt = new Intl.RelativeTimeFormat(getLang() === 'zh' ? 'zh-CN' : 'en', { numeric: 'auto' })
+  // Narrow is "3d ago" and "3天前": what a row with a column for it has room for.
+  const fmt = new Intl.RelativeTimeFormat(getLang() === 'zh' ? 'zh-CN' : 'en', { numeric: 'auto', style })
   return fmt.format(value, unit)
 }
 
