@@ -198,13 +198,27 @@ func (s *Server) requireShareToken(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "this link is not valid")
 			return
 		}
+		if s.linkRequiresPassword(link) {
+			// Password-protected links reach the API only through an unlock
+			// grant under `/api/share-u/{grant}/v1/...`, never with the raw
+			// link token alone.
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "password required",
+				"code":  "password_required",
+			})
+			return
+		}
 
 		// Best effort, and rate limited. A failed stamp must not fail the
 		// request it was stamping.
-		if s.shareCooldowns().Allow("share.touch", link.ID, time.Now()) {
+		now := time.Now()
+		if s.shareCooldowns().Allow("share.touch", link.ID, now) {
 			if terr := s.DB.TouchShareLink(ctx, link.ID); terr != nil {
 				s.Log.Debug("touch share link", "err", terr)
 			}
+		}
+		if link.Purpose == "" {
+			s.recordShareAccess(ctx, link.ID, ip, "poll", r.UserAgent(), "")
 		}
 
 		// Who is looking, counted from the poll rather than from anything the
@@ -213,7 +227,7 @@ func (s *Server) requireShareToken(next http.Handler) http.Handler {
 		// two links is two unrelated keys, which is the property shareID
 		// already exists for.
 		raw, vw, vh := shareViewerFrom(r, ip)
-		s.viewers.saw(link.ID, shareID(hash, raw), vw, vh, time.Now())
+		s.viewers.saw(link.ID, shareID(hash, raw), vw, vh, now)
 
 		next.ServeHTTP(w, r.WithContext(
 			context.WithValue(ctx, shareContextKey{}, shareContext{link: link, secret: hash})))
@@ -1714,8 +1728,15 @@ func (s *Server) registerShareAdminRoutes(r chi.Router) {
 	r.Post("/settings/shares/{shareID}/view", s.handleViewShare)
 	r.Get("/settings/shares/{shareID}/url", s.handleShareURL)
 	r.Post("/settings/shares/{shareID}/rotate", s.handleRotateShare)
+	r.Put("/settings/shares/{shareID}/access", s.handleUpdateShareAccess)
+	r.Get("/settings/shares/{shareID}/password", s.handleGetShareLinkPassword)
+	r.Get("/settings/shares/{shareID}/access-stats", s.handleShareAccessStats)
 	r.Get("/settings/sharing", s.handleGetSharing)
 	r.Put("/settings/sharing", s.handlePutSharing)
+	r.Get("/settings/sharing/password", s.handleGetSharedPassword)
+	r.Put("/settings/sharing/password", s.handlePutSharedPassword)
+	r.Post("/settings/sharing/password/apply-all", s.handleApplySharedPasswordAll)
+	r.Post("/settings/sharing/password/revoke-sessions", s.handleRevokeSharedSessions)
 	r.Post("/settings/sharing/check", s.handleCheckShareOrigin)
 	r.Post("/settings/sharing/provision", s.handleProvisionShareOrigin)
 	r.Patch("/settings/shares/{shareID}", s.handleUpdateShare)
@@ -1792,6 +1813,11 @@ type createShareRequest struct {
 	// as the page's settings on it.
 	PageID string         `json:"pageId"`
 	Params map[string]any `json:"params"`
+	// AccessMode is optional: "", "none", "shared", or "custom". Empty defaults
+	// to "shared" when a global shared password is configured, otherwise "none".
+	AccessMode string `json:"accessMode"`
+	// Password is required when AccessMode is "custom".
+	Password string `json:"password"`
 }
 
 // scopeFor validates a requested scope against the rows that exist.
@@ -1894,6 +1920,40 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "sign in required")
 		return
 	}
+	accessMode := store.ShareAccessMode(strings.TrimSpace(req.AccessMode))
+	if accessMode == "" {
+		accessMode = s.defaultShareAccessMode(r.Context())
+	}
+	if !store.ValidShareAccessMode(accessMode) {
+		writeErr(w, http.StatusBadRequest, "accessMode must be none, shared or custom")
+		return
+	}
+	linkID := id.New()
+	var pwHash string
+	var pwEnc []byte
+	switch accessMode {
+	case store.ShareAccessShared:
+		hash, _, _, serr := s.sharedPasswordState(r.Context())
+		if serr != nil {
+			s.writeStoreErr(w, serr)
+			return
+		}
+		if hash == "" {
+			writeErr(w, http.StatusBadRequest, "set a shared password before using shared mode")
+			return
+		}
+	case store.ShareAccessCustom:
+		if err := validateSharePassword(req.Password); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		pwHash, err = auth.HashPassword(req.Password)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not hash password")
+			return
+		}
+		pwEnc = s.sealLinkPassword(linkID, req.Password)
+	}
 	token, err := auth.NewToken()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -1903,13 +1963,13 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
 	}
-	linkID := id.New()
 	rec, err := s.DB.CreateShareLink(r.Context(), store.NewShareLink{
 		ID: linkID, TokenHash: auth.HashToken(token), TokenEnc: s.sealShareToken(linkID, token),
 		Prefix: prefix, Name: name,
 		Detail: detail, Scope: scope, ScopeID: scopeID, UserID: u.ID,
 		Remark: req.Remark, Locked: req.Locked, ExpiresAt: expiresAt,
 		PageID: pageID, Params: params, Interactive: req.Interactive,
+		AccessMode: accessMode, PasswordHash: pwHash, PasswordEnc: pwEnc,
 	})
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -1918,26 +1978,28 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	// "counts or names" and the scope are the disclosure decision, and that is
 	// what an operator reading this row is looking for.
 	s.audit(r.Context(), "share.created", u.Username, s.clientIP(r),
-		name+" ("+string(detail)+", page "+pageID+scopeLabel(scope, scopeID)+")")
+		name+" ("+string(detail)+", access "+string(accessMode)+", page "+pageID+scopeLabel(scope, scopeID)+")")
 	if req.Interactive {
 		s.audit(r.Context(), "share.interactive_changed", u.Username, s.clientIP(r), name+" on")
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"token":       token,
-		"id":          rec.ID,
-		"name":        rec.Name,
-		"prefix":      rec.Prefix,
-		"detail":      rec.Detail,
-		"pageId":      rec.PageID,
-		"params":      rec.Params,
-		"scope":       rec.Scope,
-		"remark":      rec.Remark,
-		"locked":      rec.Locked,
-		"interactive": rec.Interactive,
-		"copyable":    rec.Copyable,
-		"url":         s.shareAddress(r, token),
-		"expiresAt":   rec.ExpiresAt,
-		"createdAt":   rec.CreatedAt,
+		"token":            token,
+		"id":               rec.ID,
+		"name":             rec.Name,
+		"prefix":           rec.Prefix,
+		"detail":           rec.Detail,
+		"pageId":           rec.PageID,
+		"params":           rec.Params,
+		"scope":            rec.Scope,
+		"remark":           rec.Remark,
+		"locked":           rec.Locked,
+		"interactive":      rec.Interactive,
+		"copyable":         rec.Copyable,
+		"accessMode":       rec.AccessMode,
+		"passwordViewable": rec.PasswordViewable,
+		"url":              s.shareAddress(r, token),
+		"expiresAt":        rec.ExpiresAt,
+		"createdAt":        rec.CreatedAt,
 	})
 }
 

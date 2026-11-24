@@ -28618,7 +28618,6 @@ configured `sharing.origin` (or panel origin) in one command, audited as
 **/sharing**, as an optional step in the first-run **Tour**, and as an opt-in
 prompt (`--share-skill` / `--no-share-skill`) in `deploy/install.sh`.
 
-
 ### What review changed in the share plugin, and what it left
 
 The first version overwrote and removed whatever sat at
@@ -28660,3 +28659,60 @@ marker makes that harmless but not atomic. The audit-failure warnings have no
 test: nothing in the suite makes the audit insert fail while the link insert
 succeeds. A bundle's files are compared with `TrimSpace`, so trailing
 whitespace edits read as current.
+
+---
+
+## Share page password protection and per-IP access analytics
+
+A capability URL alone lets anyone who intercepts or receives a forwarded link
+open a share page — including standalone HTML prototypes and reports with
+`"sections": []`. Two capabilities were added without weakening the sandbox
+boundary (red line 8):
+
+**Server-side password gate with sandbox-preserving outer shell.** Share pages
+run under `Content-Security-Policy: sandbox allow-scripts` (opaque origin
+`null`, no `allow-same-origin`), where subresources and `fetch()` calls are
+cross-site and do not carry `SameSite=Lax` or third-party cookies in Safari,
+Firefox or mobile in-app browsers. Protected links therefore keep the
+`HttpOnly; SameSite=Lax` unlock cookie on the first-party top-level route
+`/share/{token}/` (submitting a zero-JS bilingual form to
+`POST /share/{token}/unlock`, throttled per `(IP, link)` and capped per link),
+and once unlocked render a minimal fullscreen shell framing `/share-u/{grant}/`
+with `sandbox="allow-scripts"`. The address bar stays on `/share/{token}/` so
+copying it never leaks an unlocked grant; inside the frame, static files and
+`vibepanel.js` (`/api/share-u/{grant}/v1/*`) work without cookies. Grants and
+cookies carry an HMAC-SHA256 signature and password epochs (global and
+per-link), so changing a password, rotating a link, or revoking sessions takes
+effect on the very next request or poll without extra SQLite write pressure.
+
+**Shared password + per-link custom password.** Configuring a global shared
+password makes new links (including CLI `vibepanel page publish --link` and
+`page link`) default to `shared` mode; unlocking one shared-mode link covers
+sibling shared-mode links on the same origin (`Path=/share/`), while `custom`
+links stay isolated per URL (`Path=/share/{token}/`). Existing public links
+stay untouched until switched individually or via one-click batch protection.
+Passwords are verified with Argon2id and optionally sealed with `secrets.key`
+so the signed-in owner can view or copy them.
+
+**Per-IP access analytics (`037-share-protection-and-access`).** Covers both
+static HTML pages (main document visits on `/share/{token}/`, 60 s dedup per
+IP) and live dashboards (5 min `last_seen_at` refresh on polls, zero event spam
+on the 2 s polling loop), plus `unlock_ok`, `unlock_fail` and visitor `action`
+events. Stored as one aggregate row per `(link_id, ip)` in `share_access_ips`
+plus bounded recent history in `share_access_events` (trimmed to 30 days /
+20,000 rows). Surfaces a loopback-only warning when recent visits arrive
+exclusively from `127.0.0.1` / `::1`.
+
+**Why share passcode inputs avoid `type="password"` in `/sharing`.** In real
+testing on Chrome, opening a link's edit panel paired its `remark` text input
+with `<input type="password">` on the panel's own origin: Chrome Password
+Manager immediately autofilled the owner's panel username into `remark`
+(triggering the debounced `PATCH`) and the panel login password into the
+per-link passcode field, making the owner think the panel password was the
+link's custom password. Passcode editors in `/sharing` now keep the replace-password
+input unmounted until explicitly requested, keep passcode inputs `readOnly`
+until user interaction (`type="text"`, `autoComplete="off"`, no
+`-webkit-text-security` on empty values), expose a direct one-click **Show
+password** control beside each link's `Custom password` badge, and use
+`autocomplete="off"` on the visitor gate so browsers do not cross-fill one
+custom link's password onto another on the same share origin.

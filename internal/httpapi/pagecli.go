@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -179,21 +180,46 @@ type ShareLinkOptions struct {
 	ExpiresIn   int64
 	Interactive bool
 	ForceNew    bool
+	// AccessMode optionally pins "none", "shared" or "custom". Empty defaults
+	// to "shared" when a global shared password is configured, otherwise "none".
+	AccessMode store.ShareAccessMode
+	// CustomPassword sets the per-link password when AccessMode is "custom".
+	CustomPassword string
+	// RandomPassword generates a clean random password when AccessMode is "custom".
+	RandomPassword bool
 }
 
 // ShareLinkResult is the resolved or newly minted handed-out share link.
 type ShareLinkResult struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	PageID    string `json:"pageId"`
-	URL       string `json:"url"`
-	Detail    string `json:"detail"`
-	ExpiresAt int64  `json:"expiresAt"`
-	Created   bool   `json:"created"`
-	Reused    bool   `json:"reused"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	PageID            string `json:"pageId"`
+	URL               string `json:"url"`
+	Detail            string `json:"detail"`
+	AccessMode        string `json:"accessMode"`
+	GeneratedPassword string `json:"generatedPassword,omitempty"`
+	ExpiresAt         int64  `json:"expiresAt"`
+	Created           bool   `json:"created"`
+	Reused            bool   `json:"reused"`
 	// Warnings are things the caller should say on stderr and that do not
 	// change the link: it only opens locally, or an audit row was not written.
 	Warnings []string `json:"warnings,omitempty"`
+}
+
+func generateRandomSharePassword(n int) (string, error) {
+	const alphabet = "abcdefghjkmnpqrstuvwxyz23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+	if n < minSharePasswordLen {
+		n = 10
+	}
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	out := make([]byte, n)
+	for i := range buf {
+		out[i] = alphabet[int(buf[i])%len(alphabet)]
+	}
+	return string(out), nil
 }
 
 // EnsurePageShareLink returns a clickable handed-out share link for a published
@@ -214,6 +240,40 @@ func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
 	detail, err := validateShareTerms(opts.Detail, opts.ExpiresIn)
 	if err != nil {
 		return ShareLinkResult{}, err
+	}
+	if opts.AccessMode == "" && (opts.RandomPassword || opts.CustomPassword != "") {
+		opts.AccessMode = store.ShareAccessCustom
+	}
+	if opts.AccessMode != "" && !store.ValidShareAccessMode(opts.AccessMode) {
+		return ShareLinkResult{}, errors.New("access mode must be shared, custom or none")
+	}
+	if opts.AccessMode != store.ShareAccessCustom && (opts.RandomPassword || opts.CustomPassword != "") {
+		return ShareLinkResult{}, errors.New("--random-password and --password-stdin only apply with --access custom")
+	}
+	sharedHash, _ := db.GetSetting(ctx, sharedPasswordHashKey, "")
+	if opts.AccessMode == store.ShareAccessShared && sharedHash == "" {
+		return ShareLinkResult{}, errors.New("shared password is not set; configure one in Sharing settings first")
+	}
+	var customPW, generatedPW string
+	if opts.AccessMode == store.ShareAccessCustom {
+		if opts.RandomPassword && opts.CustomPassword != "" {
+			return ShareLinkResult{}, errors.New("pass either --random-password or --password-stdin, not both")
+		}
+		if opts.RandomPassword {
+			var gerr error
+			generatedPW, gerr = generateRandomSharePassword(10)
+			if gerr != nil {
+				return ShareLinkResult{}, fmt.Errorf("generate password: %w", gerr)
+			}
+			customPW = generatedPW
+		} else if opts.CustomPassword != "" {
+			customPW = opts.CustomPassword
+		}
+		if customPW != "" {
+			if err := validateSharePassword(customPW); err != nil {
+				return ShareLinkResult{}, err
+			}
+		}
 	}
 
 	box, err := secret.Open(filepath.Join(cfg.DataDir, secret.KeyFile))
@@ -241,6 +301,9 @@ func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
 			if store.ShareDetail(l.Detail) != detail || l.Interactive != opts.Interactive {
 				continue
 			}
+			if opts.AccessMode != "" && customPW == "" && store.ShareAccessMode(l.AccessMode) != opts.AccessMode {
+				continue
+			}
 			enc, eerr := db.ShareLinkTokenEnc(ctx, l.ID)
 			if eerr != nil || len(enc) == 0 {
 				continue
@@ -249,15 +312,36 @@ func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
 			if uerr != nil || len(tok) == 0 {
 				continue
 			}
+			modeOut := l.AccessMode
+			if opts.AccessMode == store.ShareAccessCustom && customPW != "" {
+				pwHash, herr := auth.HashPassword(customPW)
+				if herr != nil {
+					return ShareLinkResult{}, herr
+				}
+				pwEnc := box.Seal([]byte(customPW), linkPasswordSealContext(l.ID))
+				if serr := db.SetShareLinkAccess(ctx, l.ID, store.ShareAccessCustom, pwHash, pwEnc, false); serr != nil {
+					return ShareLinkResult{}, serr
+				}
+				if aerr := db.Audit(ctx, store.AuditEntry{
+					Event:    "share.access_changed",
+					Username: "cli",
+					Detail:   l.Name + " -> custom",
+				}); aerr != nil {
+					warnings = append(warnings, "access change not recorded in the audit log: "+aerr.Error())
+				}
+				modeOut = string(store.ShareAccessCustom)
+			}
 			return ShareLinkResult{
-				ID:        l.ID,
-				Name:      l.Name,
-				PageID:    l.PageID,
-				URL:       base + "/share/" + string(tok) + "/",
-				Detail:    l.Detail,
-				ExpiresAt: l.ExpiresAt,
-				Reused:    true,
-				Warnings:  warnings,
+				ID:                l.ID,
+				Name:              l.Name,
+				PageID:            l.PageID,
+				URL:               base + "/share/" + string(tok) + "/",
+				Detail:            l.Detail,
+				AccessMode:        modeOut,
+				GeneratedPassword: generatedPW,
+				ExpiresAt:         l.ExpiresAt,
+				Reused:            true,
+				Warnings:          warnings,
 			}, nil
 		}
 	}
@@ -296,20 +380,43 @@ func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
 	if opts.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(opts.ExpiresIn) * time.Second).Unix()
 	}
+	accessMode := opts.AccessMode
+	if accessMode == "" {
+		if sharedHash != "" {
+			accessMode = store.ShareAccessShared
+		} else {
+			accessMode = store.ShareAccessNone
+		}
+	}
 	linkID := id.New()
+	var pwHash string
+	var pwEnc []byte
+	if accessMode == store.ShareAccessCustom {
+		if customPW == "" {
+			return ShareLinkResult{}, errors.New("custom access mode requires --random-password or --password-stdin")
+		}
+		pwHash, err = auth.HashPassword(customPW)
+		if err != nil {
+			return ShareLinkResult{}, err
+		}
+		pwEnc = box.Seal([]byte(customPW), linkPasswordSealContext(linkID))
+	}
 	rec, err := db.CreateShareLink(ctx, store.NewShareLink{
-		ID:          linkID,
-		TokenHash:   auth.HashToken(token),
-		TokenEnc:    box.Seal([]byte(token), shareTokenContext(linkID)),
-		Prefix:      prefix,
-		Name:        name,
-		Detail:      detail,
-		Scope:       store.ShareWhole,
-		UserID:      owner,
-		ExpiresAt:   expiresAt,
-		PageID:      page.ID,
-		Params:      params,
-		Interactive: opts.Interactive,
+		ID:           linkID,
+		TokenHash:    auth.HashToken(token),
+		TokenEnc:     box.Seal([]byte(token), shareTokenContext(linkID)),
+		Prefix:       prefix,
+		Name:         name,
+		Detail:       detail,
+		Scope:        store.ShareWhole,
+		UserID:       owner,
+		ExpiresAt:    expiresAt,
+		PageID:       page.ID,
+		Params:       params,
+		Interactive:  opts.Interactive,
+		AccessMode:   accessMode,
+		PasswordHash: pwHash,
+		PasswordEnc:  pwEnc,
 	})
 	if err != nil {
 		return ShareLinkResult{}, err
@@ -319,7 +426,7 @@ func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
 	if aerr := db.Audit(ctx, store.AuditEntry{
 		Event:    "share.created",
 		Username: "cli",
-		Detail:   name + " (" + string(detail) + ", page " + page.ID + ")",
+		Detail:   name + " (" + string(detail) + ", access " + string(accessMode) + ", page " + page.ID + ")",
 	}); aerr != nil {
 		warnings = append(warnings, "not recorded in the audit log: "+aerr.Error())
 	}
@@ -333,14 +440,16 @@ func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
 		}
 	}
 	return ShareLinkResult{
-		ID:        rec.ID,
-		Name:      rec.Name,
-		PageID:    rec.PageID,
-		URL:       base + "/share/" + token + "/",
-		Detail:    rec.Detail,
-		ExpiresAt: rec.ExpiresAt,
-		Created:   true,
-		Warnings:  warnings,
+		ID:                rec.ID,
+		Name:              rec.Name,
+		PageID:            rec.PageID,
+		URL:               base + "/share/" + token + "/",
+		Detail:            rec.Detail,
+		AccessMode:        rec.AccessMode,
+		GeneratedPassword: generatedPW,
+		ExpiresAt:         rec.ExpiresAt,
+		Created:           true,
+		Warnings:          warnings,
 	}, nil
 }
 

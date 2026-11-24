@@ -79,12 +79,16 @@ Each of these exists because the alternative broke something real.
    `internal/tmux`, never hand-built target strings.
 
 8. **A share token is narrowed by its route, never by a flag.**
-   A share token reaches exactly five routes: three `GET`s —
+   A share token reaches exactly six routes: three `GET`s —
    `/api/share/{token}/v1/snapshot`, and a share page's files at
-   `/share/{token}` and `/share/{token}/*` — and one write with its preflight,
+   `/share/{token}` and `/share/{token}/*` — the password unlock form handler
+   `POST /share/{token}/unlock`, and one write with its preflight,
    `POST` and `OPTIONS /api/share/{token}/v1/actions/{name}`.
    `TestAShareTokenReachesOnlyTheseRoutes` walks the router and fails on any
    route, method or path under either prefix that is not that list.
+   Password-protected links serve their sandboxed files and API through
+   short-lived HMAC grants under `/share-u/{grant}` and `/api/share-u/{grant}`,
+   pinned to five routes by `TestAnUnlockGrantReachesOnlyTheseRoutes`.
    `share_links` is a table `currentUser` does not consult. That is what makes
    a share token presented as a cookie or a `Bearer` header an unknown string
    that every authenticated route already answers 401 to.

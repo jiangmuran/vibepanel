@@ -1132,6 +1132,8 @@ export interface UpdateStarted {
 export type ShareDetail = 'counts' | 'names'
 
 /** A link as the settings page lists it. The token is never in here. */
+export type ShareAccessMode = 'none' | 'shared' | 'custom'
+
 export interface ShareLink {
   id: string
   /** The first characters, kept so a row can be named on the way to revoking
@@ -1167,6 +1169,18 @@ export interface ShareLink {
   copyable: boolean
   /** Visitor actions run through this link since the panel's local midnight. */
   actionsToday: number
+  /** Password protection mode for this link: 'none', 'shared' or 'custom'. */
+  accessMode: ShareAccessMode
+  /** True when a custom-password link has a sealed copy the owner can view. */
+  passwordViewable: boolean
+  /** Distinct visitor IPs recorded for this link. */
+  uniqueIps: number
+  /** Total page visits recorded for this link. */
+  visitCount: number
+  /** Total failed password unlock attempts recorded for this link. */
+  unlockFailCount: number
+  /** Most recently seen visitor IP, or '' if never accessed. */
+  lastAccessIp: string
   /** The largest live viewer's screen, or 0 when nothing is looking. What the
    *  owner is composing for when they cannot see it. */
   viewportWidth: number
@@ -1352,6 +1366,45 @@ export interface SharingSettings {
   visitorWrites: boolean
   /** Optional dedicated origin (scheme://host[:port]) for handed-out share links; '' uses the panel's own address. */
   shareOrigin: string
+  /** Whether a panel-wide shared password is configured (new links use it by default). */
+  sharedPasswordSet: boolean
+  /** Whether the shared password has a sealed copy the signed-in owner can view/copy. */
+  sharedPasswordViewable: boolean
+  /** Number of handed-out links currently public (accessMode === 'none'). */
+  publicLinkCount: number
+  /** True when recent share visits arrived exclusively from 127.0.0.1 / ::1. */
+  loopbackOnlyWarning: boolean
+}
+
+export interface ShareAccessIP {
+  ip: string
+  firstSeenAt: number
+  lastSeenAt: number
+  visitCount: number
+  unlockOkCount: number
+  unlockFailCount: number
+  lastUa: string
+  lastEvent: string
+}
+
+export interface ShareAccessEvent {
+  id: number
+  at: number
+  ip: string
+  event: string
+  ua: string
+  detail: string
+}
+
+export interface ShareAccessStats {
+  linkId: string
+  uniqueIps: number
+  totalVisits: number
+  totalUnlockOk: number
+  totalUnlockFail: number
+  loopbackOnly: boolean
+  ips: ShareAccessIP[]
+  events: ShareAccessEvent[]
 }
 
 /** Whether automatic HTTPS provisioning is available for a candidate share origin. */

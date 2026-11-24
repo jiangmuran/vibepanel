@@ -154,6 +154,23 @@ http {
 `,
 			want: "127.0.0.1:14443 ssl http2",
 		},
+		{
+			name: "stream sni with proxy_protocol preserves proxy_protocol",
+			dump: `
+stream {
+    map $ssl_preread_server_name $sni_upstream {
+        default 127.0.0.1:14443;
+    }
+    server {
+        listen 443;
+        ssl_preread on;
+        proxy_protocol on;
+        proxy_pass $sni_upstream;
+    }
+}
+`,
+			want: "127.0.0.1:14443 ssl http2 proxy_protocol",
+		},
 	}
 	for _, tc := range cases {
 		if got := parseNginxStreamDefault(tc.dump); got != tc.want {

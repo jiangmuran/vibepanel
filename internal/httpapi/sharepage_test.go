@@ -129,6 +129,8 @@ func TestAShareTokenReachesOnlyTheseRoutes(t *testing.T) {
 		// The one write, and its preflight: docs/page-backend.md §6.
 		"OPTIONS /api/share/{token}/v1/actions/{name}",
 		"POST /api/share/{token}/v1/actions/{name}",
+		// Password unlock form submission for protected share links.
+		"POST /share/{token}/unlock",
 	}
 	var got []string
 	err := chi.Walk(srv.Routes().(chi.Routes),
@@ -142,6 +144,7 @@ func TestAShareTokenReachesOnlyTheseRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
+	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("the share surface is\n  %s\nwant\n  %s\nA route added here is reachable by anybody holding "+
 			"a share link. If that is the intent, add it to this list and to red line 8.",

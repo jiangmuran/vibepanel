@@ -544,9 +544,15 @@ func pagePublish(args []string) error {
 	withLink := fs.Bool("link", false, "also print a clickable share URL (reusing an existing link or creating one)")
 	forceNew := fs.Bool("new", false, "with --link, always mint a new share link instead of reusing one")
 	detail := fs.String("detail", string(store.ShareCounts), "with --link, disclosure level: counts or names")
+	access := fs.String("access", "", "with --link, protection mode: shared, custom or none (defaults to shared when a shared password is set)")
+	randomPW := fs.Bool("random-password", false, "with --access custom, generate a random per-link password and print it")
+	pwStdin := fs.Bool("password-stdin", false, "with --access custom, read the per-link password from standard input")
 	expires := fs.String("expires", "", "with --link, expiry duration such as 24h or 7d (empty never expires)")
 	interactive := fs.Bool("interactive", false, "with --link, allow declared visitor actions")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
+	if err := rejectPlaintextPasswordFlag(args); err != nil {
+		return err
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -579,11 +585,18 @@ func pagePublish(args []string) error {
 	}
 	var link *httpapi.ShareLinkResult
 	if *withLink {
+		customPW, perr := readCustomLinkPassword(*pwStdin)
+		if perr != nil {
+			return perr
+		}
 		res, lerr := httpapi.EnsurePageShareLink(ctx, db, cfg, page, httpapi.ShareLinkOptions{
-			Detail:      store.ShareDetail(strings.TrimSpace(*detail)),
-			ExpiresIn:   expiresIn,
-			Interactive: *interactive,
-			ForceNew:    *forceNew,
+			Detail:         store.ShareDetail(strings.TrimSpace(*detail)),
+			AccessMode:     store.ShareAccessMode(strings.TrimSpace(*access)),
+			CustomPassword: customPW,
+			RandomPassword: *randomPW,
+			ExpiresIn:      expiresIn,
+			Interactive:    *interactive,
+			ForceNew:       *forceNew,
 		})
 		if lerr != nil {
 			return lerr
@@ -608,6 +621,9 @@ func pagePublish(args []string) error {
 	fmt.Printf("published %s v%d\n", page.Name, version)
 	if link != nil {
 		fmt.Println(link.URL)
+		if link.GeneratedPassword != "" {
+			fmt.Printf("password: %s\n", link.GeneratedPassword)
+		}
 	}
 	return nil
 }
@@ -617,9 +633,15 @@ func pageLink(args []string) error {
 	forceNew := fs.Bool("new", false, "create a new link even if this page already has one")
 	name := fs.String("name", "", "label for a new link (defaults to the page's name)")
 	detail := fs.String("detail", string(store.ShareCounts), "disclosure level: counts or names")
+	access := fs.String("access", "", "protection mode: shared, custom or none (defaults to shared when a shared password is set)")
+	randomPW := fs.Bool("random-password", false, "with --access custom, generate a random per-link password and print it")
+	pwStdin := fs.Bool("password-stdin", false, "with --access custom, read the per-link password from standard input")
 	expires := fs.String("expires", "", "expiry duration such as 24h or 7d (empty never expires)")
 	interactive := fs.Bool("interactive", false, "allow declared visitor actions through this link")
 	asJSON := fs.Bool("json", false, "print the link as JSON")
+	if err := rejectPlaintextPasswordFlag(args); err != nil {
+		return err
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -628,6 +650,10 @@ func pageLink(args []string) error {
 		return err
 	}
 	expiresIn, err := parseLinkExpires(*expires)
+	if err != nil {
+		return err
+	}
+	customPW, err := readCustomLinkPassword(*pwStdin)
 	if err != nil {
 		return err
 	}
@@ -642,11 +668,14 @@ func pageLink(args []string) error {
 		return err
 	}
 	res, err := httpapi.EnsurePageShareLink(ctx, db, cfg, page, httpapi.ShareLinkOptions{
-		Name:        *name,
-		Detail:      store.ShareDetail(strings.TrimSpace(*detail)),
-		ExpiresIn:   expiresIn,
-		Interactive: *interactive,
-		ForceNew:    *forceNew,
+		Name:           *name,
+		Detail:         store.ShareDetail(strings.TrimSpace(*detail)),
+		AccessMode:     store.ShareAccessMode(strings.TrimSpace(*access)),
+		CustomPassword: customPW,
+		RandomPassword: *randomPW,
+		ExpiresIn:      expiresIn,
+		Interactive:    *interactive,
+		ForceNew:       *forceNew,
 	})
 	if err != nil {
 		return err
@@ -658,6 +687,9 @@ func pageLink(args []string) error {
 		return nil
 	}
 	fmt.Println(res.URL)
+	if res.GeneratedPassword != "" {
+		fmt.Printf("password: %s\n", res.GeneratedPassword)
+	}
 	return nil
 }
 
@@ -667,6 +699,26 @@ func printLinkWarnings(res httpapi.ShareLinkResult) {
 	for _, w := range res.Warnings {
 		fmt.Fprintln(os.Stderr, "warning:", w)
 	}
+}
+
+func rejectPlaintextPasswordFlag(args []string) error {
+	for _, a := range args {
+		if a == "--password" || a == "-password" || strings.HasPrefix(a, "--password=") || strings.HasPrefix(a, "-password=") {
+			return errors.New("there is no --password flag, on purpose: use --random-password or --password-stdin so passwords stay out of shell history and ps")
+		}
+	}
+	return nil
+}
+
+func readCustomLinkPassword(fromStdin bool) (string, error) {
+	if !fromStdin {
+		return "", nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+	if err != nil {
+		return "", err
+	}
+	return trimOneNewline(string(raw)), nil
 }
 
 // parseLinkExpires parses optional durations such as "24h", "7d", or "0".

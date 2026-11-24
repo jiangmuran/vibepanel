@@ -489,6 +489,8 @@ func (s *Server) Routes() http.Handler {
 		// authentication; add a second route here and a share token can reach
 		// it. There is no flag in between, on purpose.
 		s.registerShareRoutes(r)
+		// Short-lived unlock grants minted after passing a password gate.
+		s.registerShareUnlockAPIRoutes(r)
 		// An admin page's API: its own credential, its own table, the same
 		// placement as the share routes. See admingrants.go.
 		s.registerAdminAPIRoutes(r)
@@ -619,6 +621,8 @@ func (s *Server) Routes() http.Handler {
 	// A share page's files. Before the SPA's catch-all, which must never answer
 	// `/share/<token>`. Red line 8 counts these routes; see sharepage.go.
 	s.registerSharePageRoutes(r)
+	// Sandboxed frames for password-protected share links.
+	s.registerShareUnlockPageRoutes(r)
 	// A page's admin page: the session mints a grant here, and the grant
 	// serves the page. Before the catch-all for the same reason.
 	s.registerAdminPageRoutes(r)

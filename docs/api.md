@@ -1510,7 +1510,7 @@ as `share.rotated`.
 ### `GET /api/settings/sharing`
 ### `PUT /api/settings/sharing`
 
-`{"visitorWrites": true, "shareOrigin": ""}`: panel-wide sharing settings.
+`{"visitorWrites": true, "shareOrigin": "", "sharedPasswordSet": false, "sharedPasswordViewable": false, "publicLinkCount": 0, "loopbackOnlyWarning": false}`: panel-wide sharing settings.
 
 - `visitorWrites` (default `true`): whether any visitor action on any link may
   run. Turning it off refuses the next action on every interactive link. Audited
@@ -1519,8 +1519,9 @@ as `share.rotated`.
   origin (such as `https://share.example.com`) for handed-out share links.
   When set, `POST /api/settings/shares`, `GET /api/settings/shares/{id}/url` and
   `POST /api/settings/shares/{id}/rotate` build `url` under this origin, and
-  requests arriving on its host reach only `/share/{token}*` and
-  `/api/share/{token}/*` for handed-out links — every other path (including `/`,
+  requests arriving on its host reach only `/share/{token}*`,
+  `POST /share/{token}/unlock`, `/share-u/{grant}*`, `/api/share/{token}/*` and
+  `/api/share-u/{grant}/v1/*` for handed-out links — every other path (including `/`,
   `/api/health`, `/api/auth/*`, `/ws`, previews and admin pages) answers `404`
   so the panel's sign-in screen is never exposed on the share domain. The share
   host is recognised by name: that hostname on any port, with or without a
@@ -1532,8 +1533,64 @@ as `share.rotated`.
   approved origin, the name the request arrived on, or a name an unexpired
   sign-in session is bound to. Setting `""` returns to the panel's own
   address. Audited as `sharing.origin_changed`.
+- `sharedPasswordSet`, `sharedPasswordViewable`, `publicLinkCount`,
+  `loopbackOnlyWarning`: read-only status fields for share-link password
+  protection and visitor real-IP forwarding.
 
-`PUT` accepts either or both fields and refuses an empty `{}` with `400`.
+`PUT` accepts `visitorWrites` and/or `shareOrigin` and refuses an empty `{}` with `400`.
+
+### `PUT /api/settings/sharing/password`
+### `GET /api/settings/sharing/password`
+### `POST /api/settings/sharing/password/apply-all`
+### `POST /api/settings/sharing/password/revoke-sessions`
+
+Panel-wide shared password for share links.
+
+- `PUT` with `{"password": "..."}` (6–256 bytes, no control characters) stores an
+  Argon2id hash plus an AEAD-sealed copy (`secrets.key`) and bumps the global
+  password epoch so every existing shared-password cookie and sandbox grant
+  stops working immediately. Passing `{"password": ""}` clears the shared
+  password, returning `409` if any handed-out link still uses `accessMode = "shared"`.
+  Once configured, new share links default to `accessMode = "shared"`.
+- `GET` returns `{"password": "..."}` (`Cache-Control: no-store`) for the
+  signed-in owner when a sealed copy is stored.
+- `POST .../apply-all` switches every currently public (`accessMode = "none"`)
+  handed-out link to `shared` mode and returns `{"updated": N, "settings": ...}`.
+- `POST .../revoke-sessions` bumps the global password epoch without changing
+  the password, signing out every browser unlocked via the shared password.
+
+### `PUT /api/settings/shares/{shareID}/access`
+### `GET /api/settings/shares/{shareID}/password`
+### `GET /api/settings/shares/{shareID}/access-stats`
+
+Per-link password protection and visitor IP analytics.
+
+- `PUT .../access` takes `{"accessMode": "none"|"shared"|"custom", "password": "...", "revokeSessions": true}`.
+  Switching modes, changing a custom password, or passing `revokeSessions: true`
+  bumps the link's `password_epoch`, invalidating existing cookies and grants
+  for that link immediately.
+- `GET .../password` returns `{"password": "..."}` (`Cache-Control: no-store`)
+  for a `custom`-mode link when a sealed copy is stored.
+- `GET .../access-stats` returns per-IP aggregates (`uniqueIps`, `totalVisits`,
+  `totalUnlockOk`, `totalUnlockFail`, `loopbackOnly`, `ips[]`) and recent
+  chronological events (`events[]`: `visit`, `unlock_ok`, `unlock_fail`, `action`).
+
+### `GET /api/share-u/{grant}/v1/snapshot`
+### `POST /api/share-u/{grant}/v1/actions/{name}`
+### `OPTIONS /api/share-u/{grant}/v1/actions/{name}`
+
+Sandbox-grant equivalents of `/api/share/{token}/v1/*` used inside the
+fullscreen `sandbox="allow-scripts"` iframe rendered after unlocking a
+password-protected share link.
+
+Password-protected links render a zero-JS password form on `/share/{token}/`
+posting to `POST /share/{token}/unlock` (throttled per `(IP, link)` and capped
+per link). Unlocking sets an `HttpOnly; SameSite=Lax` HMAC cookie (`Path=/share/`
+for `shared` links so sibling shared links open without re-prompting;
+`Path=/share/{token}/` for `custom` links) and renders a minimal fullscreen
+shell framing `/share-u/{grant}/` with `sandbox="allow-scripts"`. The inner
+page reads `/api/share-u/{grant}/v1/*` without cookies; owner peek links
+(`POST /api/settings/shares/{shareID}/view`) continue to bypass the gate.
 
 ### `POST /api/settings/sharing/check`
 

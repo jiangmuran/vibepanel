@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   BookOpen,
   Check,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   FileUp,
   FolderCog,
   FolderOpen,
   GitFork,
   Globe,
   History,
+  KeyRound,
   PanelsTopLeft,
   Plus,
   ShieldCheck,
@@ -18,6 +21,7 @@ import {
   Trash2,
   TriangleAlert,
   Upload,
+  UserX,
 } from 'lucide-react'
 
 import { api } from '../../protocol/api'
@@ -112,9 +116,10 @@ export function Sharing({
 
   const refresh = useCallback(async () => {
     try {
-      const [p, l] = await Promise.all([api.listPages(), api.listShares()])
+      const [p, l, s] = await Promise.all([api.listPages(), api.listShares(), api.sharingSettings().catch(() => null)])
       setPages(p)
       setLinks(l)
+      if (s) setSharing(s)
       const read = await Promise.all(p.map((row) => api.page(row.id).catch(() => null)))
       setDetails(Object.fromEntries(read.filter((d) => d !== null).map((d) => [d.page.id, d])))
     } catch (e) {
@@ -268,6 +273,30 @@ export function Sharing({
               <ShareOriginLine settings={sharing} onChanged={setSharing} onError={fail} />
             </div>
           )}
+          {sharing && (
+            <div className="py-2">
+              <SharePasswordLine
+                settings={sharing}
+                onChanged={setSharing}
+                onNotice={(m) => {
+                  setError('')
+                  setNotice(m)
+                }}
+                onRefresh={() => void refresh()}
+                onError={fail}
+              />
+            </div>
+          )}
+          {sharing?.loopbackOnlyWarning && (
+            <div
+              data-testid="sharing-loopback-warning"
+              className="flex items-start gap-2 py-2 text-vp-xs"
+              style={{ color: 'var(--vp-state-waiting)' }}
+            >
+              <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+              <span>{t('sharing.loopbackWarning')}</span>
+            </div>
+          )}
           {shareSkill && (
             <div className="py-2">
               <ShareSkillLine status={shareSkill} onChanged={setShareSkill} onError={fail} />
@@ -320,6 +349,7 @@ export function Sharing({
               projects={projects}
               sessions={sessions}
               visitorWrites={sharing?.visitorWrites ?? true}
+              sharedPasswordSet={sharing?.sharedPasswordSet ?? false}
               onOpen={() => onOpenPage?.(page, false)}
               onChanged={() => {
                 setError('')
@@ -933,6 +963,292 @@ function ShareOriginLine({
   )
 }
 
+function randomPasscode(len = 10): string {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789ABCDEFGHJKMNPQRSTUVWXYZ'
+  const buf = new Uint8Array(len)
+  crypto.getRandomValues(buf)
+  let out = ''
+  for (let i = 0; i < len; i++) out += chars[buf[i] % chars.length]
+  return out
+}
+
+/**
+ * Panel-wide shared password for share links, with one-click protection of
+ * existing public links and instant session revocation.
+ */
+function SharePasswordLine({
+  settings,
+  onChanged,
+  onNotice,
+  onRefresh,
+  onError,
+}: {
+  settings: SharingSettings
+  onChanged: (next: SharingSettings) => void
+  onNotice: (msg: string) => void
+  onRefresh: () => void
+  onError: (e: unknown) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [pw, setPw] = useState('')
+  const [showInput, setShowInput] = useState(false)
+  const [inputArmed, setInputArmed] = useState(false)
+  const [revealed, setRevealed] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const save = async (nextPassword: string) => {
+    setBusy(true)
+    try {
+      const next = await api.setSharedSharePassword(nextPassword)
+      onChanged(next)
+      setEditing(false)
+      setPw('')
+      setRevealed('')
+      onRefresh()
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const reveal = async () => {
+    if (revealed) {
+      setRevealed('')
+      return
+    }
+    setBusy(true)
+    try {
+      const got = await api.sharedSharePassword()
+      setRevealed(got.password)
+      setCopied(false)
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const applyAll = () =>
+    confirmThen(
+      {
+        title: t('sharing.passwordApplyAllTitle', { n: settings.publicLinkCount }),
+        body: t('sharing.passwordApplyAllBody'),
+        confirm: t('sharing.passwordApplyAll', { n: settings.publicLinkCount }),
+        cancel: t('ask.cancel'),
+      },
+      async () => {
+        setBusy(true)
+        try {
+          const res = await api.applySharedPasswordAll()
+          onChanged(res.settings)
+          onNotice(t('sharing.passwordApplied', { n: res.updated }))
+          onRefresh()
+        } catch (e) {
+          onError(e)
+        } finally {
+          setBusy(false)
+        }
+      },
+    )
+
+  const revokeAll = () =>
+    confirmThen(
+      {
+        title: t('sharing.revokeSessionsTitle'),
+        body: t('sharing.revokeSessionsBody'),
+        confirm: t('sharing.revokeSessions'),
+        cancel: t('ask.cancel'),
+        destructive: true,
+      },
+      async () => {
+        setBusy(true)
+        try {
+          await api.revokeSharedSessions()
+          onNotice(t('sharing.sessionsRevoked'))
+        } catch (e) {
+          onError(e)
+        } finally {
+          setBusy(false)
+        }
+      },
+    )
+
+  return (
+    <div data-testid="share-password" className="min-w-0 text-vp-sm text-ink-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <KeyRound size={12} className="shrink-0" />
+        <span>{t('sharing.password')}</span>
+        <span
+          data-testid="share-password-state"
+          data-set={settings.sharedPasswordSet}
+          className={settings.sharedPasswordSet ? 'text-ink-2' : 'text-ink-3'}
+        >
+          {settings.sharedPasswordSet ? t('sharing.passwordSet') : t('sharing.passwordUnset')}
+        </span>
+        {!editing && (
+          <>
+            {settings.sharedPasswordSet && settings.sharedPasswordViewable && (
+              <button
+                type="button"
+                disabled={busy}
+                data-testid="share-password-reveal"
+                onClick={() => void reveal()}
+                className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+              >
+                {revealed ? t('shareSkill.hide') : t('sharing.passwordView')}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={busy}
+              data-testid="share-password-change"
+              onClick={() => {
+                setPw('')
+                setShowInput(false)
+                setInputArmed(false)
+                setEditing(true)
+              }}
+              className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+            >
+              {settings.sharedPasswordSet ? t('sharing.passwordChange') : t('sharing.passwordSetup')}
+            </button>
+            {settings.sharedPasswordSet && settings.publicLinkCount > 0 && (
+              <button
+                type="button"
+                disabled={busy}
+                data-testid="share-password-apply-all"
+                onClick={() => void applyAll()}
+                className="vp-outline text-vp-xs"
+              >
+                <ShieldCheck size={11} />
+                {t('sharing.passwordApplyAll', { n: settings.publicLinkCount })}
+              </button>
+            )}
+            {settings.sharedPasswordSet && (
+              <button
+                type="button"
+                disabled={busy}
+                data-testid="share-password-revoke-sessions"
+                onClick={() => void revokeAll()}
+                className="vp-press inline-flex items-center gap-1 rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+              >
+                <UserX size={11} />
+                {t('sharing.revokeSessions')}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {revealed && !editing && (
+        <div
+          data-testid="share-password-revealed"
+          className="mt-2 flex flex-wrap items-center gap-2 rounded-vp border border-hairline bg-surface-2 px-2.5 py-1.5"
+        >
+          <code className="font-mono text-vp-sm text-ink">{revealed}</code>
+          <button
+            type="button"
+            data-testid="share-password-copy"
+            onClick={() => copyTextInGesture(revealed, setCopied)}
+            className="vp-outline text-vp-xs"
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? t('sharing.passwordCopied') : t('sharing.passwordCopy')}
+          </button>
+        </div>
+      )}
+
+      {editing && (
+        <div className="mt-2 flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex min-w-48 flex-1 items-center @md:max-w-sm">
+              {/* readOnly until user interaction + no -webkit-text-security on
+                  empty values keeps Chrome Password Manager from treating this
+                  setting as the panel's own login form. */}
+              <input
+                name="share_global_code"
+                type="text"
+                readOnly={!inputArmed}
+                onFocus={() => setInputArmed(true)}
+                onPointerDown={() => setInputArmed(true)}
+                autoComplete="off"
+                spellCheck={false}
+                data-1p-ignore="true"
+                data-lpignore="true"
+                data-testid="share-password-input"
+                value={pw}
+                onChange={(e) => setPw(e.target.value)}
+                onKeyDown={(e) => {
+                  if (isEnter(e) && pw.length >= 6) void save(pw)
+                }}
+                placeholder={t('sharing.passwordPlaceholder')}
+                style={showInput || pw === '' ? undefined : ({ WebkitTextSecurity: 'disc' } as CSSProperties)}
+                className={`${INPUT} pr-8 font-mono`}
+              />
+              <button
+                type="button"
+                onClick={() => setShowInput((v) => !v)}
+                aria-label={t('sharing.passwordView')}
+                className="absolute right-2 text-ink-3 hover:text-ink"
+              >
+                {showInput ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              data-testid="share-password-generate"
+              onClick={() => {
+                setInputArmed(true)
+                setPw(randomPasscode())
+                setShowInput(true)
+              }}
+              className="vp-outline text-vp-sm"
+            >
+              <Sparkles size={12} />
+              {t('sharing.passwordGenerate')}
+            </button>
+            <button
+              type="button"
+              disabled={busy || pw.length < 6}
+              data-testid="share-password-save"
+              onClick={() => void save(pw)}
+              className="vp-primary text-vp-sm"
+            >
+              {t('sharing.passwordSave')}
+            </button>
+            {settings.sharedPasswordSet && (
+              <button
+                type="button"
+                disabled={busy}
+                data-testid="share-password-clear"
+                onClick={() => void save('')}
+                className="vp-outline text-vp-sm"
+              >
+                {t('sharing.passwordClear')}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setEditing(false)
+                setPw('')
+              }}
+              className="vp-outline text-vp-sm"
+            >
+              {t('share.cancel')}
+            </button>
+          </div>
+          <p className="text-vp-xs text-ink-3">{t('sharing.passwordWhy')}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function NewPage({
   catalogue,
   onCancel,
@@ -1057,6 +1373,7 @@ function PageCard({
   projects,
   sessions,
   visitorWrites,
+  sharedPasswordSet,
   onOpen,
   onChanged,
   onError,
@@ -1067,6 +1384,7 @@ function PageCard({
   projects: Project[]
   sessions: Session[]
   visitorWrites: boolean
+  sharedPasswordSet: boolean
   onOpen: () => void
   onChanged: () => void
   onError: (e: unknown) => void
@@ -1277,6 +1595,7 @@ function PageCard({
         projects={projects}
         sessions={sessions}
         visitorWrites={visitorWrites}
+        sharedPasswordSet={sharedPasswordSet}
         onChanged={onChanged}
         onError={(m) => onError(new Error(m))}
       />

@@ -97,8 +97,11 @@ var openRoutes = map[string]string{
 	// TestAShareTokenReachesOnlyTheseRoutes,
 	// TestEveryFileOfAPageIsServedInsideTheSandbox and
 	// TestALinkThatDrawsNothingSaysSoAndIsNeverThePanel stand over it.
-	"/share/{token}":   "an unknown token is a static gone page; a page link's token is the capability, see sharepage.go",
-	"/share/{token}/*": "the same route, with a path under it",
+	"/share/{token}":        "an unknown token is a static gone page; a page link's token is the capability, see sharepage.go",
+	"/share/{token}/*":      "the same route, with a path under it",
+	"/share/{token}/unlock": "password gate form submission for a protected share link; unknown tokens answer the static gone page",
+	"/share-u/{grant}":      "short-lived sandbox grant minted after passing a share password gate; unknown grants answer the static gone page",
+	"/share-u/{grant}/*":    "the same route, with a path under it",
 	// A page's admin page. Opening it without a session redirects to the
 	// sign-in page and mints nothing; with one, it mints a grant bound to that
 	// session. The grant's routes are a capability like a share page's, and an

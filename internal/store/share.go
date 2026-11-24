@@ -62,6 +62,24 @@ func ValidShareScope(s ShareScope) bool {
 	return s == ShareWhole || s == ShareProject || s == ShareSession
 }
 
+// ShareAccessMode decides whether opening a handed-out share link requires a
+// password, and which password it checks.
+type ShareAccessMode string
+
+const (
+	// ShareAccessNone means anyone holding the URL can open the page directly.
+	ShareAccessNone ShareAccessMode = "none"
+	// ShareAccessShared protects the link with the panel-wide shared password.
+	ShareAccessShared ShareAccessMode = "shared"
+	// ShareAccessCustom protects the link with a password unique to this link.
+	ShareAccessCustom ShareAccessMode = "custom"
+)
+
+// ValidShareAccessMode reports whether m is one of the defined access modes.
+func ValidShareAccessMode(m ShareAccessMode) bool {
+	return m == ShareAccessNone || m == ShareAccessShared || m == ShareAccessCustom
+}
+
 // ShareLink is a capability: a URL that opens a share page.
 //
 // Same storage shape as APIToken, deliberately -- the hash, never the token,
@@ -162,6 +180,20 @@ type ShareLink struct {
 	// ActionsToday is how many visitor actions ran through the link since the
 	// panel's local midnight, filled in from memory by the settings list.
 	ActionsToday int `json:"actionsToday"`
+	// AccessMode is "none", "shared" or "custom".
+	AccessMode string `json:"accessMode"`
+	// PasswordViewable is true when a custom-password link has a sealed copy
+	// that the signed-in owner can view or copy again.
+	PasswordViewable bool `json:"passwordViewable"`
+	// PasswordEpoch increments whenever this link's password, access mode or
+	// token changes, or when the owner revokes unlocked sessions. Never sent.
+	PasswordEpoch int64 `json:"-"`
+	// UniqueIPs, VisitCount, UnlockFailCount and LastAccessIP are aggregate
+	// access metrics filled from share_access_ips by the settings list.
+	UniqueIPs       int    `json:"uniqueIps"`
+	VisitCount      int    `json:"visitCount"`
+	UnlockFailCount int    `json:"unlockFailCount"`
+	LastAccessIP    string `json:"lastAccessIp"`
 	// Purpose is '' for a link somebody handed out and "preview" for the
 	// short-lived ones the Preview pane mints. Never sent: a preview link is
 	// not listed, cannot be edited, and says nothing a real link would not.
@@ -248,11 +280,14 @@ type NewShareLink struct {
 	PageID    string
 	// PinVersion and PinUntil start the link pinned, for a peek link that has
 	// to draw what the link it copies draws, trial and all.
-	PinVersion  int
-	PinUntil    int64
-	Params      map[string]any
-	Purpose     string
-	Interactive bool
+	PinVersion   int
+	PinUntil     int64
+	Params       map[string]any
+	Purpose      string
+	Interactive  bool
+	AccessMode   ShareAccessMode
+	PasswordHash string
+	PasswordEnc  []byte
 }
 
 // CreateShareLink records a link. The token itself is never stored in the
@@ -262,17 +297,32 @@ func (d *DB) CreateShareLink(ctx context.Context, in NewShareLink) (ShareLink, e
 	if err != nil {
 		return ShareLink{}, err
 	}
+	mode := in.AccessMode
+	if mode == "" {
+		mode = ShareAccessNone
+	}
+	if !ValidShareAccessMode(mode) {
+		return ShareLink{}, fmt.Errorf("store: invalid share access mode %q", mode)
+	}
+	pwHash := in.PasswordHash
+	pwEnc := in.PasswordEnc
+	if mode != ShareAccessCustom {
+		pwHash = ""
+		pwEnc = nil
+	}
 	remark := TruncateRemark(in.Remark)
 	n := now()
 	_, err = d.sql.ExecContext(ctx, `
 		INSERT INTO share_links
 			(id, token_hash, prefix, name, detail, scope, scope_id,
 			 user_id, created_at, expires_at, remark, locked, page_id, params, purpose,
-			 pin_version, pin_until, token_enc, interactive)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 pin_version, pin_until, token_enc, interactive,
+			 access_mode, password_hash, password_enc, password_epoch)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
 		in.ID, in.TokenHash, in.Prefix, in.Name, string(in.Detail), string(in.Scope),
 		in.ScopeID, in.UserID, n, in.ExpiresAt, remark, in.Locked, in.PageID, params, in.Purpose,
-		in.PinVersion, in.PinUntil, nonNilBytes(in.TokenEnc), in.Interactive)
+		in.PinVersion, in.PinUntil, nonNilBytes(in.TokenEnc), in.Interactive,
+		string(mode), pwHash, nonNilBytes(pwEnc))
 	if err != nil {
 		return ShareLink{}, fmt.Errorf("store: create share link: %w", err)
 	}
@@ -282,6 +332,7 @@ func (d *DB) CreateShareLink(ctx context.Context, in NewShareLink) (ShareLink, e
 		Remark: remark, Locked: in.Locked, PageID: in.PageID, Params: decodeParams(params),
 		Purpose: in.Purpose, PinVersion: in.PinVersion, PinUntil: in.PinUntil,
 		Interactive: in.Interactive, Copyable: len(in.TokenEnc) > 0,
+		AccessMode: string(mode), PasswordViewable: len(pwEnc) > 0, PasswordEpoch: 1,
 	}, nil
 }
 
@@ -300,14 +351,16 @@ func nonNilBytes(b []byte) []byte {
 // read of the sealed token, and it is named for it.
 const shareLinkColumns = `id, prefix, name, detail, scope, scope_id,
 	expires_at, created_at, last_used_at, remark, locked,
-	page_id, pin_version, pin_until, params, purpose, interactive, length(token_enc) > 0`
+	page_id, pin_version, pin_until, params, purpose, interactive, length(token_enc) > 0,
+	access_mode, password_epoch, length(password_enc) > 0`
 
 func scanShareLink(row scanner) (ShareLink, error) {
 	var s ShareLink
 	var params string
 	if err := row.Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail, &s.Scope, &s.ScopeID,
 		&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt, &s.Remark, &s.Locked,
-		&s.PageID, &s.PinVersion, &s.PinUntil, &params, &s.Purpose, &s.Interactive, &s.Copyable); err != nil {
+		&s.PageID, &s.PinVersion, &s.PinUntil, &params, &s.Purpose, &s.Interactive, &s.Copyable,
+		&s.AccessMode, &s.PasswordEpoch, &s.PasswordViewable); err != nil {
 		return ShareLink{}, err
 	}
 	s.Params = decodeParams(params)
@@ -389,10 +442,14 @@ func (d *DB) ShareLinkTokenEnc(ctx context.Context, id string) ([]byte, error) {
 }
 
 // RotateShareLink gives a handed-out link a new token. The old address stops
-// resolving in the same statement that the new one starts to.
+// resolving in the same statement that the new one starts to, and password_epoch
+// increments so any previously unlocked cookies or grants minted from the old
+// address stop working immediately too.
 func (d *DB) RotateShareLink(ctx context.Context, id string, tokenHash, tokenEnc []byte, prefix string) error {
 	res, err := d.sql.ExecContext(ctx,
-		`UPDATE share_links SET token_hash = ?, token_enc = ?, prefix = ? WHERE id = ? AND purpose = ''`,
+		`UPDATE share_links
+		 SET token_hash = ?, token_enc = ?, prefix = ?, password_epoch = password_epoch + 1
+		 WHERE id = ? AND purpose = ''`,
 		tokenHash, nonNilBytes(tokenEnc), prefix, id)
 	if err != nil {
 		return fmt.Errorf("store: rotate share link: %w", err)
