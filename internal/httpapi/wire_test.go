@@ -216,6 +216,8 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"ResourcePool", resources.PoolView{}},
 		{"ResourceSession", resources.SessionView{}},
 		{"ResourceProc", resources.ProcView{}},
+		{"MachineProc", resources.MachineProc{}},
+		{"MachineWhere", resources.Where{}},
 		{"ResourceAlert", resources.Alert{}},
 		{"ResourceAction", resources.Action{}},
 	} {
@@ -570,6 +572,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"resources.policy":      true,
 		"resources.boost":       true,
 		"resources.boost_ended": true,
+		"resources.project_end": true,
 		"chat.consent":          true,
 		"chat.alerts":           true,
 		// Hiding a project and bringing it back, by hand or by the idle rule,

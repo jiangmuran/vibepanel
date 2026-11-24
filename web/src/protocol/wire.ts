@@ -625,6 +625,14 @@ export interface ResourceSession {
   id: string
   /** Its name, for a session the snapshot does not carry (an archived project's). */
   title: string
+  projectId: string
+  projectName: string
+  /** Its project is archived: hidden from the sidebar, still running. */
+  archived: boolean
+  /** Unix seconds. */
+  createdAt: number
+  /** The later of the last input and the last output, unix seconds; 0 when unknown. */
+  lastUsedAt: number
   memory: number
   /** What only leaves when a process does; the rest is cache. */
   held: number
@@ -633,6 +641,41 @@ export interface ResourceSession {
   frozen: boolean
   priority: 'normal' | 'high' | 'low'
   top?: ResourceProc[]
+}
+
+export type MachineKind =
+  | 'session'
+  | 'panel'
+  | 'tmux'
+  | 'plugin'
+  | 'container'
+  | 'unit'
+  | 'user'
+  | 'kernel'
+  | 'other'
+
+export interface MachineWhere {
+  kind: MachineKind
+  /** A container's short id, a unit's name, a plugin's id. */
+  label?: string
+  sessionId?: string
+  sessionTitle?: string
+  projectName?: string
+}
+
+/** One of the largest processes on the whole machine; read-only. */
+export interface MachineProc {
+  pid: number
+  start: number
+  name: string
+  cmd?: string
+  rss: number
+  /** What it has out in swap. */
+  swap: number
+  user: string
+  /** Unix seconds; 0 when unknown. */
+  startedAt: number
+  where: MachineWhere
 }
 
 export interface ResourceAlert {
@@ -688,6 +731,7 @@ export interface ResourcesView {
   panel: number
   tmux: number
   sessions: ResourceSession[]
+  machine: MachineProc[]
   alert: ResourceAlert | null
   actions: ResourceAction[]
   at: number
