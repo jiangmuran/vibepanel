@@ -20,7 +20,7 @@ describe('the resources page', () => {
       autoAct: true,
       graceSeconds: 30,
       boostUntil: 123,
-      ...({ dynamic: true, boosted: false } as object),
+      ...({ boosted: false } as object),
     })
     expect(Object.keys(sent).sort()).toEqual(['askPercent', 'autoAct', 'graceSeconds', 'mode', 'poolPercent'])
   })

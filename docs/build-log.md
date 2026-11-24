@@ -28660,3 +28660,44 @@ marker makes that harmless but not atomic. The audit-failure warnings have no
 test: nothing in the suite makes the audit insert fail while the link insert
 succeeds. A bundle's files are compared with `TrimSpace`, so trailing
 whitespace edits read as current.
+
+## 2026-11-24 — A budget the machine could not honour
+
+At 04:06 a `next-server` in one session grew to 11.5 GiB. The machine (45 GiB,
+92 sessions, a VM in a container beside them) stopped answering for twenty
+minutes: ssh, the panel, everything. It came back when the process was ended by
+hand from the Resources page at 04:25, in the first request the panel managed
+to serve.
+
+What the running system said, not what the code suggested:
+
+- `oom-kill:constraint=CONSTRAINT_NONE ... global_oom`. The sessions' pool was
+  never at its limit: `memory.peak` 45.34 GB against `memory.max` 45.76 GB. The
+  policy was Performance, which was the one mode whose budget ignored the host:
+  a fixed 95%, with the other tenants holding more than the remaining 5%.
+- Swap was full (`Free swap = 100kB`), none of it the sessions' (their scope
+  has `MemorySwapMax=0`); 5.4 GiB of it was the VM.
+- The kernel killed `chrome` four times in the log that survived, each about
+  20 MiB, `oom_score_adj:300`. The dump lists `next-server` at 11.5 GiB with
+  score 0. 300 thousandths of the limit outranks 11.5 GiB.
+- The panel's log lines from 04:11 were written at 04:13; `store: ... context
+  canceled` throughout. The governor had asked, and could not be answered.
+
+Changed:
+
+- `Budget` applies the host ceiling in every mode: held memory plus what the
+  host has above its reserve. `Params.Dynamic` is gone, since it now
+  distinguished nothing, and the settings page shows the "tightens" line for
+  every mode.
+- `Layout.LevelOOMScores`, every ten seconds from the tick: a score above the
+  sessions' base, in a session's leaf or `other/`, is written back to the base.
+  Tested against real processes that raise their own score, because the
+  question is whether the kernel permits the write.
+
+**Left.** The panel's own unit has no `MemoryLow`, so a machine-wide reclaim
+caused by something outside the sessions can still evict its pages; that needs
+the unit file and root. The call to `levelScores` from `Tick` is covered by no
+unit test (removing it compiles and passes); only a check against a real scope
+would see it, and `resources-check` was not extended. Nothing here was
+reproduced by filling a machine: the budget is tested with the incident's
+numbers, and the score write against real processes.

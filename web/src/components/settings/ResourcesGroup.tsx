@@ -269,7 +269,7 @@ function AllocationSection({
   const shown = view.params.boosted
     ? view.params
     : selected === 'custom'
-      ? { ...(draft ?? view.policy), dynamic: true }
+      ? (draft ?? view.policy)
       : (view.presets.find((p) => p.mode === selected) ?? view.params)
 
   return (
@@ -300,7 +300,7 @@ function AllocationSection({
         <li>{t('res.summary.pool', { n: shown.poolPercent })}</li>
         <li>{t('res.summary.ask', { n: shown.askPercent })}</li>
         <li>{shown.autoAct ? t('res.summary.auto', { n: shown.graceSeconds }) : t('res.summary.noAuto')}</li>
-        {shown.dynamic && <li>{t('res.summary.dynamic')}</li>}
+        <li>{t('res.summary.dynamic')}</li>
       </ul>
 
       {draft && (

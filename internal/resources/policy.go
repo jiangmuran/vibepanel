@@ -38,7 +38,8 @@ const (
 	// Balanced is the default.
 	Balanced Mode = "balanced"
 	// Performance gives the sessions nearly everything and never ends a
-	// process on its own; the kernel's OOM killer is the backstop.
+	// process on its own; the kernel's OOM killer is the backstop -- inside
+	// the pool, which is why its budget follows the host like the others'.
 	Performance Mode = "performance"
 	// Custom takes its numbers from the policy itself.
 	Custom Mode = "custom"
@@ -69,20 +70,15 @@ type Params struct {
 	AskPercent   int  `json:"askPercent"`
 	AutoAct      bool `json:"autoAct"`
 	GraceSeconds int  `json:"graceSeconds"`
-	// Dynamic shrinks the budget when the rest of the host needs the memory.
-	Dynamic bool `json:"dynamic"`
-	Boosted bool `json:"boosted"`
+	Boosted      bool `json:"boosted"`
 }
 
 // Presets are the three named modes. Exported so the page shows the same
 // numbers the governor uses, from one table.
 var Presets = map[Mode]Params{
-	Conservative: {Mode: Conservative, PoolPercent: 75, AskPercent: 80, AutoAct: true, GraceSeconds: 30, Dynamic: true},
-	Balanced:     {Mode: Balanced, PoolPercent: 88, AskPercent: 90, AutoAct: true, GraceSeconds: 90, Dynamic: true},
-	// Not dynamic: somebody who picked this has said the sessions come first,
-	// and a budget that shrinks because a browser opened elsewhere on the
-	// host is the panel overruling them.
-	Performance: {Mode: Performance, PoolPercent: 95, AskPercent: 95, AutoAct: false, GraceSeconds: 0, Dynamic: false},
+	Conservative: {Mode: Conservative, PoolPercent: 75, AskPercent: 80, AutoAct: true, GraceSeconds: 30},
+	Balanced:     {Mode: Balanced, PoolPercent: 88, AskPercent: 90, AutoAct: true, GraceSeconds: 90},
+	Performance:  {Mode: Performance, PoolPercent: 95, AskPercent: 95, AutoAct: false, GraceSeconds: 0},
 }
 
 // DefaultPolicy is what a panel that has never been told anything runs.
@@ -147,7 +143,7 @@ func (p Policy) At(now time.Time) Params {
 		return pre
 	}
 	return Params{Mode: Custom, PoolPercent: p.PoolPercent, AskPercent: p.AskPercent,
-		AutoAct: p.AutoAct, GraceSeconds: p.GraceSeconds, Dynamic: true}
+		AutoAct: p.AutoAct, GraceSeconds: p.GraceSeconds}
 }
 
 const (
@@ -179,8 +175,19 @@ func Reserve(total uint64) uint64 {
 // scopeMax the scope's own limit, which the pool can never exceed and which the
 // panel cannot raise without root.
 //
-// Dynamic: the pool may have what it holds plus whatever the host can still
-// give above its reserve, and no more. Held rather than memory.current, because
+// In every mode the pool may have what it holds plus whatever the host can
+// still give above its reserve, and no more. Performance was once exempt, on
+// the reasoning that a budget which shrinks because something else on the host
+// took memory is the panel overruling a person who said the sessions come
+// first. On 2026-11-24 that exemption was the whole incident: a fixed 95% of a
+// 45 GiB machine whose other tenants (a VM, the panel) held more than the
+// other 5%. The pool never reached its own limit -- it peaked at 42.2 of 42.6
+// GiB -- so the kernel's backstop was the machine-wide one: twenty minutes of
+// reclaim with swap full, sshd and the panel unanswering, before anything
+// died. A limit the machine cannot honour is not a larger budget, it is no
+// budget. What Performance keeps is the larger share and the promise that the
+// panel ends nothing itself.
+// Held rather than memory.current, because
 // MemAvailable already counts the pool's own page cache as available: adding
 // memory.current on top counted that cache twice, and a pool full of cache --
 // the ordinary state of sessions that read files -- had a budget that could
@@ -199,9 +206,6 @@ func Budget(p Params, total, available, poolHeld, scopeMax uint64) uint64 {
 	limit := total / 100 * uint64(p.PoolPercent)
 	if scopeMax > 0 && limit > scopeMax {
 		limit = scopeMax
-	}
-	if !p.Dynamic {
-		return limit
 	}
 	reserve := Reserve(total)
 	room := uint64(0)

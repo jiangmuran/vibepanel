@@ -53,6 +53,9 @@ const (
 	// more than this. A limit that jitters every two seconds is noise in the
 	// kernel's reclaim targets and in anybody's trace.
 	budgetHysteresis = 128 * mib
+	// oomLevelEvery: how often the pool's processes are read for a score they
+	// raised on themselves. See Layout.LevelOOMScores.
+	oomLevelEvery = 10 * time.Second
 	// actionsKept: the recent actions the page lists.
 	actionsKept = 20
 )
@@ -328,19 +331,20 @@ type Governor struct {
 }
 
 type tickState struct {
-	growth     map[string][]memSample // by session id
-	cpuPrev    map[string]cpuSample   // by session id
-	hotSince   map[string]time.Time   // by session id
-	ooms       map[string]uint64      // by session id: oom_kill as last read
-	refaults   memSample
-	unkillable map[procKey]bool
-	lastMax    uint64
-	adoptTry   time.Time
-	restarted  time.Time
-	started    time.Time
-	warnSince  time.Time
-	okTicks    int
-	released   bool
+	growth      map[string][]memSample // by session id
+	cpuPrev     map[string]cpuSample   // by session id
+	hotSince    map[string]time.Time   // by session id
+	ooms        map[string]uint64      // by session id: oom_kill as last read
+	refaults    memSample
+	unkillable  map[procKey]bool
+	lastMax     uint64
+	oomLevelled time.Time
+	adoptTry    time.Time
+	restarted   time.Time
+	started     time.Time
+	warnSince   time.Time
+	okTicks     int
+	released    bool
 }
 
 type memSample struct {
@@ -467,6 +471,8 @@ func (g *Governor) Tick(ctx context.Context) {
 		pool.Stall = r.Stall()
 	}
 
+	g.levelScores(layout, now)
+
 	sessions := g.readSessions(layout, ro, now)
 	g.demote(sessions, hostPressure("cpu").Some10, now)
 	g.applyWeights(layout, sessions)
@@ -496,6 +502,19 @@ func (g *Governor) Tick(ctx context.Context) {
 		Alert:     g.view.Alert,
 		At:        now.Unix(),
 	}
+}
+
+// levelScores runs Layout.LevelOOMScores every few ticks rather than every
+// one: it reads a file per process in the pool, and a renderer that keeps its
+// head start for ten seconds costs nothing. It is done ahead of time and not
+// when memory is short, because that is when the panel is least likely to be
+// scheduled -- on 2026-11-24 its log lines were arriving two minutes late.
+func (g *Governor) levelScores(l *Layout, now time.Time) {
+	if l == nil || now.Sub(g.t.oomLevelled) < oomLevelEvery {
+		return
+	}
+	g.t.oomLevelled = now
+	l.LevelOOMScores(oomBase())
 }
 
 // refaultRate is workingset_refault_file per second since the last tick.

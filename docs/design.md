@@ -766,14 +766,30 @@ scope sets the pool's limit back to unlimited and thaws every session: the scope
 outlives the panel, and a budget nobody adjusts, or a pause nobody can resume,
 is worse than either.
 
-**The budget moves.** In Conservative, Balanced and Custom the pool may have
+**The budget moves.** In every mode the pool may have
 what it holds plus whatever the host has above its reserve, and no more, so a
 container or a desktop elsewhere on the machine squeezes the sessions -- which
 the panel can see and ask about -- rather than the whole machine. "What it holds"
 is held memory, not `memory.current`: MemAvailable already counts the pool's
 cache, and adding it twice gave a cache-full pool a budget that could never
-shrink. The floor is held memory plus 256 MiB, so the squeeze lands on cache. Performance does not follow the host; somebody who chose it said
-the sessions come first.
+shrink. The floor is held memory plus 256 MiB, so the squeeze lands on cache.
+
+Performance was exempt until 2026-11-24, on the reasoning that somebody who
+chose it said the sessions come first. On a 45 GiB machine that also runs a VM,
+its fixed 95% was a limit the machine could not honour: the pool peaked at 42.2
+of 42.6 GiB and never hit it, so the kernel's backstop was the machine-wide
+OOM killer, twenty minutes of reclaim later, with sshd and the panel not
+answering. What the mode keeps is the larger share and that the panel ends
+nothing itself.
+
+**The kernel is pointed at the largest process.** Its choice of victim is
+memory plus `oom_score_adj` thousandths of the limit, and Chrome writes 300
+into every renderer: 12.8 GiB of head start on this pool. In the same incident
+it killed 20 MiB renderers one after another beside a process holding 11.5 GiB
+at score 0. Every ten seconds the panel writes the sessions' base score back
+over any higher one in a session's leaf or in `other/`; the tmux server's leaf
+and the plugins' are not visited. Lowering another process's score needs no
+privilege down to the floor it inherited, which is the base.
 
 **CPU.** The session somebody typed into in the last two minutes, or that is
 waiting on them, gets `cpu.weight` 400 against the others' 100. A session that

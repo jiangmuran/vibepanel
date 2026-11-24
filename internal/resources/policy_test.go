@@ -21,10 +21,10 @@ func TestPresetsAreWhatThePageSays(t *testing.T) {
 			t.Errorf("%s: %+v", m, p)
 		}
 	}
-	if Presets[Performance].AutoAct || Presets[Performance].Dynamic {
+	if Presets[Performance].AutoAct {
 		t.Error("performance must never act on its own and never shrink the budget")
 	}
-	if !Presets[Balanced].AutoAct || !Presets[Balanced].Dynamic {
+	if !Presets[Balanced].AutoAct {
 		t.Error("balanced acts and follows the host")
 	}
 	if d := DefaultPolicy(); d.Mode != Balanced || d.Validate() != nil {
@@ -69,7 +69,7 @@ func TestABoostRunsPerformanceUntilItEnds(t *testing.T) {
 		t.Fatalf("after: %+v", got)
 	}
 	c := Policy{Mode: Custom, PoolPercent: 60, AskPercent: 70, AutoAct: true, GraceSeconds: 20}
-	if got := c.At(now); got.PoolPercent != 60 || got.AskPercent != 70 || got.GraceSeconds != 20 || !got.Dynamic {
+	if got := c.At(now); got.PoolPercent != 60 || got.AskPercent != 70 || got.GraceSeconds != 20 {
 		t.Fatalf("custom: %+v", got)
 	}
 }
@@ -109,9 +109,17 @@ func TestBudget(t *testing.T) {
 	if got := Budget(bal, 64*gib, 1*gib, 2*gib, 0); got != 2*gib+budgetMargin {
 		t.Errorf("a cache-full pool on a squeezed host: %d", got)
 	}
-	// Performance does not follow the host.
-	if got := Budget(perf, total48, reserve/2, 10*gib, 0); got != total48/100*95 {
-		t.Errorf("performance: %d", got)
+	// Performance follows the host too. The incident, in its own numbers: a
+	// 45 GiB machine, the sessions holding 30, and 8 GiB still available
+	// because a VM and the panel hold the rest. A fixed 95% was 42.6 GiB,
+	// which the machine did not have.
+	const total45 = 45 * gib
+	if got := Budget(perf, total45, 8*gib, 30*gib, 0); got != 30*gib+8*gib-Reserve(total45) {
+		t.Errorf("performance on a shared host: %d, and 95%% is %d", got, uint64(total45/100*95))
+	}
+	// With the host to itself it is still the larger share.
+	if got := Budget(perf, total48, 47*gib, 2*gib, 0); got != total48/100*95 {
+		t.Errorf("performance on a quiet host: %d", got)
 	}
 	// An idle pool on a busy host still has room for a shell.
 	if got := Budget(bal, total48, 0, 0, 0); got != minBudget {

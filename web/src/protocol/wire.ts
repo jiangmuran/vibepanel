@@ -578,7 +578,6 @@ export interface ResourceParams {
   askPercent: number
   autoAct: boolean
   graceSeconds: number
-  dynamic: boolean
   boosted: boolean
 }
 

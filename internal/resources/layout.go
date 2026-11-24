@@ -388,8 +388,8 @@ func uptimeTicks() (uint64, bool) {
 // and the tmux server, and every process the server forks inherits it. Every
 // agent was therefore as protected as the panel, and on a machine-wide OOM the
 // kernel had no preference between the thing being protected and the thing
-// eating the machine. Raising a score needs no privilege; lowering it back
-// would, which is why this only ever raises.
+// eating the machine. Raising a score needs no privilege. LevelOOMScores is the
+// other direction, for a score a process raised on itself.
 func raiseOOMScore(pid int) {
 	path := "/proc/" + strconv.Itoa(pid) + "/oom_score_adj"
 	b, err := os.ReadFile(path)
@@ -399,6 +399,77 @@ func raiseOOMScore(pid int) {
 	if n, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && n < 0 {
 		_ = os.WriteFile(path, []byte("0"), 0)
 	}
+}
+
+// LevelOOMScores takes back the head start a session's processes gave
+// themselves, so that when the kernel has to kill inside the pool it takes the
+// largest thing there.
+//
+// The kernel ranks a victim by its memory plus oom_score_adj thousandths of
+// the limit. Chrome writes 300 into every renderer, which on a 42 GiB pool is
+// worth 12.8 GiB: on 2026-11-24 the kernel killed 20 MiB renderers, one after
+// another and gaining nothing each time, with a next-server holding 11.5 GiB at
+// score 0 beside them. Chrome's preference is right inside a browser -- lose a
+// tab, not the window -- and wrong in a pool where the browser is a test
+// fixture and something else is eating the machine.
+//
+// base is the score the sessions start from. Writing it to somebody else's
+// process needs no privilege as long as it is not below the floor that process
+// inherited, and a session's processes inherited theirs from the same place the
+// base came from. One that refuses is left: that is the kernel saying the
+// number is not ours to set.
+//
+// The tmux server's leaf and the plugins' are not visited. The server is the
+// one process in the pool that must outlive the others.
+func (l Layout) LevelOOMScores(base int) (lowered int) {
+	names, err := l.Pool.Children()
+	if err != nil {
+		return 0
+	}
+	for _, n := range names {
+		if n != otherLeaf && !strings.HasPrefix(n, sessionLeaf) {
+			continue
+		}
+		pids, err := l.Pool.Child(n).Procs()
+		if err != nil {
+			continue
+		}
+		for _, pid := range pids {
+			if levelOOMScore(pid, base) {
+				lowered++
+			}
+		}
+	}
+	return lowered
+}
+
+func levelOOMScore(pid, base int) bool {
+	path := "/proc/" + strconv.Itoa(pid) + "/oom_score_adj"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n <= base {
+		return false
+	}
+	return os.WriteFile(path, []byte(strconv.Itoa(base)), 0) == nil
+}
+
+// oomBase is the score a session's process has when nothing has touched it:
+// the panel's own, raised to zero where the unit lowered it (raiseOOMScore).
+// Under a user manager that is the 100 every user process is given, and a
+// score below it would be refused.
+func oomBase() int {
+	b, err := os.ReadFile("/proc/self/oom_score_adj")
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // Prune removes the leaves of sessions that no longer exist. A leaf with a
