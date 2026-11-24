@@ -28701,3 +28701,45 @@ unit test (removing it compiles and passes); only a check against a real scope
 would see it, and `resources-check` was not extended. Nothing here was
 reproduced by filling a machine: the budget is tested with the incident's
 numbers, and the score write against real processes.
+
+## The Resources tab, by project
+
+Asked for: the largest processes on the whole machine with where each comes
+from; ending a session or every session of a project quickly, confirmed by
+pressing twice rather than by a modal; created and last-used times and an
+archived mark on each session.
+
+Built:
+
+- `resources.View.Machine` (`machine.go`): ranked by RSS plus swap, `where`
+  attributed from the cgroup path by a pure function with a table of real
+  cgroup v2 shapes. Computed only in `View()`, cached four seconds.
+- `SessionView` gains project, archived, `createdAt` and `lastUsedAt`. Last used
+  is the later of the in-memory last input and the store's `last_output_at`
+  (debounced), so after a restart it is output alone.
+- `POST /api/resources/projects/{id}/end` and `Server.endSession`, shared with
+  `DELETE /api/sessions/{id}`.
+- The tab: `components/settings/resources/` (`pressRule.ts` is the press-twice
+  rule, tested with fake timers; `group.ts` groups and sorts).
+
+Found: ending a session already calls `Governor.EndSession`, which writes
+`cgroup.kill` on the session's leaf, so detached processes were already ended
+when the sessions are isolated. Not isolated, they still survive; nothing here
+changes that.
+
+Departed from the design: the machine list reads `/proc/<pid>/status` for every
+process, not only the kept twelve, because ranking by RSS alone misses a
+process that is mostly in swap. The page names a project from the server's
+`projectName`, not the snapshot's.
+
+Verified: Go tests for the attribution, the ranking, the exact leaf
+`EndSession` writes, and the project route; vitest for the rule and grouping;
+`resources-check` for the structure, the double-click, Escape, the keyboard,
+reduced motion and the project route, run without a user manager. An earlier
+run of it with one ran the check's pressure half (a 2 GiB-capped scope), and
+passed that and the structure except for a row staying listed for up to one
+governor tick after it was ended; rows now stay collapsed until the server
+stops listing them.
+
+**Left.** The structure checks have not been run against an isolated panel
+without the pressure half. The real-scope integration test is skipped here.

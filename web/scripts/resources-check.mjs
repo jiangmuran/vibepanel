@@ -230,6 +230,163 @@ try {
   else pass('custom', 'an out-of-range number is refused rather than clamped')
   await page.locator('[data-testid="settings-close"]').click()
 
+  // ── the tab's structure: projects, the machine, ending by pressing twice ─
+  // None of this needs a pool, so it runs wherever the check does.
+  const dir = (name) => {
+    const d = join(work, name)
+    mkdirSync(d, { recursive: true })
+    return d
+  }
+  const oldProject = await must('POST', '/api/projects', { path: dir('old'), name: 'oldproj' })
+  const oldSessions = []
+  for (const title of ['old-one', 'old-two']) {
+    oldSessions.push(await must('POST', '/api/sessions', { projectId: oldProject.id, command: ['sleep', '3600'], title }))
+  }
+  await must('POST', `/api/projects/${oldProject.id}/archive`)
+  const doomed = await must('POST', '/api/sessions', { projectId: project.id, command: ['sleep', '3600'], title: 'doomed' })
+  const keyed = await must('POST', '/api/sessions', { projectId: project.id, command: ['sleep', '3600'], title: 'keyed' })
+  const stateIds = async () => new Set(((await api('GET', '/api/state')).body?.sessions ?? []).map((s) => s.id))
+  const tmuxHas = (name) => quiet('tmux', ['-L', SOCKET, 'has-session', '-t', `=${name}:`]) !== null
+  const sessionRow = (tab, id) => tab.locator(`[data-testid="resources-session"][data-session="${id}"]`)
+
+  if (!(await openResources(page))) throw new Error('the resources tab did not render')
+  const listed = await until(async () => {
+    const v = (await api('GET', '/api/resources')).body
+    return [doomed.id, keyed.id, ...oldSessions.map((s) => s.id)].every((id) => v.sessions.some((r) => r.id === id))
+  }, 15000, 300)
+  if (!listed) note('FAIL', 'sessions', 'the new sessions were not in the resources view')
+  const view = (await api('GET', '/api/resources')).body
+
+  // Fields: where a session belongs, when it was made and last used.
+  const row = view.sessions.find((r) => r.id === oldSessions[0].id)
+  if (!row || row.projectName !== 'oldproj' || row.archived !== true || !(row.createdAt > 0) || row.projectId !== oldProject.id) {
+    note('FAIL', 'sessions/fields', `an archived project's session reads ${JSON.stringify(row)}`)
+  } else pass('sessions/fields', 'a session carries its project, whether it is archived, and when it was made')
+  if (view.sessions.find((r) => r.id === doomed.id)?.archived !== false) note('FAIL', 'sessions/fields', 'a live project\'s session reads as archived')
+
+  // Grouped by project, the archived one marked in words.
+  await until(() => page.getByTestId('resources-session').count().then((n) => n >= 5), 8000, 200)
+  const groups = await page.getByTestId('resources-project').evaluateAll((els) =>
+    els.map((el) => ({ name: el.querySelector('h4')?.textContent ?? '', archived: !!el.querySelector('[data-testid="resources-project-archived"]'),
+      text: el.querySelector('[data-testid="resources-project-archived"]')?.textContent?.trim() ?? '', rows: el.querySelectorAll('[data-testid="resources-session"]').length })))
+  const mine = groups.find((g) => g.name === 'resproj')
+  const old = groups.find((g) => g.name === 'oldproj')
+  if (!mine || !old || mine.archived || !old.archived || old.rows !== 2 || !old.text) {
+    note('FAIL', 'sessions/groups', `projects on the tab: ${JSON.stringify(groups)}`)
+  } else pass('sessions/groups', 'sessions are grouped by project and the archived one says so in words')
+  const timed = await page.getByTestId('resources-session-times').evaluateAll((els) => els.filter((el) => el.textContent.trim() && [...el.children].every((c) => c.getAttribute('title'))).length)
+  if (timed < 3) note('FAIL', 'sessions/times', `only ${timed} rows show created and used times, each with the exact time as a tooltip`)
+  else pass('sessions/times', 'rows show how long ago, with the exact time in the tooltip')
+
+  // The machine: the largest processes, read-only, each with where it is from.
+  const machine = (await api('GET', '/api/resources')).body.machine
+  if (!Array.isArray(machine) || machine.length < 1 || machine.length > 12) {
+    note('FAIL', 'machine', `the machine list has ${machine?.length} entries`)
+  } else {
+    const sorted = machine.every((m, i) => i === 0 || machine[i - 1].rss + machine[i - 1].swap >= m.rss + m.swap)
+    const kinds = new Set(['session', 'panel', 'tmux', 'plugin', 'container', 'unit', 'user', 'kernel', 'other'])
+    if (!sorted) note('FAIL', 'machine', 'the list is not largest first')
+    else if (machine.some((m) => !kinds.has(m.where.kind) || !m.user || !(m.rss > 0 || m.swap > 0))) note('FAIL', 'machine', `a row is missing its owner, kind or size: ${JSON.stringify(machine.find((m) => !kinds.has(m.where.kind) || !m.user))}`)
+    else pass('machine', `${machine.length} processes, largest first, each with where it is from`)
+  }
+  const drawn = await page.getByTestId('resources-machine-proc').count()
+  if (drawn < 1 || drawn > 12) note('FAIL', 'machine', `the tab draws ${drawn} processes`)
+  // Nothing on the list can be ended: it is for looking at.
+  const endOnMachine = await page.getByTestId('resources-machine').locator('[data-testid^="resources-end"]').count()
+  if (endOnMachine) note('FAIL', 'machine', 'the machine list has a button that ends things')
+
+  // Pressing twice, with no dialog.
+  const dialogs = () => page.locator('[data-testid="confirm-dialog"]').count()
+  const endButton = (id) => page.locator(`[data-testid="resources-session"][data-session="${id}"]`).getByTestId('resources-end-session')
+  const doomedBtn = endButton(doomed.id)
+  await doomedBtn.scrollIntoViewIfNeeded()
+  await doomedBtn.click()
+  const armed = await until(() => doomedBtn.getAttribute('data-phase').then((v) => v === 'armed'), 1500, 50)
+  const armedText = (await doomedBtn.innerText()).trim()
+  const stayedFocused = await doomedBtn.evaluate((el) => el === document.activeElement)
+  if (!armed || !/again|再按/i.test(armedText)) note('FAIL', 'end/arm', `the first press did not arm with words (armed ${armed}, text "${armedText}")`)
+  else pass('end/arm', `the first press arms: "${armedText}"`)
+  if (!stayedFocused) note('FAIL', 'end/arm', 'focus left the button when it armed')
+  if (await dialogs()) note('FAIL', 'end/dialog', 'a dialog appeared when arming')
+  if (!(await stateIds()).has(doomed.id)) note('FAIL', 'end/arm', 'the first press ended the session')
+  const fill = await doomedBtn.evaluate((el) => getComputedStyle(el, '::before').animationName)
+  if (fill !== 'vp-confirm-drain') note('FAIL', 'end/animation', `the armed button's fill animation is "${fill}"`)
+  await page.screenshot({ path: join(SHOTS, 'armed-1400.png') })
+  // Time takes it back, and a press after that arms again rather than ends.
+  const disarmed = await until(() => doomedBtn.getAttribute('data-phase').then((v) => v === 'idle'), 4500, 100)
+  if (!disarmed) note('FAIL', 'end/timeout', 'the button stayed armed past its window')
+  await doomedBtn.click()
+  if (!(await until(() => doomedBtn.getAttribute('data-phase').then((v) => v === 'armed'), 1500, 50)) || !(await stateIds()).has(doomed.id)) {
+    note('FAIL', 'end/timeout', 'a press after the window did not simply arm again')
+  } else pass('end/timeout', 'an armed button goes back by itself, and the next press arms rather than ends')
+  // Escape takes the arming back and leaves the dialog alone.
+  await page.keyboard.press('Escape')
+  const escaped = await until(() => doomedBtn.getAttribute('data-phase').then((v) => v === 'idle'), 1000, 50)
+  const stillOpen = await page.getByTestId('settings-body').count()
+  if (!escaped || !stillOpen) note('FAIL', 'end/escape', `Escape: disarmed ${escaped}, dialog still open ${!!stillOpen}`)
+  else pass('end/escape', 'Escape disarms and does not close the dialog')
+  // A double-click is the confirmation.
+  await doomedBtn.dblclick()
+  const ended = await until(async () => !(await stateIds()).has(doomed.id) && !tmuxHas(doomed.tmuxName), 8000, 200)
+  if (!ended) note('FAIL', 'end/session', 'a double-click did not end the session and its tmux session')
+  else pass('end/session', 'a double-click ended the session, its row and its tmux session')
+  const gone = await until(() => sessionRow(page, doomed.id).count().then((n) => n === 0), 9000, 100)
+  if (!gone) note('FAIL', 'end/row', 'the ended session is still listed')
+  if (await dialogs()) note('FAIL', 'end/dialog', 'a dialog appeared when ending')
+
+  // The keyboard: Enter twice on a focused button.
+  const keyedBtn = endButton(keyed.id)
+  await keyedBtn.focus()
+  await page.keyboard.press('Enter')
+  const keyArmed = await until(() => keyedBtn.getAttribute('data-phase').then((v) => v === 'armed'), 1500, 50)
+  await page.keyboard.press('Enter')
+  const keyEnded = await until(async () => !(await stateIds()).has(keyed.id), 8000, 200)
+  if (!keyArmed || !keyEnded) note('FAIL', 'end/keyboard', `Enter twice: armed ${keyArmed}, ended ${keyEnded}`)
+  else pass('end/keyboard', 'Enter twice ends a session')
+
+  // Without motion the armed state has no drain, and is still armed.
+  {
+    const calm = await browser.newContext({ viewport: { width: 1400, height: 950 }, reducedMotion: 'reduce' })
+    await calm.request.post(`${BASE}/api/auth/login`, { data: { username: USERNAME, password: PASSWORD }, headers: { Origin: BASE } })
+    const tab = await calm.newPage()
+    await tab.goto(`${BASE}/`, { waitUntil: 'networkidle' })
+    if (await openResources(tab)) {
+      const b = tab.getByTestId('resources-end-session').first()
+      await b.click()
+      const phase = await b.getAttribute('data-phase')
+      const anim = await b.evaluate((el) => getComputedStyle(el, '::before').animationName)
+      if (phase !== 'armed' || anim !== 'none') note('FAIL', 'end/motion', `reduced motion: phase ${phase}, fill animation ${anim}`)
+      else pass('end/motion', 'with reduced motion the armed button is still armed and does not animate')
+    } else note('FAIL', 'end/motion', 'the tab did not render')
+    await calm.close()
+  }
+
+  // A project's sessions at once, the project left as it was.
+  const oldBlock = () => page.locator('[data-testid="resources-project"]').filter({ hasText: 'oldproj' })
+  const endAll = oldBlock().getByTestId('resources-end-project')
+  await endAll.scrollIntoViewIfNeeded()
+  await endAll.click()
+  const allArmed = await until(() => endAll.getAttribute('data-phase').then((v) => v === 'armed'), 1500, 50)
+  if (!allArmed || (await dialogs())) note('FAIL', 'end/project', 'End all did not arm, or a dialog appeared')
+  await endAll.click()
+  const projectGone = await until(async () => {
+    const ids = await stateIds()
+    return oldSessions.every((s) => !tmuxHas(s.tmuxName)) && oldSessions.every((s) => !ids.has(s.id))
+  }, 8000, 200)
+  if (!projectGone) note('FAIL', 'end/project', 'End all left sessions of the project running')
+  else if (!(await until(() => oldBlock().count().then((n) => n === 0), 9000, 100))) {
+    note('FAIL', 'end/project', 'the ended project is still listed')
+  } else pass('end/project', 'End all ended every session of an archived project')
+  const stillThere = await api('POST', '/api/sessions', { projectId: oldProject.id, command: ['sleep', '1'] })
+  if (stillThere.status !== 409) note('FAIL', 'end/project', `the project is not still archived: starting a session answered ${stillThere.status}`)
+  if (!(await stateIds()).size) note('FAIL', 'end/project', 'ending one project ended another project\'s sessions')
+  // The doors: a missing project, and no credentials.
+  if ((await api('POST', '/api/resources/projects/nope/end')).status !== 404) note('FAIL', 'end/project', 'an unknown project was not a 404')
+  const anon = await fetch(`${BASE}/api/resources/projects/${project.id}/end`, { method: 'POST', headers: { Origin: BASE } })
+  if (anon.status !== 401) note('FAIL', 'end/project', `without a credential: ${anon.status}`)
+  else pass('end/project', 'an unknown project is 404 and no credential is 401')
+  await page.locator('[data-testid="settings-close"]').click()
+
   // ── a session that runs out ─────────────────────────────────────────────
   const latencies = []
   const measure = async () => {
@@ -352,7 +509,23 @@ try {
         const row = tab.getByTestId('resources-session').first()
         if (await row.count()) await row.locator('button').first().click()
         await sleep(600)
+        // An armed button is the widest the tab gets: its words are longer than
+        // the idle ones, and it must still be inside the dialog.
+        const endBtn = tab.getByTestId('resources-end-session').first()
+        if (await endBtn.count()) {
+          await endBtn.click()
+          const inside = await tab.evaluate(() => {
+            const b = document.querySelector('[data-testid="resources-end-session"][data-phase="armed"]')
+            const body = document.querySelector('[data-testid="settings-body"]')
+            if (!b || !body) return null
+            const r = b.getBoundingClientRect()
+            const c = body.getBoundingClientRect()
+            return r.left >= c.left - 1 && r.right <= c.right + 1 && b.scrollWidth <= b.clientWidth + 1
+          })
+          if (inside !== true) note('FAIL', where, `the armed button does not fit the dialog (${inside})`)
+        }
         await tab.screenshot({ path: join(SHOTS, `resources-${lang}-${theme}-${w}.png`) })
+        if (await tab.locator('[data-testid="resources-end-session"][data-phase="armed"]').count()) await tab.keyboard.press('Escape')
         const body = tab.getByTestId('settings-body')
         const overflowX = await body.evaluate((el) => el.scrollWidth > el.clientWidth + 1)
         if (overflowX) note('FAIL', where, 'the tab is wider than the dialog body')

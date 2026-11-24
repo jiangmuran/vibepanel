@@ -2251,3 +2251,79 @@ body {
 .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
   background: color-mix(in srgb, var(--vp-ink) 40%, transparent);
 }
+
+/* A button that is pressed twice (settings/resources/ConfirmPress.tsx).
+ *
+ * The armed state is the danger tone filling the button and draining away over
+ * the window the second press has, so the countdown is what is on screen
+ * rather than a number beside it. The fill is a tint and the text stays in the
+ * tone: a solid fill left the text unreadable on the part that had drained.
+ * The words change as well (red line 4): colour is never the only carrier.
+ *
+ * The window is a custom property so the CSS and the timer in pressRule.ts
+ * are one number, set inline from CONFIRM_WINDOW_MS. */
+.vp-confirm {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  color: var(--vp-state-crashed);
+}
+
+.vp-confirm[data-phase='armed'] {
+  border-color: var(--vp-state-crashed);
+}
+
+.vp-confirm[data-phase='armed']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, var(--vp-state-crashed) 26%, transparent);
+  transform-origin: left center;
+  animation: vp-confirm-drain var(--vp-confirm-window, 3000ms) linear forwards;
+}
+
+@keyframes vp-confirm-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* Running: the request is in flight and the button says so by being still. */
+.vp-confirm[data-phase='running'] {
+  border-color: var(--vp-state-crashed);
+  opacity: 0.75;
+}
+
+/* Collapsing a row that has just been ended. Grid rows rather than a height,
+ * because the row's height is not known and animating to `auto` is not a thing. */
+.vp-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 180ms var(--vp-ease), opacity 180ms var(--vp-ease);
+}
+
+.vp-collapse > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.vp-collapse[data-leaving='true'] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+/* No drain for somebody who asked for no motion: the armed state is still
+   there, whole, for the same three seconds. Written after the global rule
+   that collapses animations, which would otherwise play the drain in an
+   instant and leave an armed button with nothing in it. */
+@media (prefers-reduced-motion: reduce) {
+  .vp-confirm[data-phase='armed']::before {
+    animation: none !important;
+    transform: scaleX(1);
+  }
+}
