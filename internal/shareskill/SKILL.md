@@ -67,6 +67,10 @@ Hard limits enforced by vibepanel's publish check and CSP sandbox:
 - **Safe rendering:** escape any untrusted or dynamic text (`textContent`, not
   `innerHTML`). Make sure the layout works cleanly on both desktop and mobile
   viewports.
+- **Title and favicon:** set a clear, specific `<title>` in `index.html`, and
+  optionally add a topic-appropriate inline SVG `<link rel="icon"
+  href="data:image/svg+xml,...">` (pages without one inherit vibepanel's default
+  icon; password-protected links forward both to the browser tab after unlock).
 
 ## 3. Validate before publishing
 

@@ -851,6 +851,7 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
       'protected-demo',
       {
         'index.html': `<!doctype html><meta charset="utf-8"><title>Secret Report</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20fill='%230f4d92'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="./style.css">
 <body><h1 id="headline">Top Secret Page</h1><div id="status"></div><div id="snap"></div>
 <script src="./vibepanel.js"></script>
@@ -910,12 +911,30 @@ window.__probe = (async () => {
     // 3. Stranger browser opens pageDef.link -> sees password gate, not page content.
     const stranger = await browser.newContext({ viewport: { width: 1280, height: 800 } })
     const tab = await stranger.newPage()
+    const tabErrors = []
+    tab.on('pageerror', (e) => tabErrors.push(e.message))
+    tab.on('console', (m) => {
+      if (m.type() === 'error') tabErrors.push(m.text())
+    })
     const linkURL = `${BASE}/share/${pageDef.link.token}/`
     await tab.goto(linkURL, { waitUntil: 'load' })
+    const gateTitle = await tab.title()
+    const gateIcon = await tab.locator('link[rel="icon"]').first().getAttribute('href').catch(() => '')
     const gateVisible = (await tab.locator('form[action="unlock"] input[name="password"]').count()) === 1
     const leakedHeadline = await tab.locator('#headline').count()
-    if (gateVisible && leakedHeadline === 0) pass('protect/gate', 'unauthenticated visitor gets password gate with zero page leak')
-    else note('FAIL', 'protect/gate', `gateVisible=${gateVisible} leakedHeadline=${leakedHeadline}`)
+    const gateErrors = tabErrors.splice(0)
+    if (
+      gateVisible &&
+      leakedHeadline === 0 &&
+      !gateTitle.includes('Secret Report') &&
+      gateIcon?.includes('%230A84FF') &&
+      !gateIcon?.includes('%230f4d92') &&
+      gateErrors.length === 0
+    ) {
+      pass('protect/gate', 'unauthenticated visitor gets password gate with default icon and zero page/title/icon leak')
+    } else {
+      note('FAIL', 'protect/gate', `gateVisible=${gateVisible} leakedHeadline=${leakedHeadline} gateTitle=${gateTitle} gateIcon=${gateIcon} gateErrors=${JSON.stringify(gateErrors)}`)
+    }
 
     // Wrong password -> stays on gate with alert error.
     await tab.locator('input[name="password"]').fill('bad-guess')
@@ -927,30 +946,44 @@ window.__probe = (async () => {
 
     // Wait 650ms for 500ms first-failure throttle to pass, then submit right password.
     await sleep(650)
+    tabErrors.length = 0
     await tab.locator('input[name="password"]').fill('shared-pass-1')
     await tab.locator('button[type="submit"]').click()
     await tab.waitForLoadState('load')
     await sleep(800)
 
     const afterURL = tab.url()
+    const shellTitle = await tab.title()
+    const shellIcon = await tab.locator('link[rel="icon"]').first().getAttribute('href').catch(() => '')
     const frameLoc = tab.frameLocator('#vp-frame')
     const innerHeadline = await frameLoc.locator('#headline').textContent({ timeout: 5000 }).catch(() => '')
     const innerSnap = await frameLoc.locator('#snap').textContent({ timeout: 5000 }).catch(() => '')
     const innerFrame = tab.frames().find((f) => f.url().includes('/share-u/'))
     const probeRes = innerFrame ? await innerFrame.evaluate(() => window.__probe).catch((e) => ({ error: String(e) })) : null
+    if (innerFrame) {
+      await innerFrame.evaluate(() => { document.title = 'Live Updated Report' }).catch(() => {})
+      await sleep(150)
+    }
+    const syncedTitle = await tab.title()
+    // Exclude the intentional /api/state CSP probe logged by window.__probe inside the iframe.
+    const unexpectedErrors = tabErrors.filter((e) => !e.includes('/api/state'))
     if (
       afterURL === linkURL &&
+      shellTitle === 'Secret Report' &&
+      syncedTitle === 'Live Updated Report' &&
+      shellIcon?.includes('%230f4d92') &&
+      unexpectedErrors.length === 0 &&
       innerHeadline === 'Top Secret Page' &&
       innerSnap?.startsWith('snap:') &&
       String(probeRes?.cookie).startsWith('threw') &&
       String(probeRes?.state).startsWith('refused')
     ) {
-      pass('protect/unlock-and-sandbox', `address stayed ${afterURL}; iframe loaded live snapshot and stayed sandboxed`)
+      pass('protect/unlock-and-sandbox', `address stayed ${afterURL}; tab title/icon forwarded (${shellTitle} -> ${syncedTitle}); iframe sandboxed`)
     } else {
       note(
         'FAIL',
         'protect/unlock-and-sandbox',
-        `url=${afterURL} headline=${innerHeadline} snap=${innerSnap} probe=${JSON.stringify(probeRes)}`,
+        `url=${afterURL} shellTitle=${shellTitle} syncedTitle=${syncedTitle} shellIcon=${shellIcon} errors=${JSON.stringify(unexpectedErrors)} headline=${innerHeadline} snap=${innerSnap} probe=${JSON.stringify(probeRes)}`,
       )
     }
 

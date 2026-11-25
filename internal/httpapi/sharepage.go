@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -130,7 +131,9 @@ func (s *Server) registerSharePageRoutes(r chi.Router) {
 // person reading it did not choose the panel's.
 const goneHTML = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>%s</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="%s">
+<title>%s</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;
 font:16px/1.5 system-ui,sans-serif;background:#111;color:#ddd;padding:1rem;box-sizing:border-box}
 main{max-width:28rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .5rem}p{margin:.25rem 0;color:#999}</style>
@@ -150,11 +153,11 @@ func writeGonePage(w http.ResponseWriter, down bool) {
 	}
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox")
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Robots-Tag", "noindex, nofollow")
 	w.WriteHeader(status)
-	_, _ = fmt.Fprintf(w, goneHTML, title, title, en, zh)
+	_, _ = fmt.Fprintf(w, goneHTML, html.EscapeString(defaultShareFaviconHref), title, title, en, zh)
 }
 
 // handleSharePage serves one file of the page a link draws.
@@ -228,7 +231,8 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.recordShareAccess(ctx, link.ID, ip, "visit", r.UserAgent(), "")
-		writeUnlockShellPage(w, grant)
+		meta := s.resolveShareShellMeta(ctx, link, grant, now.Unix())
+		writeUnlockShellPage(w, grant, meta)
 		return
 	}
 

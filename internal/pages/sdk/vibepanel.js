@@ -522,6 +522,35 @@
     var instruments = Instruments(this, Boolean(unlockGrant))
     var reauthRequested = false
 
+    // Forward dynamic document.title updates to the outer password-unlock shell
+    // so multi-view pages keep the browser tab title in sync inside the iframe.
+    if (unlockGrant && framed() && global.document) {
+      var lastTitle = ''
+      var pushTitle = function () {
+        try {
+          var next = String(global.document.title || '').trim()
+          if (next && next !== lastTitle) {
+            lastTitle = next
+            global.parent.postMessage({ type: 'vp.title', title: next }, '*')
+          }
+        } catch (e) {
+          /* ignore */
+        }
+      }
+      pushTitle()
+      if (typeof global.MutationObserver === 'function' && global.document.head) {
+        try {
+          new global.MutationObserver(pushTitle).observe(global.document.head, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+          })
+        } catch (e) {
+          /* ignore */
+        }
+      }
+    }
+
     function requestReauth() {
       if (!unlockGrant || reauthRequested || !framed()) return
       reauthRequested = true
