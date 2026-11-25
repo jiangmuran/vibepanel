@@ -73,7 +73,7 @@ const note = (sev, where, msg) => {
 }
 const pass = (where, msg) => console.log(`[ok]   ${where}: ${msg}`)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const only = (process.env.VP_PAGES_ONLY ?? 'sandbox,workflow,backend,templates').split(',')
+const only = (process.env.VP_PAGES_ONLY ?? 'sandbox,workflow,backend,protect,templates').split(',')
 
 const work = mkdtempSync(join(tmpdir(), 'vppages-'))
 const SHOTS = join(work, 'shots')
@@ -841,6 +841,189 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     } else note('FAIL', 'backend/admin-sandbox', `inside the admin page: ${JSON.stringify(inside)}`)
 
     await adminTab.close()
+    await stranger.close()
+    await ui.close()
+  }
+
+  // ─── protect (password gate, shared/custom unlock, sandboxed iframe, IP stats) ──
+  if (only.includes('protect')) {
+    const pageDef = await publishedPage(
+      'protected-demo',
+      {
+        'index.html': `<!doctype html><meta charset="utf-8"><title>Secret Report</title>
+<link rel="stylesheet" href="./style.css">
+<body><h1 id="headline">Top Secret Page</h1><div id="status"></div><div id="snap"></div>
+<script src="./vibepanel.js"></script>
+<script>
+const vp = VibePanel.connect();
+vp.badge(document.getElementById('status'));
+vp.on('snapshot', (s) => {
+  document.getElementById('snap').textContent = 'snap:' + s.name + ':' + (s.page ? s.page.version : 0);
+});
+window.__probe = (async () => {
+  const out = {};
+  try { out.cookie = 'read:' + document.cookie } catch (e) { out.cookie = 'threw:' + e.name }
+  try { const r = await fetch('/api/state', { credentials: 'include' }); out.state = 'read:' + r.status } catch (e) { out.state = 'refused:' + e.name }
+  return out;
+})();
+</script></body>`,
+        'style.css': 'body { background: #14161a; color: #eef1f5; font-family: system-ui; }',
+      },
+      { sdk: 1, name: 'protected-demo', sections: ['sessions'] },
+    )
+
+    const ui = await owner.newPage()
+    await ui.goto(`${BASE}/sharing`, { waitUntil: 'networkidle' })
+
+    // 1. Set global shared password in UI and reveal/verify it.
+    await ui.locator('[data-testid="share-password-change"]').click()
+    await ui.locator('[data-testid="share-password-input"]').click()
+    await ui.locator('[data-testid="share-password-input"]').fill('shared-pass-1')
+    await ui.locator('[data-testid="share-password-save"]').click()
+    await ui.locator('[data-testid="share-password-state"][data-set="true"]').waitFor({ timeout: 8000 })
+    await ui.locator('[data-testid="share-password-reveal"]').click()
+    const revealed = await ui.locator('[data-testid="share-password-revealed"] code').textContent()
+    if (revealed?.trim() === 'shared-pass-1') pass('protect/shared-setup', 'shared password saved and revealed in UI')
+    else note('FAIL', 'protect/shared-setup', `revealed password = ${JSON.stringify(revealed)}`)
+
+    // 2. One-click protect existing public links -> pageDef.link becomes shared-protected.
+    const applyBtn = ui.locator('[data-testid="share-password-apply-all"]')
+    if ((await applyBtn.count()) > 0) {
+      await applyBtn.click()
+      const confirmBtn = ui.locator('[data-testid="confirm-yes"]').last()
+      await confirmBtn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {})
+      await confirmBtn.click()
+      await sleep(500)
+    }
+
+    // Create a second shared link (defaults to shared) and a custom-password link.
+    const sharedB = await must('POST', '/api/settings/shares', {
+      name: 'shared-b', detail: 'counts', expiresIn: 3600, pageId: pageDef.page.id,
+      scope: '', scopeId: '', remark: '', locked: false,
+    })
+    const customC = await must('POST', '/api/settings/shares', {
+      name: 'custom-c', detail: 'counts', expiresIn: 3600, pageId: pageDef.page.id,
+      scope: '', scopeId: '', remark: '', locked: false,
+      accessMode: 'custom', password: 'custom-only-9',
+    })
+
+    // 3. Stranger browser opens pageDef.link -> sees password gate, not page content.
+    const stranger = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+    const tab = await stranger.newPage()
+    const linkURL = `${BASE}/share/${pageDef.link.token}/`
+    await tab.goto(linkURL, { waitUntil: 'load' })
+    const gateVisible = (await tab.locator('form[action="unlock"] input[name="password"]').count()) === 1
+    const leakedHeadline = await tab.locator('#headline').count()
+    if (gateVisible && leakedHeadline === 0) pass('protect/gate', 'unauthenticated visitor gets password gate with zero page leak')
+    else note('FAIL', 'protect/gate', `gateVisible=${gateVisible} leakedHeadline=${leakedHeadline}`)
+
+    // Wrong password -> stays on gate with alert error.
+    await tab.locator('input[name="password"]').fill('bad-guess')
+    await tab.locator('button[type="submit"]').click()
+    await tab.waitForLoadState('load')
+    const errAlert = await tab.locator('[role="alert"]').textContent().catch(() => '')
+    if (errAlert && errAlert.length > 0) pass('protect/wrong-pw', `wrong password refused (${errAlert.trim()})`)
+    else note('FAIL', 'protect/wrong-pw', 'no error alert shown on wrong password')
+
+    // Wait 650ms for 500ms first-failure throttle to pass, then submit right password.
+    await sleep(650)
+    await tab.locator('input[name="password"]').fill('shared-pass-1')
+    await tab.locator('button[type="submit"]').click()
+    await tab.waitForLoadState('load')
+    await sleep(800)
+
+    const afterURL = tab.url()
+    const frameLoc = tab.frameLocator('#vp-frame')
+    const innerHeadline = await frameLoc.locator('#headline').textContent({ timeout: 5000 }).catch(() => '')
+    const innerSnap = await frameLoc.locator('#snap').textContent({ timeout: 5000 }).catch(() => '')
+    const innerFrame = tab.frames().find((f) => f.url().includes('/share-u/'))
+    const probeRes = innerFrame ? await innerFrame.evaluate(() => window.__probe).catch((e) => ({ error: String(e) })) : null
+    if (
+      afterURL === linkURL &&
+      innerHeadline === 'Top Secret Page' &&
+      innerSnap?.startsWith('snap:') &&
+      String(probeRes?.cookie).startsWith('threw') &&
+      String(probeRes?.state).startsWith('refused')
+    ) {
+      pass('protect/unlock-and-sandbox', `address stayed ${afterURL}; iframe loaded live snapshot and stayed sandboxed`)
+    } else {
+      note(
+        'FAIL',
+        'protect/unlock-and-sandbox',
+        `url=${afterURL} headline=${innerHeadline} snap=${innerSnap} probe=${JSON.stringify(probeRes)}`,
+      )
+    }
+
+    // 4. Shared password cookie unlocks sharedB automatically, but NOT customC!
+    await tab.goto(`${BASE}/share/${sharedB.token}/`, { waitUntil: 'load' })
+    const bHeadline = await tab.frameLocator('#vp-frame').locator('#headline').textContent({ timeout: 5000 }).catch(() => '')
+    await tab.goto(`${BASE}/share/${customC.token}/`, { waitUntil: 'load' })
+    const cGated = (await tab.locator('form[action="unlock"]').count()) === 1
+    if (bHeadline === 'Top Secret Page' && cGated) {
+      pass('protect/scope-isolation', 'shared cookie covered sibling shared link and did not unlock custom link')
+    } else {
+      note('FAIL', 'protect/scope-isolation', `bHeadline=${bHeadline} cGated=${cGated}`)
+    }
+
+    // 5. Revoke shared sessions -> stranger immediately gets password gate again on reload!
+    await must('POST', '/api/settings/sharing/password/revoke-sessions', {})
+    await tab.goto(linkURL, { waitUntil: 'load' })
+    const reLocked = (await tab.locator('form[action="unlock"]').count()) === 1
+    if (reLocked) pass('protect/revoke-sessions', 'revoking shared sessions immediately re-locked visitor')
+    else note('FAIL', 'protect/revoke-sessions', 'visitor stayed unlocked after session revocation')
+
+    // 6. Verify direct one-click custom password reveal on row, non-autofill input type, and Access Stats UI.
+    await ui.reload({ waitUntil: 'networkidle' })
+    const card = ui.locator(`[data-testid="page-row"][data-page="${pageDef.page.id}"]`)
+    const customRow = card.locator('[data-testid="share-row"]').filter({ hasText: 'custom-c' }).first()
+    await customRow.locator('[data-testid="share-row-pw-reveal"]').click()
+    const rowRevealed = await customRow.locator('[data-testid="share-row-pw-box"] code').textContent({ timeout: 5000 }).catch(() => '')
+    await customRow.locator('[data-testid="share-edit"]').click()
+    const hiddenBeforeClick = (await customRow.locator('[data-testid="share-edit-custom-password"]').count()) === 0
+    await customRow.locator('[data-testid="share-edit-pw-change"]').click()
+    const editPwType = await customRow.locator('[data-testid="share-edit-custom-password"]').getAttribute('type')
+    await customRow.locator('[data-testid="share-edit-close"]').click()
+    if (rowRevealed?.trim() === 'custom-only-9' && hiddenBeforeClick && editPwType === 'text') {
+      pass('protect/custom-pw-reveal', 'custom link password revealed in one click from row; edit panel hides replace input until requested')
+    } else {
+      note('FAIL', 'protect/custom-pw-reveal', `rowRevealed=${JSON.stringify(rowRevealed)} hiddenBeforeClick=${hiddenBeforeClick} editPwType=${JSON.stringify(editPwType)}`)
+    }
+
+    const firstRow = card.locator('[data-testid="share-row"]').filter({ hasText: 'protected-demo' }).first()
+    await firstRow.locator('[data-testid="share-stats"]').click()
+    const statsPanel = firstRow.locator('[data-testid="share-access-panel"]')
+    await statsPanel.waitFor({ state: 'visible', timeout: 8000 })
+    const uniqueIps = Number((await statsPanel.locator('[data-testid="share-stats-unique-ips"]').textContent())?.trim() || '0')
+    const unlockFail = Number((await statsPanel.locator('[data-testid="share-stats-unlock-fail"]').textContent())?.trim() || '0')
+    const desktopOverflow = await ui.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)
+    await ui.screenshot({ path: join(SHOTS, 'protect-stats-desktop.png') })
+
+    await statsPanel.locator('[data-testid="share-stats-tab-events"]').click()
+    const eventRows = await statsPanel.locator('[data-testid="share-stats-event-row"]').count()
+
+    await ui.setViewportSize({ width: 390, height: 844 })
+    await sleep(300)
+    const mobileOverflow = await ui.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)
+    const viewersClipped = await ui.evaluate(() => {
+      for (const el of document.querySelectorAll('[data-testid="share-row-viewers"]')) {
+        const r = el.getBoundingClientRect()
+        if (r.left < 0 || r.right > innerWidth + 1) return true
+      }
+      return false
+    })
+    await ui.screenshot({ path: join(SHOTS, 'protect-stats-mobile.png') })
+    await ui.setViewportSize({ width: 1600, height: 1000 })
+
+    if (uniqueIps >= 1 && unlockFail >= 1 && eventRows >= 2 && !desktopOverflow && !mobileOverflow && !viewersClipped) {
+      pass('protect/access-stats-ui', `IPs=${uniqueIps}, fails=${unlockFail}, events=${eventRows}, no desktop/mobile overflow or clipping`)
+    } else {
+      note(
+        'FAIL',
+        'protect/access-stats-ui',
+        `uniqueIps=${uniqueIps} unlockFail=${unlockFail} events=${eventRows} desktopOverflow=${desktopOverflow} mobileOverflow=${mobileOverflow} viewersClipped=${viewersClipped}`,
+      )
+    }
+
     await stranger.close()
     await ui.close()
   }

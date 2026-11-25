@@ -156,8 +156,12 @@ const (
 )
 
 type sharingSettingsResponse struct {
-	VisitorWrites bool   `json:"visitorWrites"`
-	ShareOrigin   string `json:"shareOrigin"`
+	VisitorWrites          bool   `json:"visitorWrites"`
+	ShareOrigin            string `json:"shareOrigin"`
+	SharedPasswordSet      bool   `json:"sharedPasswordSet"`
+	SharedPasswordViewable bool   `json:"sharedPasswordViewable"`
+	PublicLinkCount        int    `json:"publicLinkCount"`
+	LoopbackOnlyWarning    bool   `json:"loopbackOnlyWarning"`
 }
 
 // shareOriginCache holds the parsed dedicated origin for share links.
@@ -481,9 +485,23 @@ func isShareHostPath(method string, u *url.URL) bool {
 		return strings.HasPrefix(routed, prefix) && strings.HasPrefix(clean, prefix) && len(clean) > len(prefix)
 	}
 	if under("/share/") {
+		if method == http.MethodGet || method == http.MethodHead {
+			return true
+		}
+		// Only exact `/share/{token}/unlock` accepts POST on the share host.
+		// Require routed == clean so trailing slashes or dot segments cannot
+		// pass here, miss chi's exact route, and fall through to the SPA.
+		if method == http.MethodPost && routed == clean {
+			rest := strings.TrimPrefix(clean, "/share/")
+			parts := strings.Split(rest, "/")
+			return len(parts) == 2 && parts[0] != "" && parts[1] == "unlock"
+		}
+		return false
+	}
+	if under("/share-u/") {
 		return method == http.MethodGet || method == http.MethodHead
 	}
-	if under("/api/share/") {
+	if under("/api/share/") || under("/api/share-u/") {
 		switch method {
 		case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodOptions:
 			return true
@@ -525,12 +543,7 @@ func (s *Server) visitorWritesAllowed(ctx context.Context) bool {
 }
 
 func (s *Server) handleGetSharing(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	origin, _, _ := s.shareOrigin(ctx)
-	writeJSON(w, http.StatusOK, sharingSettingsResponse{
-		VisitorWrites: s.visitorWritesAllowed(ctx),
-		ShareOrigin:   origin,
-	})
+	writeJSON(w, http.StatusOK, s.buildSharingSettings(r.Context()))
 }
 
 func (s *Server) handlePutSharing(w http.ResponseWriter, r *http.Request) {
@@ -594,11 +607,7 @@ func (s *Server) handlePutSharing(w http.ResponseWriter, r *http.Request) {
 			s.audit(ctx, "sharing.origin_changed", u.Username, s.clientIP(r), detail)
 		}
 	}
-	origin, _, _ := s.shareOrigin(ctx)
-	writeJSON(w, http.StatusOK, sharingSettingsResponse{
-		VisitorWrites: s.visitorWritesAllowed(ctx),
-		ShareOrigin:   origin,
-	})
+	writeJSON(w, http.StatusOK, s.buildSharingSettings(ctx))
 }
 
 // ─── counting actions ─────────────────────────────────────────────────────
@@ -633,11 +642,18 @@ func (a *actionDay) roll(day string) {
 	}
 }
 
-// fillLinkCounts adds the in-memory figures a listed link carries.
+// fillLinkCounts adds the in-memory and aggregate access figures a listed link carries.
 func (s *Server) fillLinkCounts(ctx context.Context, links []store.ShareLink, now time.Time) {
 	day := s.today(ctx)
+	summaries, _ := s.DB.ShareAccessSummaries(ctx)
 	for i := range links {
 		links[i].Viewers, links[i].ViewportWidth, links[i].ViewportHeight = s.viewers.count(links[i].ID, now)
 		links[i].ActionsToday = s.pb.actions.today(links[i].ID, day)
+		if sum, ok := summaries[links[i].ID]; ok {
+			links[i].UniqueIPs = sum.UniqueIPs
+			links[i].VisitCount = sum.VisitCount
+			links[i].UnlockFailCount = sum.UnlockFailCount
+			links[i].LastAccessIP = sum.LastAccessIP
+		}
 	}
 }

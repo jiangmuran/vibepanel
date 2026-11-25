@@ -1393,7 +1393,7 @@ var migrationHistory = []string{
 	"025-drop-idx-sessions-state", "026-chat", "027-usage-file-reader", "028-session-message-menu",
 	"029-claude-accounts", "030-project-archive", "031-plugins", "032-plugin-frames", "033-plugin-tokens",
 	"034-plugin-access-tokens", "035-session-self-description",
-	"036-usage-retain-and-dedupe",
+	"036-usage-retain-and-dedupe", "037-share-protection-and-access",
 }
 
 func TestMigrationNamesAreAppendOnly(t *testing.T) {

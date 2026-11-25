@@ -42,6 +42,7 @@
   var RELOAD_JITTER_MS = 5000
 
   var TOKEN_IN_PATH = /\/share\/([A-Za-z0-9_-]{20,})(?:\/|$)/
+  var UNLOCK_GRANT_IN_PATH = /\/share-u\/([A-Za-z0-9_-]{20,})(?:\/|$)/
   var GRANT_IN_PATH = /\/page-admin\/([A-Za-z0-9_-]{20,})(?:\/|$)/
   var FIXTURE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
 
@@ -210,12 +211,14 @@
 
   var MAX_REPORTED = 50
 
-  function Instruments(client) {
+  function Instruments(client, isUnlockShell) {
     var errors = []
     var flushTimer = 0
     var reportEl = null
     var shot = query('shot') === '1'
-    var inFrame = framed()
+    // A password-protected share page runs inside vibepanel's outer unlock
+    // shell iframe; that frame is a visitor screen, not the Preview pane.
+    var inFrame = framed() && !isUnlockShell
     var active = shot || inFrame
 
     function post(msg) {
@@ -480,6 +483,7 @@
     var href = global.location ? global.location.href : ''
     var base = options.base
     var token = options.token
+    var unlockGrant = ''
     var grant = ''
     try {
       var url = new URL(href)
@@ -487,10 +491,12 @@
       if (!token) {
         var m = TOKEN_IN_PATH.exec(url.pathname)
         token = m ? m[1] : ''
+        var u = m ? null : UNLOCK_GRANT_IN_PATH.exec(url.pathname)
+        unlockGrant = u ? u[1] : ''
         // An admin page: the grant in its address is its credential for the
         // admin API, and the only one it has -- the page runs in a sandbox
         // with no origin, so no cookie goes anywhere.
-        var g = m ? null : GRANT_IN_PATH.exec(url.pathname)
+        var g = m || u ? null : GRANT_IN_PATH.exec(url.pathname)
         grant = g ? g[1] : ''
       }
     } catch (e) {
@@ -499,7 +505,9 @@
     base = (base || '').replace(/\/+$/, '')
     var api = grant
       ? base + '/api/page-admin/' + encodeURIComponent(grant) + '/v1'
-      : base + '/api/share/' + encodeURIComponent(token) + '/v1'
+      : unlockGrant
+        ? base + '/api/share-u/' + encodeURIComponent(unlockGrant) + '/v1'
+        : base + '/api/share/' + encodeURIComponent(token) + '/v1'
 
     this.snapshot = null
     this.status = 'connecting'
@@ -511,7 +519,18 @@
     this.fmt = fmt
     this.version = SDK_VERSION
 
-    var instruments = Instruments(this)
+    var instruments = Instruments(this, Boolean(unlockGrant))
+    var reauthRequested = false
+
+    function requestReauth() {
+      if (!unlockGrant || reauthRequested || !framed()) return
+      reauthRequested = true
+      try {
+        global.parent.postMessage({ type: 'vp.reauth' }, '*')
+      } catch (e) {
+        /* ignore */
+      }
+    }
 
     function emit(event, value) {
       var list = listeners[event].slice()
@@ -614,6 +633,7 @@
           return res.json().catch(function () { return {} }).then(function (body) {
             inflight = false
             self.error = body && body.error ? body.error : null
+            if (res.status === 401 && unlockGrant) requestReauth()
             setStatus('revoked')
           })
         }
@@ -661,7 +681,7 @@
      * refusal; it should never have to catch one.
      */
     function call(method, path, body) {
-      if (!token && !grant) {
+      if (!token && !grant && !unlockGrant) {
         return Promise.resolve({ ok: false, error: 'actions run only through a share link or an admin page' })
       }
       var init = { method: method, cache: 'no-store', credentials: 'omit' }
@@ -857,7 +877,7 @@
             setStatus('disconnected')
           })
       }
-    } else if (!token && !grant) {
+    } else if (!token && !grant && !unlockGrant) {
       global.setTimeout(function () {
         stopped = true
         self.error = 'no share token in the address; open the page through its share link'

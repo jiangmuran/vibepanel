@@ -1030,8 +1030,9 @@ func detectNginxSSLListen(ctx context.Context, p shareOriginProvisioner, nginxBi
 }
 
 var (
-	streamListen443Re = regexp.MustCompile(`(?m)^\s*listen\s+(?:\[::\]:|0\.0\.0\.0:)?443\b`)
-	streamDefaultRe   = regexp.MustCompile(`(?m)^\s*default\s+([0-9a-zA-Z.:/_-]+)\s*;`)
+	streamListen443Re     = regexp.MustCompile(`(?m)^\s*listen\s+(?:\[::\]:|0\.0\.0\.0:)?443\b`)
+	streamDefaultRe       = regexp.MustCompile(`(?m)^\s*default\s+([0-9a-zA-Z.:/_-]+)\s*;`)
+	streamProxyProtocolRe = regexp.MustCompile(`(?m)^\s*proxy_protocol\s+on\s*;`)
 )
 
 func parseNginxStreamDefault(nginxDump string) string {
@@ -1080,6 +1081,9 @@ func parseNginxStreamDefault(nginxDump string) string {
 	if m := streamDefaultRe.FindStringSubmatch(text); len(m) == 2 {
 		target := m[1]
 		if target != "" && !strings.HasPrefix(target, "$") {
+			if streamProxyProtocolRe.MatchString(text) {
+				return target + " ssl http2 proxy_protocol"
+			}
 			return target + " ssl http2"
 		}
 	}

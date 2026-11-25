@@ -918,13 +918,17 @@ func cmdAudit(args []string) error {
 	return tw.Flush()
 }
 
-const settingsUsage = `usage: vibepanel settings <archive-idle|timezone|share-origin> <value>
+const settingsUsage = `usage: vibepanel settings <archive-idle|timezone|share-origin|share-password> <value>
 
   archive-idle <days>                archive a project idle for that many days; 0 never
   timezone <zone>                    the panel's time zone, e.g. Asia/Shanghai
   share-origin <origin|clear>        dedicated origin for share links, e.g. https://share.example.com
   share-origin check <origin>        test DNS, reverse proxy and HTTPS for a candidate share domain
-  share-origin setup <origin>        configure HTTPS + proxy (ACME or nginx+certbot) and save it`
+  share-origin setup <origin>        configure HTTPS + proxy (ACME or nginx+certbot) and save it
+  share-password status              show whether a shared password is set and how many public links exist
+  share-password set                 set or replace the global shared password (reads from stdin/prompt)
+  share-password apply-all           apply the global shared password to all existing public links
+  share-password clear               clear the global shared password (when no links depend on it)`
 
 // shareOriginRecovery is printed whenever the command line makes a name the
 // share origin.
@@ -1076,6 +1080,70 @@ func cmdSettings(args []string) error {
 			fmt.Print(shareOriginRecovery)
 		}
 		return nil
+	case "share-password":
+		if len(args) != 2 {
+			return errors.New(settingsUsage)
+		}
+		switch args[1] {
+		case "status":
+			var st struct {
+				SharedPasswordSet bool `json:"sharedPasswordSet"`
+				PublicLinkCount   int  `json:"publicLinkCount"`
+			}
+			if err := c.do(ctx, http.MethodGet, "/api/settings/sharing", nil, &st); err != nil {
+				return err
+			}
+			if st.SharedPasswordSet {
+				fmt.Printf("shared password: set (public links: %d)\n", st.PublicLinkCount)
+			} else {
+				fmt.Printf("shared password: not set (public links: %d)\n", st.PublicLinkCount)
+			}
+			return nil
+		case "set":
+			pw, err := readPasswordLine()
+			if err != nil {
+				return err
+			}
+			if pw == "" {
+				return errors.New("password cannot be empty; use `vibepanel settings share-password clear` to remove it")
+			}
+			var st struct {
+				PublicLinkCount int `json:"publicLinkCount"`
+			}
+			if err := c.do(ctx, http.MethodPut, "/api/settings/sharing/password", map[string]any{"password": pw}, &st); err != nil {
+				return err
+			}
+			fmt.Printf("shared password updated (existing public links: %d)\n", st.PublicLinkCount)
+			return nil
+		case "apply-all":
+			var res struct {
+				Updated int64 `json:"updated"`
+			}
+			if err := c.do(ctx, http.MethodPost, "/api/settings/sharing/password/apply-all", map[string]any{}, &res); err != nil {
+				return err
+			}
+			fmt.Printf("applied shared password to %d public link(s)\n", res.Updated)
+			return nil
+		case "clear":
+			if err := c.do(ctx, http.MethodPut, "/api/settings/sharing/password", map[string]any{"password": ""}, nil); err != nil {
+				return err
+			}
+			fmt.Println("shared password cleared")
+			return nil
+		default:
+			return errors.New(settingsUsage)
+		}
 	}
 	return errors.New(settingsUsage)
+}
+
+func readPasswordLine() (string, error) {
+	if isTerminal(os.Stdin) {
+		return promptPassword("Shared share password (min 6 chars): ")
+	}
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+	if err != nil {
+		return "", err
+	}
+	return trimOneNewline(string(raw)), nil
 }

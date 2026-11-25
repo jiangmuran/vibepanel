@@ -64,10 +64,14 @@ import (
 // iframe; a link somebody was handed is never framed by anything, so it keeps
 // the panel's own frame-ancestors 'none'.
 func sharePageCSP(origin, token string, scriptHosts []string, framed bool) string {
+	return sharePageCSPFor(origin, "/share/"+token+"/", "/api/share/"+token+"/v1/", scriptHosts, framed)
+}
+
+func sharePageCSPFor(origin, pagePrefix, apiPrefix string, scriptHosts []string, framed bool) string {
 	self, api := "'none'", "'none'"
 	if origin != "" {
-		self = origin + "/share/" + token + "/"
-		api = origin + "/api/share/" + token + "/v1/"
+		self = origin + pagePrefix
+		api = origin + apiPrefix
 	}
 	scripts := self
 	for _, h := range scriptHosts {
@@ -116,6 +120,7 @@ const sharePagePermissions = "camera=(), microphone=(), geolocation=(), usb=(), 
 func (s *Server) registerSharePageRoutes(r chi.Router) {
 	r.Get("/share/{token}", s.handleSharePage)
 	r.Get("/share/{token}/*", s.handleSharePage)
+	r.Post("/share/{token}/unlock", s.handleShareUnlock)
 }
 
 // goneHTML is what `/share/<token>` answers for a link that no longer draws
@@ -163,7 +168,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	}
 	token := chi.URLParam(r, "token")
 	link, err := s.DB.ShareLinkByToken(ctx, auth.HashToken(token))
-	shareOrigin, onShareHost := s.isShareHost(r)
+	_, onShareHost := s.isShareHost(r)
 	if err != nil || link.PageID == "" || (onShareHost && link.Purpose != "") {
 		// Unknown, expired, revoked, an internal preview/peek link hit on the
 		// dedicated share host, or a database hiccup. A page of its own,
@@ -189,6 +194,53 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, r.URL.Path+"/", http.StatusPermanentRedirect)
 		return
 	}
+
+	if s.linkRequiresPassword(link) {
+		if rel == pages.IndexFile {
+			http.Redirect(w, r, "/share/"+token+"/", http.StatusSeeOther)
+			return
+		}
+		if rel != "" {
+			// Protected pages serve their files exclusively through short-lived
+			// `/share-u/{grant}/*` URLs after passing the password gate.
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+			http.Error(w, "password required", http.StatusUnauthorized)
+			return
+		}
+		now := time.Now()
+		globalEpoch, unlocked := s.verifyShareUnlockCookie(ctx, r, link, now.Unix())
+		if !unlocked {
+			if link.AccessMode == string(store.ShareAccessShared) {
+				hash, _, _, serr := s.sharedPasswordState(ctx)
+				if serr == nil && hash == "" {
+					writePasswordGatePage(w, r, http.StatusForbidden, "unconfigured", 0)
+					return
+				}
+			}
+			writePasswordGatePage(w, r, http.StatusOK, "", 0)
+			return
+		}
+		grant, gerr := s.mintShareUnlockGrant(ctx, link, globalEpoch, now)
+		if gerr != nil {
+			s.noteStale(gerr)
+			writeGonePage(w, true)
+			return
+		}
+		s.recordShareAccess(ctx, link.ID, ip, "visit", r.UserAgent(), "")
+		writeUnlockShellPage(w, grant)
+		return
+	}
+
+	if link.Purpose == "" && (rel == "" || rel == pages.IndexFile) {
+		s.recordShareAccess(ctx, link.ID, ip, "visit", r.UserAgent(), "")
+	}
+	s.serveSharePageFile(w, r, link, rel, "/share/"+token+"/", "/api/share/"+token+"/v1/", link.Purpose == store.SharePurposePreview)
+}
+
+func (s *Server) serveSharePageFile(w http.ResponseWriter, r *http.Request, link store.ShareLink,
+	rel, pagePrefix, apiPrefix string, framed bool) {
+	ctx := r.Context()
 	if rel == "" {
 		rel = pages.IndexFile
 	}
@@ -212,6 +264,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 		manifest = pages.DecodeStored(v.Manifest)
 	}
 
+	shareOrigin, onShareHost := s.isShareHost(r)
 	h := w.Header()
 	// Every response, not only the HTML: a stylesheet or a JSON file served
 	// without the sandbox is a document somebody can navigate to directly, and
@@ -227,7 +280,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 		cspOrigin = shareOrigin
 	}
 	h.Set("Content-Security-Policy",
-		sharePageCSP(cspOrigin, token, manifest.ScriptHosts, preview))
+		sharePageCSPFor(cspOrigin, pagePrefix, apiPrefix, manifest.ScriptHosts, framed))
 	h.Set("Permissions-Policy", sharePagePermissions)
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Robots-Tag", "noindex, nofollow")

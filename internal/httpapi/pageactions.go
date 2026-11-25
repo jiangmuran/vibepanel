@@ -290,6 +290,7 @@ func (s *Server) handleVisitorAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if link.Purpose == "" {
 		s.pb.actions.add(link.ID, s.today(ctx))
+		s.recordShareAccess(ctx, link.ID, ip, "action", r.UserAgent(), name)
 		if closed, first := s.pb.audit.note(link.ID+"|"+name, ip, now); closed != nil || first {
 			if closed != nil {
 				s.auditFromOutside(ctx, "share.action", "", ip, fmt.Sprintf("%s: %s ran %d times in the minute from %s (%s)",

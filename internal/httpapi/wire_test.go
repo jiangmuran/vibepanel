@@ -180,6 +180,9 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"SharePageServerLogLine", serverLogLine{}},
 		{"SharePageSecret", store.PageSecret{}},
 		{"SharingSettings", sharingSettingsResponse{}},
+		{"ShareAccessIP", store.ShareAccessIP{}},
+		{"ShareAccessEvent", store.ShareAccessEvent{}},
+		{"ShareAccessStats", shareAccessStatsResponse{}},
 		{"ShareOriginProvisionInfo", shareOriginProvisionInfo{}},
 		{"ShareOriginCheck", shareOriginCheckResponse{}},
 		{"ShareOriginProvisionResult", shareOriginProvisionResult{}},
@@ -588,6 +591,14 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		// project, and a download of one, coalesced per file per minute.
 		"files.read":     true,
 		"files.download": true,
+		// Share-link password protection and session revocation.
+		"sharing.password_set":         true,
+		"sharing.password_cleared":     true,
+		"sharing.password_applied_all": true,
+		"sharing.sessions_revoked":     true,
+		"share.access_changed":         true,
+		"share.sessions_revoked":       true,
+		"share.unlock_failed":          true,
 	}
 
 	files, err := filepath.Glob("*.go")

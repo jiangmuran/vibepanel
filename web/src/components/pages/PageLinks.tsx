@@ -1,11 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
+  Activity,
   AlarmClock,
   CalendarClock,
+  Check,
   Copy,
   Eye,
+  EyeOff,
   ExternalLink,
+  Globe,
   Hand,
+  KeyRound,
   Lock,
   LockOpen,
   Monitor,
@@ -14,14 +19,19 @@ import {
   Plus,
   RefreshCw,
   ScanEye,
+  ShieldCheck,
+  Sparkles,
   Target,
   Trash2,
+  TriangleAlert,
+  UserX,
 } from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type {
   Project,
   Session,
+  ShareAccessMode,
   ShareDetail,
   ShareLink,
   SharePageDetail,
@@ -33,9 +43,19 @@ import { copyTextInGesture } from '../../clipboard'
 import { askConfirm, confirmThen } from '../ask'
 import { safeText } from '../text'
 import { Menu } from '../Menu'
+import { AccessStatsPanel } from './AccessStats'
 import { ParamsForm } from './ParamsForm'
 import { BlockTitle, Chip, Empty, Field, Group, INPUT, IconTile } from './bits'
 import { manifestFor, useNow } from './usePages'
+
+function randomLinkPasscode(len = 10): string {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789ABCDEFGHJKMNPQRSTUVWXYZ'
+  const buf = new Uint8Array(len)
+  crypto.getRandomValues(buf)
+  let out = ''
+  for (let i = 0; i < len; i++) out += chars[buf[i] % chars.length]
+  return out
+}
 
 
 /**
@@ -108,6 +128,7 @@ export function PageLinks({
   projects,
   sessions,
   visitorWrites,
+  sharedPasswordSet,
   onChanged,
   onError,
 }: {
@@ -118,6 +139,8 @@ export function PageLinks({
   sessions: Session[]
   /** The panel-wide switch: off refuses every visitor action on every link. */
   visitorWrites: boolean
+  /** Whether a panel-wide shared password is set. */
+  sharedPasswordSet: boolean
   onChanged: () => void
   onError: (message: string) => void
 }) {
@@ -126,7 +149,28 @@ export function PageLinks({
   const [fresh, setFresh] = useState<Shown | null>(null)
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
+  const [statsOpen, setStatsOpen] = useState<string | null>(null)
+  const [rowPw, setRowPw] = useState<{ id: string; password: string } | null>(null)
+  const [rowPwCopied, setRowPwCopied] = useState(false)
+  const [rowPwBusy, setRowPwBusy] = useState<string | null>(null)
   const unpublished = page.publishedVersion === 0
+
+  const toggleRowPassword = async (link: ShareLink) => {
+    if (rowPw?.id === link.id) {
+      setRowPw(null)
+      return
+    }
+    setRowPwBusy(link.id)
+    try {
+      const got = await api.shareLinkPassword(link.id)
+      setRowPw({ id: link.id, password: got.password })
+      setRowPwCopied(false)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRowPwBusy(null)
+    }
+  }
 
   const setLock = async (link: ShareLink, locked: boolean) => {
     try {
@@ -308,7 +352,7 @@ export function PageLinks({
                     the name's line when only the buttons wrapped, which left a
                     phone truncating a name to ten characters above a line that
                     was half empty. */}
-                <span className="flex w-full shrink-0 items-center justify-end gap-1 @md:w-auto">
+                <span className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 @md:w-auto">
                   {/* How many screens have this open: the one number that
                       decides whether the screen you are about to change is even
                       on. An icon and a count, never a colour alone. */}
@@ -357,6 +401,17 @@ export function PageLinks({
                   </button>
                   <button
                     type="button"
+                    onClick={() => setStatsOpen(statsOpen === link.id ? null : link.id)}
+                    aria-pressed={statsOpen === link.id}
+                    title={t('share.statsOpen')}
+                    aria-label={t('share.statsOpen')}
+                    data-testid="share-stats"
+                    className="vp-control"
+                  >
+                    <Activity size={13} />
+                  </button>
+                  <button
+                    type="button"
                     disabled={link.locked}
                     onClick={() => setEditing(editing === link.id ? null : link.id)}
                     aria-pressed={editing === link.id}
@@ -390,15 +445,52 @@ export function PageLinks({
                 </span>
               </div>
 
-              <LinkFacts link={link} />
+              <LinkFacts
+                link={link}
+                pwShown={rowPw?.id === link.id}
+                pwBusy={rowPwBusy === link.id}
+                onTogglePw={() => void toggleRowPassword(link)}
+              />
+
+              {rowPw?.id === link.id && (
+                <div
+                  data-testid="share-row-pw-box"
+                  className="mt-2 flex flex-wrap items-center gap-2 rounded-vp border border-hairline bg-surface-2 px-2.5 py-1.5 @md:ml-8"
+                >
+                  <KeyRound size={12} className="shrink-0 text-ink-3" />
+                  <span className="text-vp-xs text-ink-3">{t('share.customPasswordLabel')}</span>
+                  <code className="font-mono text-vp-sm text-ink">{rowPw.password}</code>
+                  <button
+                    type="button"
+                    data-testid="share-row-pw-copy"
+                    onClick={() => copyTextInGesture(rowPw.password, setRowPwCopied)}
+                    className="vp-outline text-vp-xs"
+                  >
+                    {rowPwCopied ? <Check size={11} /> : <Copy size={11} />}
+                    {rowPwCopied ? t('sharing.passwordCopied') : t('sharing.passwordCopy')}
+                  </button>
+                </div>
+              )}
+
+              {statsOpen === link.id && (
+                <AccessStatsPanel
+                  linkId={link.id}
+                  onError={onError}
+                  onClose={() => setStatsOpen(null)}
+                />
+              )}
 
               {editing === link.id && (
                 <LinkEditor
                   link={link}
                   detail={detail}
                   visitorWrites={visitorWrites}
+                  sharedPasswordSet={sharedPasswordSet}
                   onRotate={() => void rotate(link)}
-                  onSaved={onChanged}
+                  onSaved={() => {
+                    if (rowPw?.id === link.id) setRowPw(null)
+                    onChanged()
+                  }}
                   onError={onError}
                   onClose={() => setEditing(null)}
                 />
@@ -416,6 +508,7 @@ export function PageLinks({
           sessions={sessions}
           onCancel={() => setAdding(false)}
           visitorWrites={visitorWrites}
+          sharedPasswordSet={sharedPasswordSet}
           onMade={(url) => {
             setAdding(false)
             setFresh({ url, kind: 'new' })
@@ -429,7 +522,17 @@ export function PageLinks({
   )
 }
 
-function LinkFacts({ link }: { link: ShareLink }) {
+function LinkFacts({
+  link,
+  pwShown,
+  pwBusy,
+  onTogglePw,
+}: {
+  link: ShareLink
+  pwShown: boolean
+  pwBusy: boolean
+  onTogglePw: () => void
+}) {
   const now = useNow()
   const trial = link.pinUntil > now
   const expiring = link.expiresAt !== 0 && link.expiresAt - now < SOON_S
@@ -443,6 +546,45 @@ function LinkFacts({ link }: { link: ShareLink }) {
       {link.locked && (
         <Chip icon={Lock} tone="warn" testid="share-row-locked">
           {t('share.lockedRow')}
+        </Chip>
+      )}
+      {link.accessMode === 'shared' && (
+        <Chip icon={KeyRound} tone="accent" testid="share-row-access" data-mode="shared">
+          {t('share.accessShared')}
+        </Chip>
+      )}
+      {link.accessMode === 'custom' && (
+        <>
+          <Chip icon={ShieldCheck} tone="accent" testid="share-row-access" data-mode="custom">
+            {t('share.accessCustom')}
+          </Chip>
+          {link.passwordViewable && (
+            <button
+              type="button"
+              disabled={pwBusy}
+              onClick={onTogglePw}
+              data-testid="share-row-pw-reveal"
+              className="vp-outline text-vp-xs"
+            >
+              {pwShown ? <EyeOff size={11} /> : <Eye size={11} />}
+              {pwShown ? t('sharing.passwordHide') : t('sharing.passwordView')}
+            </button>
+          )}
+        </>
+      )}
+      {(link.accessMode === 'none' || !link.accessMode) && (
+        <Chip icon={Globe} testid="share-row-access" data-mode="none">
+          {t('share.accessPublic')}
+        </Chip>
+      )}
+      {(link.uniqueIps > 0 || link.visitCount > 0) && (
+        <Chip icon={Activity} testid="share-row-stats">
+          {t('share.statsChip', { ips: link.uniqueIps, visits: link.visitCount })}
+        </Chip>
+      )}
+      {link.unlockFailCount > 0 && (
+        <Chip icon={TriangleAlert} tone="warn" testid="share-row-fails">
+          {t('share.statsFailChip', { n: link.unlockFailCount })}
         </Chip>
       )}
       <Chip icon={Target} testid="share-row-scope">
@@ -497,6 +639,7 @@ function NewLink({
   projects,
   sessions,
   visitorWrites,
+  sharedPasswordSet,
   onCancel,
   onMade,
   onError,
@@ -506,6 +649,7 @@ function NewLink({
   projects: Project[]
   sessions: Session[]
   visitorWrites: boolean
+  sharedPasswordSet: boolean
   onCancel: () => void
   onMade: (url: string) => void
   onError: (message: string) => void
@@ -518,6 +662,10 @@ function NewLink({
   const [target, setTarget] = useState('')
   const [params, setParams] = useState<Record<string, ShareParamValue>>({})
   const [interactive, setInteractive] = useState(false)
+  const [accessMode, setAccessMode] = useState<ShareAccessMode>(sharedPasswordSet ? 'shared' : 'none')
+  const [customPw, setCustomPw] = useState('')
+  const [showPw, setShowPw] = useState(false)
+  const [pwArmed, setPwArmed] = useState(false)
   const [busy, setBusy] = useState(false)
   const manifest = manifestFor(detail, 0)
   const id = page.id
@@ -537,6 +685,8 @@ function NewLink({
         interactive: interactive && canInteract(detail),
         pageId: page.id,
         params,
+        accessMode,
+        password: accessMode === 'custom' ? customPw : undefined,
       })
       // Use the server's URL rather than location.origin so a dedicated share
       // origin configured in Settings → Sharing applies immediately on creation.
@@ -562,6 +712,7 @@ function NewLink({
           <Field label={t('share.nameLabel')} htmlFor={`share-name-${id}`}>
             <input
               id={`share-name-${id}`}
+              autoComplete="off"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={safeText(page.name)}
@@ -572,6 +723,7 @@ function NewLink({
           <Field label={t('share.remarkLabel')} htmlFor={`share-remark-${id}`}>
             <input
               id={`share-remark-${id}`}
+              autoComplete="off"
               value={remark}
               maxLength={MAX_REMARK}
               onChange={(e) => setRemark(e.target.value)}
@@ -637,6 +789,76 @@ function NewLink({
         </div>
         <p className="mt-2 text-vp-sm leading-relaxed text-ink-3">{t('share.detailWhy')}</p>
       </Group>
+      <Group title={t('share.groupProtect')}>
+        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2">
+          <Field label={t('share.accessMode')} htmlFor={`share-access-${id}`}>
+            <select
+              id={`share-access-${id}`}
+              value={accessMode}
+              onChange={(e) => setAccessMode(e.target.value as ShareAccessMode)}
+              data-testid="share-access-mode"
+              className={INPUT}
+            >
+              <option value="shared" disabled={!sharedPasswordSet}>
+                {sharedPasswordSet ? t('share.accessShared') : `${t('share.accessShared')} (${t('share.accessSharedNeedsGlobal')})`}
+              </option>
+              <option value="custom">{t('share.accessCustom')}</option>
+              <option value="none">{t('share.accessPublic')}</option>
+            </select>
+          </Field>
+          {accessMode === 'custom' && (
+            <Field label={t('share.customPasswordLabel')} htmlFor={`share-code-${id}`}>
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex min-w-0 flex-1 items-center">
+                  {/* readOnly until user interaction + no -webkit-text-security on
+                      empty values prevents Chrome Password Manager heuristics from
+                      recognising this as a login form and autofilling panel credentials. */}
+                  <input
+                    id={`share-code-${id}`}
+                    name="share_code"
+                    type="text"
+                    readOnly={!pwArmed}
+                    onFocus={() => setPwArmed(true)}
+                    onPointerDown={() => setPwArmed(true)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    value={customPw}
+                    onChange={(e) => setCustomPw(e.target.value)}
+                    placeholder={t('sharing.passwordPlaceholder')}
+                    data-testid="share-custom-password"
+                    style={showPw || customPw === '' ? undefined : ({ WebkitTextSecurity: 'disc' } as CSSProperties)}
+                    className={`${INPUT} font-mono`}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPw((v) => !v)}
+                  title={showPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                  aria-label={showPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                  className="vp-control vp-tap"
+                >
+                  {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPwArmed(true)
+                    setCustomPw(randomLinkPasscode())
+                    setShowPw(true)
+                  }}
+                  data-testid="share-custom-pw-generate"
+                  className="vp-outline shrink-0 text-vp-xs"
+                >
+                  <Sparkles size={11} />
+                  {t('sharing.passwordGenerate')}
+                </button>
+              </div>
+            </Field>
+          )}
+        </div>
+      </Group>
       <Group title={t('share.groupDo')}>
         <InteractiveChoice
           id={`share-interactive-${id}`}
@@ -662,7 +884,7 @@ function NewLink({
         <button
           type="button"
           onClick={() => void create()}
-          disabled={busy}
+          disabled={busy || (accessMode === 'custom' && customPw.length < 6)}
           data-testid="share-create"
           className="vp-primary text-vp-sm"
         >
@@ -683,6 +905,7 @@ function LinkEditor({
   link,
   detail,
   visitorWrites,
+  sharedPasswordSet,
   onRotate,
   onSaved,
   onError,
@@ -691,6 +914,7 @@ function LinkEditor({
   link: ShareLink
   detail: SharePageDetail | null
   visitorWrites: boolean
+  sharedPasswordSet: boolean
   onRotate: () => void
   onSaved: () => void
   onError: (message: string) => void
@@ -700,6 +924,15 @@ function LinkEditor({
   const [remark, setRemark] = useState(link.remark)
   const [params, setParams] = useState<Record<string, ShareParamValue>>(link.params)
   const [interactive, setInteractive] = useState(link.interactive)
+  const [accessMode, setAccessMode] = useState<ShareAccessMode>(link.accessMode || 'none')
+  const [customPw, setCustomPw] = useState('')
+  const [showPw, setShowPw] = useState(false)
+  const [pwArmed, setPwArmed] = useState(false)
+  const [changingPw, setChangingPw] = useState(false)
+  const [revealedPw, setRevealedPw] = useState('')
+  const [copiedPw, setCopiedPw] = useState(false)
+  const [accessBusy, setAccessBusy] = useState(false)
+  const [accessMsg, setAccessMsg] = useState('')
   const labelTimer = useRef(0)
   const paramTimer = useRef(0)
   const now = useNow()
@@ -738,6 +971,60 @@ function LinkEditor({
       onError(e instanceof Error ? e.message : String(e)),
     )
 
+  const saveAccess = async () => {
+    setAccessBusy(true)
+    setAccessMsg('')
+    try {
+      await api.updateShareAccess(link.id, {
+        accessMode,
+        password: accessMode === 'custom' && customPw !== '' ? customPw : undefined,
+      })
+      setCustomPw('')
+      setChangingPw(false)
+      setPwArmed(false)
+      setRevealedPw('')
+      setAccessMsg(t('share.accessSaved'))
+      onSaved()
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAccessBusy(false)
+    }
+  }
+
+  const revealLinkPw = async () => {
+    if (revealedPw) {
+      setRevealedPw('')
+      return
+    }
+    setAccessBusy(true)
+    try {
+      const got = await api.shareLinkPassword(link.id)
+      setRevealedPw(got.password)
+      setCopiedPw(false)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAccessBusy(false)
+    }
+  }
+
+  const revokeLinkSessions = async () => {
+    setAccessBusy(true)
+    setAccessMsg('')
+    try {
+      await api.updateShareAccess(link.id, { revokeSessions: true })
+      setAccessMsg(t('share.linkSessionsRevoked'))
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAccessBusy(false)
+    }
+  }
+
+  const needsNewCustomPw = accessMode === 'custom' && link.accessMode !== 'custom' && customPw.length < 6
+  const badNewCustomPw = accessMode === 'custom' && customPw.length > 0 && customPw.length < 6
+
   return (
     // Inset under the row it belongs to, with the accent edge on its left, so
     // a panel this tall is never read as a sibling of the row below it.
@@ -750,6 +1037,7 @@ function LinkEditor({
           <Field label={t('share.nameLabel')} htmlFor={`share-edit-name-${link.id}`}>
             <input
               id={`share-edit-name-${link.id}`}
+              autoComplete="off"
               value={name}
               onChange={(e) => {
                 setName(e.target.value)
@@ -762,6 +1050,7 @@ function LinkEditor({
           <Field label={t('share.remarkLabel')} htmlFor={`share-edit-remark-${link.id}`}>
             <input
               id={`share-edit-remark-${link.id}`}
+              autoComplete="off"
               value={remark}
               maxLength={MAX_REMARK}
               onChange={(e) => {
@@ -796,6 +1085,157 @@ function LinkEditor({
             </Field>
           )}
         </div>
+      </Group>
+      <Group title={t('share.groupProtect')}>
+        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2">
+          <Field label={t('share.accessMode')} htmlFor={`share-edit-access-${link.id}`}>
+            <select
+              id={`share-edit-access-${link.id}`}
+              value={accessMode}
+              onChange={(e) => {
+                setAccessMode(e.target.value as ShareAccessMode)
+                setAccessMsg('')
+              }}
+              data-testid="share-edit-access-mode"
+              className={INPUT}
+            >
+              <option value="shared" disabled={!sharedPasswordSet && link.accessMode !== 'shared'}>
+                {sharedPasswordSet ? t('share.accessShared') : `${t('share.accessShared')} (${t('share.accessSharedNeedsGlobal')})`}
+              </option>
+              <option value="custom">{t('share.accessCustom')}</option>
+              <option value="none">{t('share.accessPublic')}</option>
+            </select>
+          </Field>
+          {accessMode === 'custom' && (link.accessMode !== 'custom' || changingPw) && (
+            <Field
+              label={link.accessMode === 'custom' ? t('share.customPasswordNewLabel') : t('share.customPasswordLabel')}
+              htmlFor={`share-edit-code-${link.id}`}
+            >
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex min-w-0 flex-1 items-center">
+                  {/* Kept unmounted until the owner explicitly asks to replace
+                      an existing custom password, and readOnly until focused, so
+                      Chrome Password Manager cannot pair remark + passcode and
+                      autofill the owner's panel login credentials. */}
+                  <input
+                    id={`share-edit-code-${link.id}`}
+                    name="share_code"
+                    type="text"
+                    readOnly={!pwArmed}
+                    onFocus={() => setPwArmed(true)}
+                    onPointerDown={() => setPwArmed(true)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    value={customPw}
+                    onChange={(e) => {
+                      setCustomPw(e.target.value)
+                      setAccessMsg('')
+                    }}
+                    placeholder={
+                      link.accessMode === 'custom' ? t('share.customPasswordKeep') : t('sharing.passwordPlaceholder')
+                    }
+                    data-testid="share-edit-custom-password"
+                    style={showPw || customPw === '' ? undefined : ({ WebkitTextSecurity: 'disc' } as CSSProperties)}
+                    className={`${INPUT} font-mono`}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPw((v) => !v)}
+                  title={showPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                  aria-label={showPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                  className="vp-control vp-tap"
+                >
+                  {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPwArmed(true)
+                    setCustomPw(randomLinkPasscode())
+                    setShowPw(true)
+                  }}
+                  className="vp-outline shrink-0 text-vp-xs"
+                >
+                  <Sparkles size={11} />
+                  {t('sharing.passwordGenerate')}
+                </button>
+              </div>
+            </Field>
+          )}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={accessBusy || needsNewCustomPw || badNewCustomPw}
+            onClick={() => void saveAccess()}
+            data-testid="share-edit-access-save"
+            className="vp-primary text-vp-xs"
+          >
+            {t('share.accessSave')}
+          </button>
+          {accessMode === 'custom' && link.accessMode === 'custom' && !changingPw && (
+            <button
+              type="button"
+              disabled={accessBusy}
+              onClick={() => {
+                setChangingPw(true)
+                setPwArmed(false)
+                setCustomPw('')
+              }}
+              data-testid="share-edit-pw-change"
+              className="vp-outline text-vp-xs"
+            >
+              {t('share.customPasswordNewLabel')}
+            </button>
+          )}
+          {link.accessMode === 'custom' && link.passwordViewable && (
+            <button
+              type="button"
+              disabled={accessBusy}
+              onClick={() => void revealLinkPw()}
+              data-testid="share-edit-pw-reveal"
+              className="vp-outline text-vp-xs"
+            >
+              {revealedPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+            </button>
+          )}
+          {link.accessMode !== 'none' && (
+            <button
+              type="button"
+              disabled={accessBusy}
+              onClick={() => void revokeLinkSessions()}
+              data-testid="share-edit-revoke-sessions"
+              className="vp-outline text-vp-xs"
+            >
+              <UserX size={11} />
+              {t('share.linkRevokeSessions')}
+            </button>
+          )}
+          {accessMsg && (
+            <span className="text-vp-xs text-ink-2" data-testid="share-edit-access-msg">
+              {accessMsg}
+            </span>
+          )}
+        </div>
+        {revealedPw && (
+          <div
+            data-testid="share-edit-pw-revealed"
+            className="mt-2 flex flex-wrap items-center gap-2 rounded-vp border border-hairline bg-surface px-2.5 py-1.5"
+          >
+            <code className="font-mono text-vp-sm text-ink">{revealedPw}</code>
+            <button
+              type="button"
+              onClick={() => copyTextInGesture(revealedPw, setCopiedPw)}
+              className="vp-outline text-vp-xs"
+            >
+              {copiedPw ? <Check size={11} /> : <Copy size={11} />}
+              {copiedPw ? t('sharing.passwordCopied') : t('sharing.passwordCopy')}
+            </button>
+          </div>
+        )}
       </Group>
       <Group title={t('share.groupDo')}>
         <InteractiveChoice

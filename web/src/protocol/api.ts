@@ -21,6 +21,8 @@ import type {
   ResolvedPath,
   Session,
   SessionState,
+  ShareAccessMode,
+  ShareAccessStats,
   ShareDetail,
   ShareLink,
   SharePage,
@@ -743,6 +745,10 @@ export const api = {
     /** The published share page the link draws, with its settings on it. */
     pageId: string
     params: Record<string, ShareParamValue>
+    /** Optional access protection mode: 'none', 'shared' or 'custom'. */
+    accessMode?: ShareAccessMode
+    /** Required when accessMode is 'custom'. */
+    password?: string
   }) =>
     request<{
       token: string
@@ -755,6 +761,8 @@ export const api = {
       scope: string
       remark: string
       locked: boolean
+      accessMode: ShareAccessMode
+      passwordViewable: boolean
       url: string
       expiresAt: number
       createdAt: number
@@ -872,6 +880,41 @@ export const api = {
 
   setSharingSettings: (s: Partial<SharingSettings>) =>
     request<SharingSettings>('/api/settings/sharing', { method: 'PUT', body: JSON.stringify(s) }),
+
+  sharedSharePassword: () => request<{ password: string }>('/api/settings/sharing/password'),
+
+  setSharedSharePassword: (password: string) =>
+    request<SharingSettings>('/api/settings/sharing/password', {
+      method: 'PUT',
+      body: JSON.stringify({ password }),
+    }),
+
+  applySharedPasswordAll: () =>
+    request<{ updated: number; settings: SharingSettings }>('/api/settings/sharing/password/apply-all', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  revokeSharedSessions: () =>
+    request<void>('/api/settings/sharing/password/revoke-sessions', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  updateShareAccess: (
+    id: string,
+    body: { accessMode?: ShareAccessMode; password?: string; revokeSessions?: boolean },
+  ) =>
+    request<void>(`/api/settings/shares/${encodeURIComponent(id)}/access`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  shareLinkPassword: (id: string) =>
+    request<{ password: string }>(`/api/settings/shares/${encodeURIComponent(id)}/password`),
+
+  shareAccessStats: (id: string) =>
+    request<ShareAccessStats>(`/api/settings/shares/${encodeURIComponent(id)}/access-stats`),
 
   checkShareOrigin: (origin: string) =>
     request<ShareOriginCheck>('/api/settings/sharing/check', {

@@ -20,4 +20,5 @@ type pageBackend struct {
 	audit        actionAudit
 	sources      sourcesState
 	server       serverState
+	protect      shareProtectState
 }

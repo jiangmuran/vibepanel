@@ -1333,6 +1333,49 @@ var migrations = []migration{
 		}
 		return nil
 	}},
+	// Password protection (shared or per-link) and per-IP access analytics for
+	// share links.
+	//
+	// share_access_ips keeps one row per (link_id, ip) so summary queries are
+	// cheap and bounded by distinct visitors. share_access_events holds recent
+	// visits, unlocks, failures and visitor actions, trimmed by age and count.
+	{"037-share-protection-and-access", func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE share_links ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'none'`,
+			`ALTER TABLE share_links ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE share_links ADD COLUMN password_enc BLOB NOT NULL DEFAULT x''`,
+			`ALTER TABLE share_links ADD COLUMN password_epoch INTEGER NOT NULL DEFAULT 1`,
+			`CREATE TABLE IF NOT EXISTS share_access_ips (
+			     link_id           TEXT NOT NULL REFERENCES share_links(id) ON DELETE CASCADE,
+			     ip                TEXT NOT NULL,
+			     first_seen_at     INTEGER NOT NULL,
+			     last_seen_at      INTEGER NOT NULL,
+			     visit_count       INTEGER NOT NULL DEFAULT 0,
+			     unlock_ok_count   INTEGER NOT NULL DEFAULT 0,
+			     unlock_fail_count INTEGER NOT NULL DEFAULT 0,
+			     last_ua           TEXT NOT NULL DEFAULT '',
+			     last_event        TEXT NOT NULL DEFAULT '',
+			     PRIMARY KEY (link_id, ip)
+			 )`,
+			`CREATE INDEX IF NOT EXISTS idx_share_access_ips_last ON share_access_ips(link_id, last_seen_at DESC)`,
+			`CREATE TABLE IF NOT EXISTS share_access_events (
+			     id      INTEGER PRIMARY KEY AUTOINCREMENT,
+			     link_id TEXT NOT NULL REFERENCES share_links(id) ON DELETE CASCADE,
+			     at      INTEGER NOT NULL,
+			     ip      TEXT NOT NULL,
+			     event   TEXT NOT NULL,
+			     ua      TEXT NOT NULL DEFAULT '',
+			     detail  TEXT NOT NULL DEFAULT ''
+			 )`,
+			`CREATE INDEX IF NOT EXISTS idx_share_access_events_link_at ON share_access_events(link_id, at DESC, id DESC)`,
+			`CREATE INDEX IF NOT EXISTS idx_share_access_events_at ON share_access_events(at)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	}},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

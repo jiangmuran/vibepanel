@@ -100,17 +100,29 @@ How `--link` behaves:
   published version); passing `--expires` always mints a new link.
 - If the page has no link yet, it mints one on the panel's configured share
   origin (or panel URL) with `detail=counts` (privacy-safe default) and prints
-  the URL.
+  the URL. When the panel has a global shared share-link password configured,
+  new links automatically use that shared password (`--access shared`).
 
 When you need more control over links (for example creating a second link,
-setting an expiration, or exposing session/project names on a live dashboard):
+setting a per-link custom password, setting an expiration, or exposing
+session/project names on a live dashboard):
 
 ```sh
-vibepanel page link [--new] [--name "<label>"] [--detail counts|names] [--expires 7d] [--json] <page-dir>
+vibepanel page link [--new] [--name "<label>"] [--detail counts|names] [--access shared|custom|none] [--random-password | --password-stdin] [--expires 7d] [--json] <page-dir>
 ```
 
-Keep `--detail counts` unless the user explicitly asks to show session or
-project names on the link.
+Password rules for share links:
+
+- Default (no `--access`): uses the panel's global shared password if one is
+  configured, otherwise public (`none`).
+- Per-link custom password when the user asks for one: pass
+  `--access custom --random-password` (prints `password: <generated>` so you can
+  hand it to the user) or pipe a chosen password into
+  `--access custom --password-stdin`. There is deliberately no `--password`
+  flag.
+- Explicitly public link (only when the user asks): pass `--access none`.
+- Keep `--detail counts` unless the user explicitly asks to show session or
+  project names on the link.
 
 ## 5. Reply and iterate
 
