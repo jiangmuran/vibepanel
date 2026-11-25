@@ -131,3 +131,33 @@ func TestTheTickLevelsScoresAndNotOnEveryTick(t *testing.T) {
 		t.Fatalf("not levelled once the interval had passed: %d", got)
 	}
 }
+
+func TestTheCompactionRateIsPerSecondBetweenTicks(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "vmstat")
+	write := func(n string) {
+		t.Helper()
+		if err := os.WriteFile(f, []byte("compact_fail 9\ncompact_stall "+n+"\ncompact_success 3\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := New(Env{Vmstat: f})
+	now := time.Now()
+	write("1000")
+	if got := g.compactionRate(now); got != 0 {
+		t.Fatalf("the first reading has nothing to compare with: %v", got)
+	}
+	write("4000")
+	if got := g.compactionRate(now.Add(2 * time.Second)); got != 1500 {
+		t.Fatalf("3000 in two seconds: %v", got)
+	}
+	// A counter that went backwards is a reboot or a different file, not a rate.
+	write("10")
+	if got := g.compactionRate(now.Add(4 * time.Second)); got != 0 {
+		t.Fatalf("a counter that fell: %v", got)
+	}
+	// Unreadable is "not compacting", so every stall still counts.
+	g2 := New(Env{Vmstat: filepath.Join(t.TempDir(), "absent")})
+	if got := g2.compactionRate(now); got != 0 {
+		t.Fatalf("no file: %v", got)
+	}
+}

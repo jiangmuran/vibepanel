@@ -782,6 +782,15 @@ OOM killer, twenty minutes of reclaim later, with sshd and the panel not
 answering. What the mode keeps is the larger share and that the panel ends
 nothing itself.
 
+**A stall is checked against something being short.** `memory.pressure` also
+counts time spent in compaction, the kernel moving pages to assemble a 2 MiB
+one, and that happens with memory to spare: two numpy jobs asking for huge
+pages read 20% on their session with 25 GiB of 45 available, and the panel
+offered to end something for it. A stall is not counted while the machine is
+compacting (`compact_stall`, 200 a second), a quarter of it is available and
+the pool is not refaulting. Compaction also runs when memory is short, which
+is why it needs the other two beside it.
+
 **The kernel is pointed at the largest process.** Its choice of victim is
 memory plus `oom_score_adj` thousandths of the limit, and Chrome writes 300
 into every renderer: 12.8 GiB of head start on this pool. In the same incident

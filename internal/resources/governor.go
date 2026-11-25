@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -111,6 +112,8 @@ type Env struct {
 	// Anchor is the command that holds a user manager's scope open; see
 	// cgroup.StartAnchoredScope. The panel's own binary, `service anchor`.
 	Anchor []string
+	// Vmstat replaces /proc/vmstat, for tests.
+	Vmstat string
 
 	ServerPID func(ctx context.Context) (int, error)
 	Panes     func() []Pane
@@ -362,6 +365,7 @@ type tickState struct {
 	hotSince    map[string]time.Time   // by session id
 	ooms        map[string]uint64      // by session id: oom_kill as last read
 	refaults    memSample
+	compactions memSample
 	unkillable  map[procKey]bool
 	lastMax     uint64
 	oomLevelled time.Time
@@ -476,6 +480,7 @@ func (g *Governor) Tick(ctx context.Context) {
 	iso, layout := g.place(ctx, ro, procs)
 
 	r := Reading{Total: total, Available: avail, HostStall: hostPressure("memory").Full10}
+	r.Compactions = g.compactionRate(now)
 	pool := PoolView{}
 	if layout != nil {
 		// A memory.stat that cannot be read is not a pool that holds nothing:
@@ -565,6 +570,48 @@ func (g *Governor) refaultRate(d cgroup.Dir, now time.Time) float64 {
 		return 0
 	}
 	return float64(cur-prev.cur) / el
+}
+
+// compactionRate is compact_stall per second since the last tick, from
+// /proc/vmstat. A read that fails, or a kernel built without compaction,
+// gives zero, which Reading.short takes as "not compacting": every stall
+// counts, as it did before this was read at all.
+func (g *Governor) compactionRate(now time.Time) float64 {
+	b, err := os.ReadFile(g.vmstatPath())
+	if err != nil {
+		return 0
+	}
+	cur, ok := vmstatValue(string(b), "compact_stall")
+	if !ok {
+		return 0
+	}
+	prev := g.t.compactions
+	g.t.compactions = memSample{at: now, cur: cur}
+	if prev.at.IsZero() || cur < prev.cur {
+		return 0
+	}
+	el := now.Sub(prev.at).Seconds()
+	if el <= 0 {
+		return 0
+	}
+	return float64(cur-prev.cur) / el
+}
+
+func (g *Governor) vmstatPath() string {
+	if g.env.Vmstat != "" {
+		return g.env.Vmstat
+	}
+	return "/proc/vmstat"
+}
+
+func vmstatValue(s, key string) (uint64, bool) {
+	for _, line := range strings.Split(s, "\n") {
+		if k, v, ok := strings.Cut(line, " "); ok && k == key {
+			n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
+			return n, err == nil
+		}
+	}
+	return 0, false
 }
 
 // applyBudget writes the pool's memory.max when it has moved enough to matter.

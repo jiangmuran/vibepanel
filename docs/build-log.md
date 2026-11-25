@@ -28743,3 +28743,40 @@ stops listing them.
 
 **Left.** The structure checks have not been run against an isolated panel
 without the pressure half. The real-scope integration test is skipped here.
+
+## 2026-11-24 — A stall that was not a shortage
+
+Reported as "memory is at 40%, why does it keep saying the sessions are stuck
+for want of memory". It was right about the 40%.
+
+Read from the running machine while it happened: `/proc/pressure/memory` full
+avg10 at 12 to 15, the pool at 6, one session's leaf at 20.21 and every other
+leaf at 0. 25 GiB of 45 available, 5 GiB free, the pool at 35.6 GiB of a
+41.5 GiB limit with `memory.events` `max 0`. Over ten seconds `pgscan_direct`,
+`pgscan_kswapd`, `pswpin` and `pswpout` did not move; `compact_stall` rose by
+15,031 and `thp_fault_fallback` by 4,948. `/proc/buddyinfo` had no block of
+order 9 or 10 in the Normal zone. The session held two numpy jobs, and numpy
+asks for huge pages; with `defrag` at `madvise` each such fault compacts in
+the caller. `memory.pressure` counts that time.
+
+- `Reading.Compactions`, `compact_stall` per second from `/proc/vmstat`
+  (machine-wide; there is no per-cgroup count), and `Reading.short`: a stall,
+  the pool's or the host's, is not counted while compaction runs at 200 a
+  second or more, a quarter of the machine is available and the pool is not
+  refaulting. `Assess` is otherwise unchanged, and the available-memory and
+  held-memory lines do not pass through it.
+
+Considered and dropped: requiring direct reclaim to be running. It was flat in
+the ten-second sample and then rose by 1.4 M pages over the next few minutes,
+with the stall still compaction: the allocator reclaims for a huge page too.
+Requiring the pool to be at its limit: a pool of cache sits there all day.
+
+Verified: `TestAssess` with that reading, and with each of the three
+conditions taken away in turn; five mutations of `short` and `hostStall`, all
+red. `TestTheCompactionRateIsPerSecondBetweenTicks` for the sampler.
+
+**Left.** Nothing tests that `Tick` puts the rate into the reading. Not
+observed live: the jobs had finished before the fix was built. The Resources
+tab's stall figure reads 0 through such a stall, and nothing tells anybody the
+machine is compacting. A stall from compaction with under a quarter available
+is still reported as a shortage.

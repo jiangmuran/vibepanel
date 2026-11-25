@@ -247,6 +247,16 @@ const (
 	// a build reading files it has not read before. A cold read is not a
 	// refault; a thrash is nothing but.
 	refaultRate = 2000
+	// compactRate, in direct compactions a second across the machine, is
+	// where a memory stall may be compaction rather than shortage. The stall
+	// it was measured on ran at 1500 a second and read 15%; a machine not
+	// asking for huge pages reads 0.
+	compactRate = 200
+	// spareFraction: the machine has memory to spare while more than this
+	// fraction of it is available. A quarter is far above the reserve on
+	// purpose: the stall is the early signal, and MemAvailable counts cache
+	// that a thrash is busy reading back.
+	spareFraction = 4
 	// responsibleFloor is the least a session must hold to be named, or acted
 	// on, at all: below it the session is not what filled anything.
 	responsibleFloor = 256 * mib
@@ -316,6 +326,9 @@ type Reading struct {
 	PoolRefaults float64
 	// HostStall is the same for the whole machine, from /proc/pressure/memory.
 	HostStall float64
+	// Compactions is compact_stall per second since the last tick, for the
+	// whole machine: the kernel has no such count per cgroup. See short.
+	Compactions float64
 }
 
 // Stall thresholds, as "full avg10" percentages.
@@ -333,14 +346,51 @@ const (
 func (r Reading) hasPool() bool { return r.PoolMax > 0 }
 
 // Stall is the sessions' stall as Assess counts it: memory, or I/O while the
-// pool is thrashing. See PoolIOStall.
+// pool is thrashing. See PoolIOStall. Nothing when nothing is short; see short.
 func (r Reading) Stall() float64 {
+	if !r.short() {
+		return 0
+	}
 	stall := r.PoolStall
-	if r.hasPool() && r.PoolCurrent >= r.PoolMax/100*poolFullPercent &&
-		r.PoolRefaults >= refaultRate && r.PoolIOStall > stall {
+	if r.poolFull() && r.PoolRefaults >= refaultRate && r.PoolIOStall > stall {
 		stall = r.PoolIOStall
 	}
 	return stall
+}
+
+// hostStall is HostStall under the same condition.
+func (r Reading) hostStall() float64 {
+	if !r.short() {
+		return 0
+	}
+	return r.HostStall
+}
+
+func (r Reading) poolFull() bool {
+	return r.hasPool() && r.PoolCurrent >= r.PoolMax/100*poolFullPercent
+}
+
+// short reports whether a stall is for want of memory. It is, unless the
+// kernel is compacting while the machine has memory to spare and nothing is
+// coming back from disk.
+//
+// memory.pressure also counts the time a task spends in compaction -- the
+// kernel moving pages about to make a 2 MiB one -- and that happens on a
+// machine with plenty left. On 2026-11-24 two numpy jobs asking for huge
+// pages read 15% on the host and 20% on their session for minutes, at 1500
+// compaction stalls a second, with 25 GiB of 45 available and not one 2 MiB
+// block free. The panel said the sessions were stuck for want of memory and
+// offered to end something, which would have freed nothing the jobs were
+// waiting for.
+//
+// Only that case is taken out. Compaction also runs when memory really is
+// short, so it excuses a stall only beside the other two readings; and a
+// machine where Compactions cannot be read counts every stall as before.
+func (r Reading) short() bool {
+	if r.Compactions < compactRate || r.PoolRefaults >= refaultRate {
+		return true
+	}
+	return r.Total > 0 && r.Available < r.Total/spareFraction
 }
 
 // Named reports whether a session holds enough to be named in a question: a
@@ -395,11 +445,11 @@ func Assess(p Params, r Reading) (Level, Reason) {
 	switch {
 	case stall >= StallCritical:
 		return Critical, ReasonStall
-	case r.HostStall >= StallCritical, r.Total > 0 && r.Available < reserve/2:
+	case r.hostStall() >= StallCritical, r.Total > 0 && r.Available < reserve/2:
 		return Critical, ReasonMachine
 	case stall >= StallWarn:
 		return Warn, ReasonStall
-	case r.HostStall >= StallWarn, r.Total > 0 && r.Available < reserve:
+	case r.hostStall() >= StallWarn, r.Total > 0 && r.Available < reserve:
 		return Warn, ReasonMachine
 	case r.hasPool() && r.PoolHeld*100 >= r.PoolMax*uint64(p.AskPercent):
 		return Warn, ReasonPool

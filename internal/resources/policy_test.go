@@ -157,6 +157,40 @@ func TestAssess(t *testing.T) {
 		t.Errorf("stall critical: %v %v", l, r)
 	}
 
+	// Compaction on a machine with memory to spare stalls tasks too, and is
+	// not a shortage: the numbers are 2026-11-24's, 25 GiB of 45 available.
+	huge := Reading{Total: 45 * gib, Available: 25 * gib, PoolMax: 41 * gib, PoolCurrent: 35 * gib,
+		PoolHeld: 17 * gib, PoolStall: 20, HostStall: 15, Compactions: 1500}
+	if l, r := Assess(p, huge); l != OK {
+		t.Errorf("compaction with memory to spare: %v %v", l, r)
+	}
+	// The same stall without the compaction is the sessions waiting on memory.
+	plain := huge
+	plain.Compactions = compactRate - 1
+	if l, r := Assess(p, plain); l != Critical || r != ReasonStall {
+		t.Errorf("a stall while nothing is compacting: %v %v", l, r)
+	}
+	// Compaction runs when memory is short as well, and excuses nothing then.
+	tight := huge
+	tight.Available = huge.Total/spareFraction - 1
+	if l, r := Assess(p, tight); l != Critical || r != ReasonStall {
+		t.Errorf("compaction with under a quarter available: %v %v", l, r)
+	}
+	thrash := huge
+	thrash.PoolRefaults = refaultRate
+	if l, r := Assess(p, thrash); l != Critical || r != ReasonStall {
+		t.Errorf("compaction while pages come back from disk: %v %v", l, r)
+	}
+	onlyHost := huge
+	onlyHost.PoolStall, onlyHost.HostStall = 0, StallCritical
+	if l, _ := Assess(p, onlyHost); l != OK {
+		t.Errorf("the host's own stall under compaction: %v", l)
+	}
+	onlyHost.Compactions = 0
+	if l, r := Assess(p, onlyHost); l != Critical || r != ReasonMachine {
+		t.Errorf("the host's own stall without it: %v %v", l, r)
+	}
+
 	// I/O stall counts only while the pool is at its limit and pages are
 	// coming back from disk.
 	io := calm
