@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -327,12 +329,20 @@ func TestShareSharedAndCustomPasswordLifecycle(t *testing.T) {
 		t.Fatalf("unexpected UA summaries: %+v", uaByIP)
 	}
 
-	// 15. Dedicated share origin host isolation allows unlock & /share-u/ and refuses arbitrary POSTs.
+	// 15. Dedicated share origin host isolation allows unlock & /share-u/ and refuses arbitrary POSTs
+	// (including trailing-slash and dot-segment unlock paths that would miss chi and hit the SPA).
 	srv.Cfg.Domain = "panel.example.com"
 	withBundle(t, srv)
 	setShareOrigin(t, ts, "https://share.example.com")
-	if code, _, _ := requestOnHost(t, ts, "share.example.com", http.MethodPost, "/share/"+sharedA.Token+"/not-unlock"); code != http.StatusNotFound {
-		t.Errorf("POST non-unlock on share host = %d, want 404", code)
+	for _, badPath := range []string{
+		"/share/" + sharedA.Token + "/not-unlock",
+		"/share/" + sharedA.Token + "/unlock/",
+		"/share/x/../" + sharedA.Token + "/unlock",
+	} {
+		c, b, _ := requestOnHost(t, ts, "share.example.com", http.MethodPost, badPath)
+		if c != http.StatusNotFound || strings.Contains(b, "root") {
+			t.Errorf("POST %s on share host = %d (want 404, never SPA): %.120s", badPath, c, b)
+		}
 	}
 	visitorHost := newVisitorClient(t)
 	code, _, hdr = doVisitor(t, visitorHost, http.MethodPost, ts.URL+"/share/"+sharedA.Token+"/unlock",
@@ -340,9 +350,55 @@ func TestShareSharedAndCustomPasswordLifecycle(t *testing.T) {
 	if code != http.StatusSeeOther || !strings.Contains(hdr.Get("Set-Cookie"), "Secure") {
 		t.Fatalf("unlock on https share host = %d cookie=%q", code, hdr.Get("Set-Cookie"))
 	}
+	sharedCookieHdr := hdr.Get("Set-Cookie")
+
+	// Per-link revoke on a shared-mode link forces existing vp_share_shared holders to re-enter the password on that link.
+	visitorRev := newVisitorClient(t)
+	code, _, _ = doVisitor(t, visitorRev, http.MethodPost, ts.URL+"/share/"+sharedA.Token+"/unlock",
+		url.Values{"password": {"team-secret-2"}}.Encode(), "", "198.51.100.101", "")
+	if code != http.StatusSeeOther {
+		t.Fatalf("unlock sharedA on http = %d", code)
+	}
+	if code, body, _ := doVisitor(t, visitorRev, http.MethodGet, ts.URL+"/share/"+sharedA.Token+"/", "", "", "198.51.100.101", ""); code != http.StatusOK || !strings.Contains(body, "/share-u/") {
+		t.Fatalf("sharedA should be unlocked before per-link revoke: %d %.120s", code, body)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if code, _, _ := sendRaw(t, ts, http.MethodPut, "/api/settings/shares/"+sharedA.ID+"/access", "application/json", []byte(`{"revokeSessions":true}`)); code != http.StatusNoContent {
+		t.Fatalf("per-link revoke on sharedA = %d, want 204", code)
+	}
+	if code, body, _ := doVisitor(t, visitorRev, http.MethodGet, ts.URL+"/share/"+sharedA.Token+"/", "", "", "198.51.100.101", ""); code != http.StatusOK || !strings.Contains(body, `action="unlock"`) {
+		t.Fatalf("sharedA remained unlocked for old vp_share_shared after per-link revoke: %d %.120s", code, body)
+	}
+	if code, body, _ := doVisitor(t, visitorRev, http.MethodGet, ts.URL+"/share/"+sharedB.Token+"/", "", "", "198.51.100.101", ""); code != http.StatusOK || !strings.Contains(body, "/share-u/") {
+		t.Fatalf("sharedB should stay unlocked after revoking only sharedA: %d %.120s", code, body)
+	}
+
+	// IPv6 /64 subnet rotation shares one throttle bucket.
+	var saw429 bool
+	for i := 1; i <= 6; i++ {
+		v6 := fmt.Sprintf("2001:db8:abcd:1234::%d", i)
+		c, _, _ := doVisitor(t, newVisitorClient(t), http.MethodPost, ts.URL+"/share/"+sharedA.Token+"/unlock",
+			url.Values{"password": {"wrong-v6-pw"}}.Encode(), "", v6, "")
+		if c == http.StatusTooManyRequests {
+			saw429 = true
+			break
+		}
+	}
+	if !saw429 {
+		t.Fatal("rotating addresses inside one IPv6 /64 bypassed unlockThrottle")
+	}
+
+	// Locked links refuse access-mode mutations.
+	if code, _, _ := sendRaw(t, ts, http.MethodPatch, "/api/settings/shares/"+sharedB.ID, "application/json", []byte(`{"locked":true}`)); code != http.StatusNoContent && code != http.StatusOK {
+		t.Fatalf("lock sharedB = %d", code)
+	}
+	if code, _, _ := sendRaw(t, ts, http.MethodPut, "/api/settings/shares/"+sharedB.ID+"/access", "application/json", []byte(`{"accessMode":"none"}`)); code != http.StatusConflict {
+		t.Fatalf("changing accessMode on locked link = %d, want 409", code)
+	}
+	_, _, _ = sendRaw(t, ts, http.MethodPatch, "/api/settings/shares/"+sharedB.ID, "application/json", []byte(`{"locked":false}`))
 
 	// 16. CLI EnsurePageShareLink automatically uses "shared" when a global shared password is set,
-	// and supports per-link custom passwords via RandomPassword or CustomPassword.
+	// and mints a fresh link rather than mutating an existing one when given a custom password.
 	pageRow, err := srv.DB.SharePageByID(context.Background(), p.page.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -365,37 +421,58 @@ func TestShareSharedAndCustomPasswordLifecycle(t *testing.T) {
 	if cliCustom.AccessMode != string(store.ShareAccessCustom) || len(cliCustom.GeneratedPassword) < minSharePasswordLen {
 		t.Fatalf("CLI random custom link unexpected result: %+v", cliCustom)
 	}
-	// Generated password unlocks the newly minted link.
 	cliTok := strings.Trim(strings.TrimPrefix(cliCustom.URL, strings.Split(cliCustom.URL, "/share/")[0]+"/share/"), "/")
 	code, _, _ = doVisitor(t, newVisitorClient(t), http.MethodPost, ts.URL+"/share/"+cliTok+"/unlock",
 		url.Values{"password": {cliCustom.GeneratedPassword}}.Encode(), "", "198.51.100.77", "share.example.com")
 	if code != http.StatusSeeOther {
 		t.Fatalf("unlock CLI random custom link = %d, want 303", code)
 	}
-	// Passing CustomPassword updates a reused link's password.
-	cliReuse, err := EnsurePageShareLink(context.Background(), srv.DB, srv.Cfg, pageRow, ShareLinkOptions{
+	// Passing CustomPassword mints a fresh link without overwriting cliCustom's password.
+	cliFreshCustom, err := EnsurePageShareLink(context.Background(), srv.DB, srv.Cfg, pageRow, ShareLinkOptions{
 		AccessMode:     store.ShareAccessCustom,
 		CustomPassword: "cli-chosen-pw",
 	})
 	if err != nil {
-		t.Fatalf("CLI reuse custom password: %v", err)
+		t.Fatalf("CLI custom password: %v", err)
 	}
-	if !cliReuse.Reused || cliReuse.AccessMode != string(store.ShareAccessCustom) {
-		t.Fatalf("CLI reuse custom password unexpected result: %+v", cliReuse)
+	if cliFreshCustom.Reused || cliFreshCustom.ID == cliCustom.ID || cliFreshCustom.AccessMode != string(store.ShareAccessCustom) {
+		t.Fatalf("CLI custom password mutated an existing link instead of minting a fresh one: %+v", cliFreshCustom)
 	}
-	reuseTok := strings.Trim(strings.TrimPrefix(cliReuse.URL, strings.Split(cliReuse.URL, "/share/")[0]+"/share/"), "/")
-	code, _, _ = doVisitor(t, newVisitorClient(t), http.MethodPost, ts.URL+"/share/"+reuseTok+"/unlock",
+	freshTok := strings.Trim(strings.TrimPrefix(cliFreshCustom.URL, strings.Split(cliFreshCustom.URL, "/share/")[0]+"/share/"), "/")
+	code, _, _ = doVisitor(t, newVisitorClient(t), http.MethodPost, ts.URL+"/share/"+freshTok+"/unlock",
 		url.Values{"password": {"cli-chosen-pw"}}.Encode(), "", "198.51.100.78", "share.example.com")
 	if code != http.StatusSeeOther {
-		t.Fatalf("unlock CLI reused custom link = %d, want 303", code)
+		t.Fatalf("unlock CLI fresh custom link = %d, want 303", code)
+	}
+	// And cliCustom still opens with its own generated password.
+	code, _, _ = doVisitor(t, newVisitorClient(t), http.MethodPost, ts.URL+"/share/"+cliTok+"/unlock",
+		url.Values{"password": {cliCustom.GeneratedPassword}}.Encode(), "", "198.51.100.79", "share.example.com")
+	if code != http.StatusSeeOther {
+		t.Fatalf("cliCustom lost its password when a second custom link was minted: %d", code)
 	}
 
-	// 17. Custom password cookie isolation + link rotation kills old grants immediately.
+	// 17. Custom password cookie isolation, cross-surface rejection, and rotation invalidation.
 	visitorC := newVisitorClient(t)
 	code, _, hdr = doVisitor(t, visitorC, http.MethodPost, ts.URL+"/share/"+customC.Token+"/unlock",
 		url.Values{"password": {"only-for-c"}}.Encode(), "", "198.51.100.55", "")
 	if code != http.StatusSeeOther || !strings.Contains(hdr.Get("Set-Cookie"), "Path=/share/"+customC.Token+"/") {
 		t.Fatalf("customC unlock = %d cookie=%q", code, hdr.Get("Set-Cookie"))
+	}
+	linkCookieHdr := hdr.Get("Set-Cookie")
+	for _, rawCookie := range []string{sharedCookieHdr, linkCookieHdr} {
+		kv := strings.SplitN(rawCookie, ";", 2)[0]
+		_, val, _ := strings.Cut(kv, "=")
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/state", nil)
+		req.Header.Set("Cookie", kv+"; vp_session="+val)
+		req.Header.Set("Authorization", "Bearer "+val)
+		resp, rerr := anon.Do(req)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("unlock cookie accepted on /api/state: %d", resp.StatusCode)
+		}
 	}
 	code, shellC, _ := doVisitor(t, visitorC, http.MethodGet, ts.URL+"/share/"+customC.Token+"/", "", "", "198.51.100.55", "")
 	if code != http.StatusOK {

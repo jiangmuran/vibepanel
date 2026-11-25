@@ -28716,3 +28716,20 @@ until user interaction (`type="text"`, `autoComplete="off"`, no
 password** control beside each link's `Custom password` badge, and use
 `autocomplete="off"` on the visitor gate so browsers do not cross-fill one
 custom link's password onto another on the same share origin.
+
+**What review changed (#47).** `POST /share/{token}/unlock` now acquires
+`passwordSlots` (4 concurrent Argon2id derivations, matching `handleLogin`),
+re-checks and records the per-IP throttle mark before deriving, and masks IPv6
+keys to `/64` before combining them with `linkID`. `isShareHostPath` requires
+`routed == clean` on `POST` so `/share/{token}/unlock/` or dot-segment variants
+on the dedicated share origin answer 404 rather than falling through to the
+panel SPA. `BumpShareLinkPasswordEpoch` advances `password_epoch` to at least
+the current unix timestamp and `vp_share_shared` carries its issue time so
+per-link session revocation on a `shared`-mode link forces existing cookie
+holders back to the gate on that link alone. Global shared-password updates run
+inside one SQLite transaction, locked links refuse access-mode changes, CLI
+custom passwords mint a fresh link rather than mutating an existing one,
+`share_access_ips` is bounded alongside `share_access_events`, and the gate and
+Sharing UI were aligned to the Graphite WCAG AA tokens, 16px touch inputs and
+`.vp-segmented` tabs.
+

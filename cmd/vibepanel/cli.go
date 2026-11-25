@@ -1104,6 +1104,9 @@ func cmdSettings(args []string) error {
 			if err != nil {
 				return err
 			}
+			if pw == "" {
+				return errors.New("password cannot be empty; use `vibepanel settings share-password clear` to remove it")
+			}
 			var st struct {
 				PublicLinkCount int `json:"publicLinkCount"`
 			}

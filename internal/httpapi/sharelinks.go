@@ -489,7 +489,9 @@ func isShareHostPath(method string, u *url.URL) bool {
 			return true
 		}
 		// Only exact `/share/{token}/unlock` accepts POST on the share host.
-		if method == http.MethodPost {
+		// Require routed == clean so trailing slashes or dot segments cannot
+		// pass here, miss chi's exact route, and fall through to the SPA.
+		if method == http.MethodPost && routed == clean {
 			rest := strings.TrimPrefix(clean, "/share/")
 			parts := strings.Split(rest, "/")
 			return len(parts) == 2 && parts[0] != "" && parts[1] == "unlock"

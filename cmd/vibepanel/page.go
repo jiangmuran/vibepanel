@@ -718,7 +718,11 @@ func readCustomLinkPassword(fromStdin bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return trimOneNewline(string(raw)), nil
+	pw := trimOneNewline(string(raw))
+	if pw == "" {
+		return "", errors.New("password from standard input cannot be empty")
+	}
+	return pw, nil
 }
 
 // parseLinkExpires parses optional durations such as "24h", "7d", or "0".

@@ -290,8 +290,7 @@ export function Sharing({
           {sharing?.loopbackOnlyWarning && (
             <div
               data-testid="sharing-loopback-warning"
-              className="flex items-start gap-2 py-2 text-vp-xs"
-              style={{ color: 'var(--vp-state-waiting)' }}
+              className="flex items-start gap-2 py-2 text-vp-xs text-warn-ink"
             >
               <TriangleAlert size={13} className="mt-0.5 shrink-0" />
               <span>{t('sharing.loopbackWarning')}</span>
@@ -1095,9 +1094,9 @@ function SharePasswordLine({
                 disabled={busy}
                 data-testid="share-password-reveal"
                 onClick={() => void reveal()}
-                className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+                className="vp-outline text-vp-xs"
               >
-                {revealed ? t('shareSkill.hide') : t('sharing.passwordView')}
+                {revealed ? t('sharing.passwordHide') : t('sharing.passwordView')}
               </button>
             )}
             <button
@@ -1110,7 +1109,7 @@ function SharePasswordLine({
                 setInputArmed(false)
                 setEditing(true)
               }}
-              className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+              className="vp-outline text-vp-xs"
             >
               {settings.sharedPasswordSet ? t('sharing.passwordChange') : t('sharing.passwordSetup')}
             </button>
@@ -1132,7 +1131,7 @@ function SharePasswordLine({
                 disabled={busy}
                 data-testid="share-password-revoke-sessions"
                 onClick={() => void revokeAll()}
-                className="vp-press inline-flex items-center gap-1 rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+                className="vp-outline text-vp-xs"
               >
                 <UserX size={11} />
                 {t('sharing.revokeSessions')}
@@ -1163,7 +1162,7 @@ function SharePasswordLine({
       {editing && (
         <div className="mt-2 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative flex min-w-48 flex-1 items-center @md:max-w-sm">
+            <div className="flex min-w-48 flex-1 items-center gap-1 @md:max-w-sm">
               {/* readOnly until user interaction + no -webkit-text-security on
                   empty values keeps Chrome Password Manager from treating this
                   setting as the panel's own login form. */}
@@ -1185,13 +1184,14 @@ function SharePasswordLine({
                 }}
                 placeholder={t('sharing.passwordPlaceholder')}
                 style={showInput || pw === '' ? undefined : ({ WebkitTextSecurity: 'disc' } as CSSProperties)}
-                className={`${INPUT} pr-8 font-mono`}
+                className={`${INPUT} font-mono`}
               />
               <button
                 type="button"
                 onClick={() => setShowInput((v) => !v)}
-                aria-label={t('sharing.passwordView')}
-                className="absolute right-2 text-ink-3 hover:text-ink"
+                title={showInput ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                aria-label={showInput ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                className="vp-control vp-tap"
               >
                 {showInput ? <EyeOff size={13} /> : <Eye size={13} />}
               </button>

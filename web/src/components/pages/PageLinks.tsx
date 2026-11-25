@@ -567,7 +567,7 @@ function LinkFacts({
               className="vp-outline text-vp-xs"
             >
               {pwShown ? <EyeOff size={11} /> : <Eye size={11} />}
-              {pwShown ? t('shareSkill.hide') : t('sharing.passwordView')}
+              {pwShown ? t('sharing.passwordHide') : t('sharing.passwordView')}
             </button>
           )}
         </>
@@ -829,17 +829,18 @@ function NewLink({
                     placeholder={t('sharing.passwordPlaceholder')}
                     data-testid="share-custom-password"
                     style={showPw || customPw === '' ? undefined : ({ WebkitTextSecurity: 'disc' } as CSSProperties)}
-                    className={`${INPUT} pr-8 font-mono`}
+                    className={`${INPUT} font-mono`}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPw((v) => !v)}
-                    aria-label={t('sharing.passwordView')}
-                    className="absolute right-2 text-ink-3 hover:text-ink"
-                  >
-                    {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
-                  </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPw((v) => !v)}
+                  title={showPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                  aria-label={showPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                  className="vp-control vp-tap"
+                >
+                  {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -1137,17 +1138,18 @@ function LinkEditor({
                     }
                     data-testid="share-edit-custom-password"
                     style={showPw || customPw === '' ? undefined : ({ WebkitTextSecurity: 'disc' } as CSSProperties)}
-                    className={`${INPUT} pr-8 font-mono`}
+                    className={`${INPUT} font-mono`}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPw((v) => !v)}
-                    aria-label={t('sharing.passwordView')}
-                    className="absolute right-2 text-ink-3 hover:text-ink"
-                  >
-                    {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
-                  </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPw((v) => !v)}
+                  title={showPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                  aria-label={showPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
+                  className="vp-control vp-tap"
+                >
+                  {showPw ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -1197,7 +1199,7 @@ function LinkEditor({
               data-testid="share-edit-pw-reveal"
               className="vp-outline text-vp-xs"
             >
-              {revealedPw ? t('shareSkill.hide') : t('sharing.passwordView')}
+              {revealedPw ? t('sharing.passwordHide') : t('sharing.passwordView')}
             </button>
           )}
           {link.accessMode !== 'none' && (

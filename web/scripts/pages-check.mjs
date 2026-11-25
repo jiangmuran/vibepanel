@@ -890,7 +890,7 @@ window.__probe = (async () => {
     const applyBtn = ui.locator('[data-testid="share-password-apply-all"]')
     if ((await applyBtn.count()) > 0) {
       await applyBtn.click()
-      const confirmBtn = ui.locator('[data-testid="confirm-ok"], [data-testid="ask-confirm"], button:has-text("Protect")').last()
+      const confirmBtn = ui.locator('[data-testid="confirm-yes"]').last()
       await confirmBtn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {})
       await confirmBtn.click()
       await sleep(500)

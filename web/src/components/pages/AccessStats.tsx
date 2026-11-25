@@ -95,7 +95,7 @@ export function AccessStatsPanel({
             onClick={onClose}
             aria-label={t('share.editDone')}
             data-testid="share-stats-close"
-            className="vp-control"
+            className="vp-control vp-tap"
           >
             <X size={13} />
           </button>
@@ -124,8 +124,7 @@ export function AccessStatsPanel({
             <div className="rounded-vp border border-hairline bg-surface px-2.5 py-2">
               <div className="text-vp-xs text-ink-3">{t('share.statsUnlockFail')}</div>
               <div
-                className="tabular mt-0.5 text-vp-lg font-semibold"
-                style={{ color: stats.totalUnlockFail > 0 ? 'var(--vp-state-waiting)' : 'var(--vp-ink)' }}
+                className={`tabular mt-0.5 text-vp-lg font-semibold ${stats.totalUnlockFail > 0 ? 'text-warn-ink' : 'text-ink'}`}
                 data-testid="share-stats-unlock-fail"
               >
                 {stats.totalUnlockFail}
@@ -136,28 +135,33 @@ export function AccessStatsPanel({
           {stats.loopbackOnly && (
             <p
               data-testid="share-stats-loopback-warn"
-              className="flex items-start gap-1.5 rounded-vp border border-hairline bg-surface px-2.5 py-2 text-vp-xs"
-              style={{ color: 'var(--vp-state-waiting)' }}
+              className="flex items-start gap-1.5 rounded-vp border border-hairline bg-surface px-2.5 py-2 text-vp-xs text-warn-ink"
             >
               <TriangleAlert size={13} className="mt-0.5 shrink-0" />
               <span>{t('sharing.loopbackWarning')}</span>
             </p>
           )}
 
-          <div className="flex items-center gap-1 border-b border-hairline pb-2">
+          <div className="vp-segmented w-fit" role="tablist" aria-label={t('share.statsTitle')}>
             <button
               type="button"
+              role="tab"
+              aria-selected={tab === 'ips'}
+              data-active={tab === 'ips'}
               data-testid="share-stats-tab-ips"
               onClick={() => setTab('ips')}
-              className={tab === 'ips' ? 'vp-primary text-vp-xs' : 'vp-outline text-vp-xs'}
+              className="vp-tab px-2.5 text-vp-xs"
             >
               {t('share.statsTabIps', { n: stats.ips.length })}
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={tab === 'events'}
+              data-active={tab === 'events'}
               data-testid="share-stats-tab-events"
               onClick={() => setTab('events')}
-              className={tab === 'events' ? 'vp-primary text-vp-xs' : 'vp-outline text-vp-xs'}
+              className="vp-tab px-2.5 text-vp-xs"
             >
               {t('share.statsTabEvents', { n: stats.events.length })}
             </button>
@@ -201,10 +205,7 @@ export function AccessStatsPanel({
                         <td className="tabular px-2.5 py-1.5 whitespace-nowrap">
                           <span>{row.unlockOkCount}</span>
                           {row.unlockFailCount > 0 && (
-                            <span
-                              className="ml-1.5 inline-flex items-center gap-0.5"
-                              style={{ color: 'var(--vp-state-waiting)' }}
-                            >
+                            <span className="ml-1.5 inline-flex items-center gap-0.5 text-warn-ink">
                               <ShieldAlert size={11} />
                               {row.unlockFailCount}
                             </span>

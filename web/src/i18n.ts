@@ -1824,6 +1824,7 @@ const DICT = {
   'sharing.passwordSetup': { zh: '设置密码', en: 'Set password' },
   'sharing.passwordChange': { zh: '修改', en: 'Change' },
   'sharing.passwordView': { zh: '查看密码', en: 'Show password' },
+  'sharing.passwordHide': { zh: '隐藏密码', en: 'Hide password' },
   'sharing.passwordCopy': { zh: '复制密码', en: 'Copy password' },
   'sharing.passwordCopied': { zh: '密码已复制', en: 'Password copied' },
   'sharing.passwordPlaceholder': { zh: '输入至少6位密码', en: 'At least 6 characters' },
@@ -1849,8 +1850,8 @@ const DICT = {
   },
   'sharing.sessionsRevoked': { zh: '已使所有共用密码的解锁会话失效。', en: 'All shared-password viewer sessions have been revoked.' },
   'sharing.loopbackWarning': {
-    zh: '访客IP全是本机回环，请检查反代真实IP透传与代理配置。',
-    en: 'All recent visits came from loopback. Check proxy real-IP forwarding and TRUSTED_PROXIES.',
+    zh: '访客IP全是本机回环，请检查反代真实IP透传与可信代理配置。',
+    en: 'All recent visits came from loopback. Check reverse-proxy real-IP forwarding and trusted proxy settings.',
   },
   'share.groupProtect': { zh: '访问密码保护', en: 'Password protection' },
   'share.accessMode': { zh: '加密方式', en: 'Access mode' },

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jiangmuran/vibepanel/internal/secret"
@@ -111,12 +112,13 @@ func (d *DB) SetShareLinkAccess(ctx context.Context, id string, mode ShareAccess
 	}
 	var res sql.Result
 	var err error
+	ts := now()
 	if mode == ShareAccessCustom && keepExistingPassword {
 		res, err = d.sql.ExecContext(ctx, `
 			UPDATE share_links
-			SET access_mode = ?, password_epoch = password_epoch + 1
+			SET access_mode = ?, password_epoch = MAX(password_epoch + 1, ?)
 			WHERE id = ? AND purpose = '' AND password_hash != ''`,
-			string(mode), id)
+			string(mode), ts, id)
 	} else {
 		if mode != ShareAccessCustom {
 			passwordHash = ""
@@ -124,9 +126,9 @@ func (d *DB) SetShareLinkAccess(ctx context.Context, id string, mode ShareAccess
 		}
 		res, err = d.sql.ExecContext(ctx, `
 			UPDATE share_links
-			SET access_mode = ?, password_hash = ?, password_enc = ?, password_epoch = password_epoch + 1
+			SET access_mode = ?, password_hash = ?, password_enc = ?, password_epoch = MAX(password_epoch + 1, ?)
 			WHERE id = ? AND purpose = ''`,
-			string(mode), passwordHash, nonNilBytes(passwordEnc), id)
+			string(mode), passwordHash, nonNilBytes(passwordEnc), ts, id)
 	}
 	if err != nil {
 		return fmt.Errorf("store: set share link access: %w", err)
@@ -137,11 +139,13 @@ func (d *DB) SetShareLinkAccess(ctx context.Context, id string, mode ShareAccess
 	return nil
 }
 
-// BumpShareLinkPasswordEpoch increments a link's password_epoch so all
-// currently unlocked cookies and grants for that link must re-authenticate.
+// BumpShareLinkPasswordEpoch advances a link's password_epoch to at least the
+// current unix timestamp (and strictly above its previous value) so both
+// per-link cookies/grants and older shared-password cookies must re-authenticate.
 func (d *DB) BumpShareLinkPasswordEpoch(ctx context.Context, id string) error {
 	res, err := d.sql.ExecContext(ctx,
-		`UPDATE share_links SET password_epoch = password_epoch + 1 WHERE id = ? AND purpose = ''`, id)
+		`UPDATE share_links SET password_epoch = MAX(password_epoch + 1, ?) WHERE id = ? AND purpose = ''`,
+		now(), id)
 	if err != nil {
 		return fmt.Errorf("store: bump share link password epoch: %w", err)
 	}
@@ -156,12 +160,79 @@ func (d *DB) BumpShareLinkPasswordEpoch(ctx context.Context, id string) error {
 func (d *DB) ApplySharedPasswordToPublicLinks(ctx context.Context) (int64, error) {
 	res, err := d.sql.ExecContext(ctx, `
 		UPDATE share_links
-		SET access_mode = 'shared', password_hash = '', password_enc = x'', password_epoch = password_epoch + 1
-		WHERE purpose = '' AND access_mode = 'none'`)
+		SET access_mode = 'shared', password_hash = '', password_enc = x'', password_epoch = MAX(password_epoch + 1, ?)
+		WHERE purpose = '' AND access_mode = 'none'`, now())
 	if err != nil {
 		return 0, fmt.Errorf("store: apply shared password to public links: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+// UpdateSharedPassword atomically replaces (or clears, when hash is empty) the
+// global shared password settings and increments sharing.password_epoch inside
+// one SQLite transaction.
+func (d *DB) UpdateSharedPassword(ctx context.Context, hash, sealedEnc string) (int64, error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("store: begin shared password tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	epoch, err := bumpSettingEpochTx(ctx, tx, "sharing.password_epoch")
+	if err != nil {
+		return 0, err
+	}
+	for _, kv := range [][2]string{
+		{"sharing.password_hash", hash},
+		{"sharing.password_enc", sealedEnc},
+	} {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, kv[0], kv[1]); err != nil {
+			return 0, fmt.Errorf("store: set %s: %w", kv[0], err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: commit shared password tx: %w", err)
+	}
+	return epoch, nil
+}
+
+// BumpSharedPasswordEpoch atomically increments sharing.password_epoch.
+func (d *DB) BumpSharedPasswordEpoch(ctx context.Context) (int64, error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("store: begin shared epoch tx: %w", err)
+	}
+	defer tx.Rollback()
+	epoch, err := bumpSettingEpochTx(ctx, tx, "sharing.password_epoch")
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: commit shared epoch tx: %w", err)
+	}
+	return epoch, nil
+}
+
+func bumpSettingEpochTx(ctx context.Context, tx *sql.Tx, key string) (int64, error) {
+	var raw string
+	err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("store: read %s: %w", key, err)
+	}
+	cur, _ := strconv.ParseInt(raw, 10, 64)
+	if cur < 1 {
+		cur = 1
+	}
+	next := cur + 1
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, strconv.FormatInt(next, 10)); err != nil {
+		return 0, fmt.Errorf("store: bump %s: %w", key, err)
+	}
+	return next, nil
 }
 
 // CountShareLinksByAccessMode counts handed-out links with the given mode.
@@ -293,13 +364,18 @@ func (d *DB) RecordShareAccess(ctx context.Context, linkID, ip, event, ua, detai
 	return nil
 }
 
-// TrimShareAccessEvents bounds share_access_events by age and total row count
-// so long-running links and brute-force probes cannot fill the disk.
+// TrimShareAccessEvents bounds share_access_events and share_access_ips by age
+// and row count so long-running links and brute-force probes cannot fill the disk.
 func (d *DB) TrimShareAccessEvents(ctx context.Context, maxAgeSeconds int64, maxRows int) error {
+	cutoff := now() - maxAgeSeconds
 	if maxAgeSeconds > 0 {
 		if _, err := d.sql.ExecContext(ctx,
-			`DELETE FROM share_access_events WHERE at < ?`, now()-maxAgeSeconds); err != nil {
+			`DELETE FROM share_access_events WHERE at < ?`, cutoff); err != nil {
 			return fmt.Errorf("store: trim share access events by age: %w", err)
+		}
+		if _, err := d.sql.ExecContext(ctx,
+			`DELETE FROM share_access_ips WHERE last_seen_at < ?`, now()-3*maxAgeSeconds); err != nil {
+			return fmt.Errorf("store: trim share access ips by age: %w", err)
 		}
 	}
 	if maxRows > 0 {
@@ -312,8 +388,36 @@ func (d *DB) TrimShareAccessEvents(ctx context.Context, maxAgeSeconds int64, max
 			)`, maxRows); err != nil {
 			return fmt.Errorf("store: trim share access events by count: %w", err)
 		}
+		if _, err := d.sql.ExecContext(ctx, `
+			DELETE FROM share_access_ips
+			WHERE rowid NOT IN (
+				SELECT rowid FROM share_access_ips
+				ORDER BY last_seen_at DESC
+				LIMIT ?
+			)`, maxRows); err != nil {
+			return fmt.Errorf("store: trim share access ips by count: %w", err)
+		}
 	}
 	return nil
+}
+
+// ShareAccessLinkTotals returns exact aggregate counts across all recorded IPs
+// for a single share link, independent of the UI's row display limit.
+func (d *DB) ShareAccessLinkTotals(ctx context.Context, linkID string) (uniqueIPs, visits, unlockOK, unlockFail int, loopbackOnly bool, err error) {
+	var nonLoopback int
+	err = d.sql.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(visit_count), 0),
+			COALESCE(SUM(unlock_ok_count), 0),
+			COALESCE(SUM(unlock_fail_count), 0),
+			COALESCE(SUM(CASE WHEN ip NOT IN ('127.0.0.1', '::1', '') THEN 1 ELSE 0 END), 0)
+		FROM share_access_ips
+		WHERE link_id = ?`, linkID).Scan(&uniqueIPs, &visits, &unlockOK, &unlockFail, &nonLoopback)
+	if err != nil {
+		return 0, 0, 0, 0, false, fmt.Errorf("store: share access link totals: %w", err)
+	}
+	return uniqueIPs, visits, unlockOK, unlockFail, uniqueIPs > 0 && nonLoopback == 0, nil
 }
 
 // ShareAccessSummaries returns aggregate IP and visit metrics for every link

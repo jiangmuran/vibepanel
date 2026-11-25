@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,9 +77,24 @@ type shareProtectState struct {
 	linkFails      map[string]*failWindow
 	visitCool      *auth.Cooldown
 	pollCool       *auth.Cooldown
+	okEventCool    *auth.Cooldown
 	failEventCool  *auth.Cooldown
 	actionCool     *auth.Cooldown
 	trimCool       *auth.Cooldown
+}
+
+// shareClientKey canonicalizes an IP address for composite Throttle/Cooldown
+// keys, masking IPv6 addresses to their /64 prefix because auth.Throttle and
+// auth.Cooldown only mask bare IP strings.
+func shareClientKey(ip string) string {
+	parsed := net.ParseIP(strings.TrimSpace(ip))
+	if parsed == nil {
+		return ip
+	}
+	if v4 := parsed.To4(); v4 != nil {
+		return v4.String()
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String()
 }
 
 type failWindow struct {
@@ -141,37 +157,33 @@ func (p *shareProtectState) recordLinkFail(linkID string, now time.Time) {
 	fw.count++
 }
 
-func (p *shareProtectState) cooldowns() (visit, poll, failEv, action, trim *auth.Cooldown) {
+func (p *shareProtectState) cooldowns() (visit, poll, okEv, failEv, action, trim *auth.Cooldown) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.visitCool == nil {
 		p.visitCool = auth.NewCooldown(time.Minute)
 		p.pollCool = auth.NewCooldown(5 * time.Minute)
+		p.okEventCool = auth.NewCooldown(5 * time.Second)
 		p.failEventCool = auth.NewCooldown(5 * time.Second)
 		p.actionCool = auth.NewCooldown(time.Minute)
 		p.trimCool = auth.NewCooldown(10 * time.Minute)
 	}
-	return p.visitCool, p.pollCool, p.failEventCool, p.actionCool, p.trimCool
+	return p.visitCool, p.pollCool, p.okEventCool, p.failEventCool, p.actionCool, p.trimCool
 }
 
 func (s *Server) shareUnlockSecret(ctx context.Context) ([]byte, error) {
 	s.pb.protect.mu.Lock()
+	defer s.pb.protect.mu.Unlock()
 	if len(s.pb.protect.unlockSecret) == 32 {
-		out := append([]byte(nil), s.pb.protect.unlockSecret...)
-		s.pb.protect.mu.Unlock()
-		return out, nil
+		return append([]byte(nil), s.pb.protect.unlockSecret...), nil
 	}
-	s.pb.protect.mu.Unlock()
-
 	box, _ := s.secretBox()
 	key, err := s.DB.EnsureShareUnlockSecret(ctx, box)
 	if err != nil {
 		return nil, err
 	}
-	s.pb.protect.mu.Lock()
 	s.pb.protect.unlockSecret = append([]byte(nil), key...)
-	s.pb.protect.mu.Unlock()
-	return key, nil
+	return append([]byte(nil), key...), nil
 }
 
 // ─── signed unlock cookies & sandbox grants ────────────────────────────────
@@ -326,18 +338,6 @@ func (s *Server) sharedPasswordState(ctx context.Context) (hash string, viewable
 	return hash, hash != "" && enc != "", epoch, nil
 }
 
-func (s *Server) bumpSharedPasswordEpoch(ctx context.Context) (int64, error) {
-	_, _, epoch, err := s.sharedPasswordState(ctx)
-	if err != nil {
-		return 0, err
-	}
-	next := epoch + 1
-	if err := s.DB.SetSetting(ctx, sharedPasswordEpochKey, strconv.FormatInt(next, 10)); err != nil {
-		return 0, err
-	}
-	return next, nil
-}
-
 func (s *Server) defaultShareAccessMode(ctx context.Context) store.ShareAccessMode {
 	hash, _, _, err := s.sharedPasswordState(ctx)
 	if err == nil && hash != "" {
@@ -389,6 +389,9 @@ func (s *Server) verifyShareUnlockCookie(ctx context.Context, r *http.Request, l
 		}
 		tok, valid := decodeUnlockToken(key, c.Value, unlockKindSharedCookie, nowUnix)
 		if !valid || tok.Mode != store.ShareAccessShared || tok.GlobalEpoch != ep {
+			return 0, false
+		}
+		if link.PasswordEpoch > 1 && tok.LinkEpoch < link.PasswordEpoch {
 			return 0, false
 		}
 		return ep, true
@@ -467,20 +470,21 @@ const passwordGateHTML = `<!doctype html><html lang="%s"><head><meta charset="ut
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>%s</title>
 <style>
-:root{color-scheme:light dark;--bg:#f5f5f4;--card:#ffffff;--border:#e5e5e4;--ink:#18181b;--muted:#71717a;--accent:#2563eb;--accent-ink:#ffffff;--err:#dc2626;--err-bg:rgba(220,38,38,.09)}
-@media (prefers-color-scheme:dark){:root{--bg:#0d0e11;--card:#15171c;--border:#262932;--ink:#eceef2;--muted:#9499a8;--accent:#4f7cff;--accent-ink:#ffffff;--err:#f87171;--err-bg:rgba(248,113,113,.12)}}
+:root{color-scheme:light dark;--bg:#f4f5f7;--card:#ffffff;--border:rgba(15,23,42,.12);--ink:#141518;--muted:#454b55;--accent:#364fc7;--btn:#18191c;--btn-ink:#ffffff;--err:#c22525;--err-bg:rgba(194,37,37,.08)}
+@media (prefers-color-scheme:dark){:root{--bg:#131417;--card:#181a1f;--border:rgba(255,255,255,.12);--ink:#eceef2;--muted:#a5abb8;--accent:#7c96ff;--btn:#eceef2;--btn-ink:#111215;--err:#ff7b7b;--err-bg:rgba(255,123,123,.12)}}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:1.25rem;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-main{width:100%%;max-width:22rem;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1.5rem;box-shadow:0 8px 30px rgba(0,0,0,.08)}
-.ico{width:38px;height:38px;border-radius:10px;background:var(--bg);border:1px solid var(--border);display:grid;place-items:center;margin-bottom:1rem;color:var(--accent)}
+body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:1.25rem;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Segoe UI",system-ui,sans-serif}
+main{width:100%%;max-width:22rem;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.5rem;box-shadow:0 8px 30px rgba(0,0,0,.10)}
+.ico{width:38px;height:38px;border-radius:8px;background:var(--bg);border:1px solid var(--border);display:grid;place-items:center;margin-bottom:1rem;color:var(--accent)}
 h1{font-size:1.125rem;font-weight:600;margin:0 0 .35rem;letter-spacing:-.01em}
 p{margin:0 0 1.1rem;font-size:.875rem;color:var(--muted)}
 label{display:block;font-size:.8125rem;font-weight:500;margin-bottom:.4rem;color:var(--ink)}
-input{width:100%%;padding:.625rem .75rem;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--ink);font:inherit;outline:none}
-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,124,255,.18)}
-button{margin-top:.85rem;width:100%%;padding:.65rem 1rem;border:0;border-radius:9px;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:500;cursor:pointer}
-button:hover{opacity:.94}
-.err{margin:0 0 .9rem;padding:.6rem .75rem;border-radius:9px;background:var(--err-bg);color:var(--err);font-size:.8125rem}
+input{width:100%%;min-height:2.75rem;padding:.5rem .75rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;font-size:16px;outline:none}
+input:focus-visible,input:focus{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:-1px}
+button{margin-top:.85rem;width:100%%;min-height:2.75rem;padding:.6rem 1rem;border:0;border-radius:8px;background:var(--btn);color:var(--btn-ink);font:inherit;font-weight:500;cursor:pointer}
+button:hover{opacity:.92}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.err{margin:0 0 .9rem;padding:.6rem .75rem;border-radius:8px;background:var(--err-bg);color:var(--err);font-size:.8125rem}
 </style></head><body><main>
 <div class="ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg></div>
 <h1>%s</h1>
@@ -570,7 +574,7 @@ const unlockShellHTML = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>vibepanel</title>
-<style>html,body{margin:0;padding:0;height:100%%;overflow:hidden;background:#0d0e11}iframe{position:fixed;inset:0;width:100%%;height:100%%;border:0}</style>
+<style>:root{color-scheme:light dark}html,body{margin:0;padding:0;height:100%%;overflow:hidden;background:#f4f5f7}@media(prefers-color-scheme:dark){html,body{background:#0d0e11}}iframe{position:fixed;inset:0;width:100%%;height:100%%;border:0}</style>
 <iframe id="vp-frame" src="/share-u/%s/" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
 <script>(function(){var f=document.getElementById('vp-frame'),done=false;window.addEventListener('message',function(e){if(!done&&f&&e.source===f.contentWindow&&e.data&&e.data.type==='vp.reauth'){done=true;location.reload()}})})();</script>
 `
@@ -614,7 +618,7 @@ func (s *Server) handleShareUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	throttleKey := ip + "|" + link.ID
+	throttleKey := shareClientKey(ip) + "|" + link.ID
 	if wait, blocked := s.pb.protect.throttle().Delay(throttleKey, now); blocked {
 		secs := int(wait.Seconds() + 0.999)
 		writePasswordGatePage(w, r, http.StatusTooManyRequests, "throttled", secs)
@@ -669,9 +673,30 @@ func (s *Server) handleShareUnlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bound concurrent Argon2id derivations (64 MiB each) through the same
+	// queue handleLogin uses, then re-check and record the per-IP throttle
+	// mark *before* deriving so a parallel burst cannot sneak past failures==0.
+	if !acquirePasswordSlot(ctx) {
+		writePasswordGatePage(w, r, http.StatusServiceUnavailable, "throttled", 1)
+		return
+	}
+	defer releasePasswordSlot()
+
+	now = time.Now()
+	if wait, blocked := s.pb.protect.throttle().Delay(throttleKey, now); blocked {
+		secs := int(wait.Seconds() + 0.999)
+		writePasswordGatePage(w, r, http.StatusTooManyRequests, "throttled", secs)
+		return
+	}
+	if wait, blocked := s.pb.protect.linkFailBlocked(link.ID, now); blocked {
+		secs := int(wait.Seconds() + 0.999)
+		writePasswordGatePage(w, r, http.StatusTooManyRequests, "throttled", secs)
+		return
+	}
+	s.pb.protect.throttle().Fail(throttleKey, now)
+
 	matched, verr := auth.VerifyPassword(password, targetHash)
 	if verr != nil || !matched {
-		s.pb.protect.throttle().Fail(throttleKey, now)
 		s.pb.protect.recordLinkFail(link.ID, now)
 		s.recordShareAccess(ctx, link.ID, ip, "unlock_fail", r.UserAgent(), "wrong password")
 		s.auditFromOutside(ctx, "share.unlock_failed", "", ip, link.Name)
@@ -696,6 +721,7 @@ func (s *Server) handleShareUnlock(w http.ResponseWriter, r *http.Request) {
 			Mode:        store.ShareAccessShared,
 			ExpiresAt:   exp,
 			GlobalEpoch: globalEpoch,
+			LinkEpoch:   now.Unix(),
 		})
 	} else {
 		cookieName = linkUnlockCookieName(link.ID)
@@ -820,30 +846,32 @@ func (s *Server) recordShareAccess(ctx context.Context, linkID, ip, event, rawUA
 		return
 	}
 	now := time.Now()
-	visitCool, pollCool, failEvCool, actionCool, trimCool := s.pb.protect.cooldowns()
+	visitCool, pollCool, okEvCool, failEvCool, actionCool, trimCool := s.pb.protect.cooldowns()
 	ua := summarizeUA(rawUA)
+	ipKey := shareClientKey(ip)
 
 	recordEvent := true
 	switch event {
 	case "visit":
-		if !visitCool.Allow("visit", linkID+"|"+ip, now) {
+		if !visitCool.Allow("visit", linkID+"|"+ipKey, now) {
 			return
 		}
 		if s.shareCooldowns().Allow("share.touch", linkID, now) {
 			_ = s.DB.TouchShareLink(ctx, linkID)
 		}
 	case "unlock_ok":
+		recordEvent = okEvCool.Allow("ok", linkID+"|"+ipKey, now)
 		if s.shareCooldowns().Allow("share.touch", linkID, now) {
 			_ = s.DB.TouchShareLink(ctx, linkID)
 		}
 	case "unlock_fail":
-		recordEvent = failEvCool.Allow("fail", linkID+"|"+ip, now)
+		recordEvent = failEvCool.Allow("fail", linkID+"|"+ipKey, now)
 	case "action":
-		if !actionCool.Allow("act", linkID+"|"+ip+"|"+detail, now) {
+		if !actionCool.Allow("act", linkID+"|"+ipKey+"|"+detail, now) {
 			return
 		}
 	case "poll":
-		if !pollCool.Allow("poll", linkID+"|"+ip, now) {
+		if !pollCool.Allow("poll", linkID+"|"+ipKey, now) {
 			return
 		}
 		recordEvent = false
@@ -991,15 +1019,10 @@ func (s *Server) handlePutSharedPassword(w http.ResponseWriter, r *http.Request)
 				fmt.Sprintf("%d share link(s) currently use the shared password; switch them before clearing it", inUse))
 			return
 		}
-		if err := s.DB.SetSetting(ctx, sharedPasswordHashKey, ""); err != nil {
+		if _, err := s.DB.UpdateSharedPassword(ctx, "", ""); err != nil {
 			s.writeStoreErr(w, err)
 			return
 		}
-		if err := s.DB.SetSetting(ctx, sharedPasswordEncKey, ""); err != nil {
-			s.writeStoreErr(w, err)
-			return
-		}
-		_, _ = s.bumpSharedPasswordEpoch(ctx)
 		if u, ok := currentUserFrom(r); ok {
 			s.audit(ctx, "sharing.password_cleared", u.Username, s.clientIP(r), "")
 		}
@@ -1016,15 +1039,7 @@ func (s *Server) handlePutSharedPassword(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusInternalServerError, "could not hash password")
 		return
 	}
-	if err := s.DB.SetSetting(ctx, sharedPasswordHashKey, hash); err != nil {
-		s.writeStoreErr(w, err)
-		return
-	}
-	if err := s.DB.SetSetting(ctx, sharedPasswordEncKey, s.sealSharedPassword(req.Password)); err != nil {
-		s.writeStoreErr(w, err)
-		return
-	}
-	if _, err := s.bumpSharedPasswordEpoch(ctx); err != nil {
+	if _, err := s.DB.UpdateSharedPassword(ctx, hash, s.sealSharedPassword(req.Password)); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
@@ -1061,7 +1076,7 @@ func (s *Server) handleApplySharedPasswordAll(w http.ResponseWriter, r *http.Req
 
 func (s *Server) handleRevokeSharedSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if _, err := s.bumpSharedPasswordEpoch(ctx); err != nil {
+	if _, err := s.DB.BumpSharedPasswordEpoch(ctx); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
@@ -1096,6 +1111,10 @@ func (s *Server) handleUpdateShareAccess(w http.ResponseWriter, r *http.Request)
 			s.audit(ctx, "share.sessions_revoked", u.Username, s.clientIP(r), link.Name)
 		}
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if link.Locked {
+		writeErr(w, http.StatusConflict, "this link is locked; unlock it before changing access")
 		return
 	}
 
@@ -1205,22 +1224,21 @@ func (s *Server) handleShareAccessStats(w http.ResponseWriter, r *http.Request) 
 		s.writeStoreErr(w, err)
 		return
 	}
+	uniqueIPs, visits, unlockOK, unlockFail, loopbackOnly, err := s.DB.ShareAccessLinkTotals(ctx, linkID)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
 	out := shareAccessStatsResponse{
-		LinkID: linkID,
-		IPs:    ips,
-		Events: events,
+		LinkID:          linkID,
+		UniqueIPs:       uniqueIPs,
+		TotalVisits:     visits,
+		TotalUnlockOK:   unlockOK,
+		TotalUnlockFail: unlockFail,
+		LoopbackOnly:    loopbackOnly,
+		IPs:             ips,
+		Events:          events,
 	}
-	nonLoopback := 0
-	for _, row := range ips {
-		out.UniqueIPs++
-		out.TotalVisits += row.VisitCount
-		out.TotalUnlockOK += row.UnlockOKCount
-		out.TotalUnlockFail += row.UnlockFailCount
-		if row.IP != "127.0.0.1" && row.IP != "::1" && row.IP != "" {
-			nonLoopback++
-		}
-	}
-	out.LoopbackOnly = out.UniqueIPs > 0 && nonLoopback == 0
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
 }

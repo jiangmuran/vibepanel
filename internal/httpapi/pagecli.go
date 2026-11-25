@@ -295,13 +295,21 @@ func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
 			if l.PageID != page.ID || l.Purpose != "" || !l.Copyable || l.Locked {
 				continue
 			}
-			if opts.ExpiresIn > 0 || l.ExpiresAt != 0 {
+			if opts.ExpiresIn > 0 || l.ExpiresAt != 0 || customPW != "" {
 				continue
 			}
 			if store.ShareDetail(l.Detail) != detail || l.Interactive != opts.Interactive {
 				continue
 			}
-			if opts.AccessMode != "" && customPW == "" && store.ShareAccessMode(l.AccessMode) != opts.AccessMode {
+			wantMode := opts.AccessMode
+			if wantMode == "" {
+				if sharedHash != "" {
+					wantMode = store.ShareAccessShared
+				} else {
+					wantMode = store.ShareAccessNone
+				}
+			}
+			if store.ShareAccessMode(l.AccessMode) != wantMode {
 				continue
 			}
 			enc, eerr := db.ShareLinkTokenEnc(ctx, l.ID)
@@ -312,36 +320,16 @@ func EnsurePageShareLink(ctx context.Context, db *store.DB, cfg config.Config,
 			if uerr != nil || len(tok) == 0 {
 				continue
 			}
-			modeOut := l.AccessMode
-			if opts.AccessMode == store.ShareAccessCustom && customPW != "" {
-				pwHash, herr := auth.HashPassword(customPW)
-				if herr != nil {
-					return ShareLinkResult{}, herr
-				}
-				pwEnc := box.Seal([]byte(customPW), linkPasswordSealContext(l.ID))
-				if serr := db.SetShareLinkAccess(ctx, l.ID, store.ShareAccessCustom, pwHash, pwEnc, false); serr != nil {
-					return ShareLinkResult{}, serr
-				}
-				if aerr := db.Audit(ctx, store.AuditEntry{
-					Event:    "share.access_changed",
-					Username: "cli",
-					Detail:   l.Name + " -> custom",
-				}); aerr != nil {
-					warnings = append(warnings, "access change not recorded in the audit log: "+aerr.Error())
-				}
-				modeOut = string(store.ShareAccessCustom)
-			}
 			return ShareLinkResult{
-				ID:                l.ID,
-				Name:              l.Name,
-				PageID:            l.PageID,
-				URL:               base + "/share/" + string(tok) + "/",
-				Detail:            l.Detail,
-				AccessMode:        modeOut,
-				GeneratedPassword: generatedPW,
-				ExpiresAt:         l.ExpiresAt,
-				Reused:            true,
-				Warnings:          warnings,
+				ID:         l.ID,
+				Name:       l.Name,
+				PageID:     l.PageID,
+				URL:        base + "/share/" + string(tok) + "/",
+				Detail:     l.Detail,
+				AccessMode: l.AccessMode,
+				ExpiresAt:  l.ExpiresAt,
+				Reused:     true,
+				Warnings:   warnings,
 			}, nil
 		}
 	}
