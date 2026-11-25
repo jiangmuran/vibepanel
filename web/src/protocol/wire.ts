@@ -741,6 +741,11 @@ export interface SystemSample {
   at: number
   /** Null on the very first sample: there is nothing to difference against. */
   cpuPercent: number | null
+  cpuUser?: number | null
+  cpuSystem?: number | null
+  cpuIowait?: number | null
+  cpuSteal?: number | null
+  corePercents?: number[] | null
   /**
    * Whether the counters exist here at all.
    *
@@ -754,11 +759,18 @@ export interface SystemSample {
   load15: number
   memTotal: number
   memAvailable: number
+  memFree?: number
+  memCached?: number
   swapTotal: number
   swapFree: number
   diskTotal: number
   diskFree: number
   diskPath: string
+  diskIoReadable?: boolean
+  diskReadRate?: number | null
+  diskWriteRate?: number | null
+  diskReadBytes?: number
+  diskWriteBytes?: number
   /**
    * Whether the counters exist here at all -- cpuReadable's story again: no
    * /proc/net/dev means no rate, which is a different fact from a machine
@@ -773,6 +785,9 @@ export interface SystemSample {
    *  since this browser tab opened. */
   netRxBytes: number
   netTxBytes: number
+  psiCpu?: number | null
+  psiMem?: number | null
+  psiIo?: number | null
   uptime: number
 }
 

@@ -92,10 +92,14 @@ count its sessions still running and those waiting for a person.
 
 ### `GET /api/system`
 
-CPU, memory, swap, disk and load. `cpuPercent` is `null` until there are two
-samples to difference, and `cpuReadable` is `false` where there is no
-`/proc/stat` at all. A machine that cannot be measured says so rather than
-reporting zero.
+CPU (overall, `cpuUser`/`cpuSystem`/`cpuIowait`/`cpuSteal` breakdown and per-core
+`corePercents`), memory (`memTotal`, `memAvailable`, `memFree`, `memCached`), swap,
+disk space and block I/O (`diskIoReadable`, `diskReadRate`, `diskWriteRate`,
+`diskReadBytes`, `diskWriteBytes`), non-loopback network throughput, Linux PSI
+10-second stall averages (`psiCpu`, `psiMem`, `psiIo`), load and uptime.
+`cpuPercent` is `null` until there are two samples to difference, and `cpuReadable`
+is `false` where there is no `/proc/stat` at all. A machine that cannot be
+measured says so rather than reporting zero.
 
 ### `GET /api/usage`
 

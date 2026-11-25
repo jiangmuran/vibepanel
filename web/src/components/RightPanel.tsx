@@ -17,7 +17,6 @@ import type { PanelSocket } from '../protocol/socket'
 import { FileTree } from './panels/FileTree'
 import { projectLabel } from './label'
 import { GitPanel } from './panels/GitPanel'
-import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
 import { GLOBAL_NOTE } from '../protocol/api'
 import { ErrorBoundary } from './ErrorBoundary'
@@ -129,10 +128,8 @@ interface Props {
   onCollapse: () => void
   /** Opens the full-width token view. The panel is too narrow to hold it. */
   onOpenTokens: () => void
-  /** Opens Settings on this session's Resources row, from the monitor's
-   *  per-session detail. The panel can say which process is responsible;
-   *  ending or freezing it is the settings page's job, not this one's. */
-  onOpenResources: (sessionId: string) => void
+  /** Opens the full monitor dashboard. */
+  onOpenMonitor: () => void
   /** The selected session, which a share page's Preview pastes into. */
   currentSession: Session | null
   onPaste: (sessionId: string, text: string, submit: boolean) => void
@@ -440,10 +437,8 @@ export function RightPanel(props: Props) {
         density={density}
         projectId={projectId}
         projectName={project?.name ?? null}
-        // Tokens open straight into the full view. The side-panel detail they
-        // used to open first was the same figures a third time, in a column
-        // too narrow to lay them out.
-        onOpen={(block) => (block === 'tokens' ? props.onOpenTokens() : openDetail(block))}
+        // Both dock headers open purpose-built dashboard views owned by App.
+        onOpen={(block) => (block === 'tokens' ? props.onOpenTokens() : props.onOpenMonitor())}
       />
     </ErrorBoundary>
   )
@@ -505,9 +500,6 @@ export function RightPanel(props: Props) {
 
   /** What an opened block draws, and whether it has a full-width form. */
   const detailBody = (block: DetailBlock, full = false) => {
-    if (block === 'monitor') {
-      return <SystemMonitor sessions={props.sessions} density="wide" onManage={props.onOpenResources} />
-    }
     if (block === 'page') {
       if (!page || !project) return null
       const session =

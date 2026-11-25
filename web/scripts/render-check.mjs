@@ -1212,12 +1212,10 @@ browser = await chromium.launch({ headless: true })
     const fileCount = await page.locator('[data-testid="file-entry"]').count()
     if (fileCount === 0) note('FAIL', 'panel/files', 'the file browser listed nothing')
 
-    // The machine, opened out of the dock. It is not a tab any more — it is the
-    // bottom half of both tabs, and pressing its header gives it the column.
+    // The machine, opened out of the dock into its centered dashboard view.
     const openBlock = async (block) => {
-      // Idempotent: the dock header only exists while the block is compact, so
-      // a second call while it is already open would time out.
-      if ((await page.locator(`[data-testid="detail-${block}"]`).count()) === 0) {
+      const target = block === 'monitor' ? '[data-testid="monitor-view"]' : `[data-testid="detail-${block}"]`
+      if ((await page.locator(target).count()) === 0) {
         await page.locator(`[data-testid="dock-open-${block}"]`).click()
       }
       await sleep(400)
@@ -1228,6 +1226,14 @@ browser = await chromium.launch({ headless: true })
     }
     await openBlock('monitor')
     await sleep(3000)
+    const monBox = await page.locator('[data-testid="monitor-view"]').boundingBox()
+    const monVp = page.viewportSize()
+    if (!monBox) {
+      note('FAIL', 'panel/monitor', 'clicking monitor did not open the monitor dashboard view')
+    } else if (monVp && monVp.width >= 1200 && (monBox.width < 680 || monBox.width >= monVp.width - 8)) {
+      note('FAIL', 'panel/monitor',
+        `monitor modal width ${Math.round(monBox.width)}px at ${monVp.width}px viewport is neither a centered dashboard nor bounded`)
+    }
     const monitorText = await page.locator('[data-testid="system-monitor"]').innerText().catch(() => '')
     for (const want of ['CPU', 'Memory', 'Disk']) {
       if (!monitorText.includes(want)) {
@@ -1312,6 +1318,34 @@ browser = await chromium.launch({ headless: true })
       if (Number(m[1]) > 100) {
         note('FAIL', 'panel/monitor', `a meter read ${m[1]}%, which is not a share of anything`)
       }
+    }
+
+    // Inspector tabs, pause toggle, and side-drawer companion mode.
+    await page.locator('[data-testid="monitor-tab-projects"]').click()
+    await sleep(300)
+    if (usageRows > 0 && (await page.locator('[data-testid="monitor-projects-list"]').count()) === 0) {
+      note('FAIL', 'panel/monitor', 'switching to By project did not render the project ranking list')
+    }
+    await page.locator('[data-testid="monitor-tab-sessions"]').click()
+    await sleep(300)
+
+    await page.locator('[data-testid="monitor-pause"]').click()
+    await sleep(150)
+    if ((await page.locator('[data-testid="monitor-pause"]').getAttribute('aria-pressed')) !== 'true') {
+      note('FAIL', 'panel/monitor', 'pause button did not enter paused state')
+    }
+    await page.locator('[data-testid="monitor-pause"]').click()
+    await sleep(150)
+
+    if ((await page.locator('[data-testid="monitor-dock-toggle"]').isVisible().catch(() => false))) {
+      await page.locator('[data-testid="monitor-dock-toggle"]').click()
+      await sleep(300)
+      const drawerBox = await page.locator('[data-testid="monitor-view"][data-size="drawer"]').boundingBox()
+      if (!drawerBox || drawerBox.width > 480) {
+        note('FAIL', 'panel/monitor', `side-drawer mode did not dock cleanly: ${JSON.stringify(drawerBox)}`)
+      }
+      await page.locator('[data-testid="monitor-dock-toggle"]').click()
+      await sleep(300)
     }
 
     // No /proc is not the same as every session idle. A list of zeroes is a

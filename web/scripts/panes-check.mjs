@@ -355,48 +355,15 @@ note((await page.locator('.vp-swap').first().getAttribute('data-dir')) === 'back
     note(inside === 1, `and nothing else in the ${block} block is pressable (saw ${inside})`)
   }
 
-  // Tokens have no side-panel detail: their header hands over to the full
-  // view, which App owns and this harness stubs. The panel itself must not
-  // change under the press.
-  await stacked.locator('[data-testid="dock-open-tokens"]').click()
-  await sleep(400)
-  note((await stacked.locator('[data-testid="detail-tokens"]').count()) === 0,
-    'pressing the tokens header opens no detail in the panel')
-  note((await stacked.locator('[data-testid="panel-dock"]').count()) === 1,
-    'and the dock stays where it was')
-
-  // Three states, and each replaces the one below it.
-  for (const block of ['monitor']) {
+  // Both dock blocks hand over to purpose-built dashboard views owned by App,
+  // which this harness stubs. The side panel's own panes and dock stay put.
+  for (const block of ['tokens', 'monitor']) {
     await stacked.locator(`[data-testid="dock-open-${block}"]`).click()
-    await sleep(400)
-    note((await stacked.locator(`[data-testid="detail-${block}"]`).count()) === 1,
-      `pressing the ${block} header opens it in the panel`)
-    // Instead of the stack, never beside it: there is no arrangement where a
-    // block is half-open behind a tab strip.
-    note((await stacked.locator('[data-testid="panel-dock"]').count()) === 0,
-      `and the dock is gone while ${block} is open`)
-    note((await stacked.locator('[role="tablist"]').count()) === 0,
-      `and so is the tab strip`)
-
-    if (block === 'monitor') {
-      await stacked.locator(`[data-testid="detail-full-${block}"]`).click()
-      await sleep(400)
-      note((await stacked.locator(`[data-testid="detail-full-view-${block}"]`).count()) === 1,
-        `pressing again gives ${block} the window`)
-      // Escape backs out one level, not to the top.
-      await stacked.keyboard.press('Escape')
-      await sleep(400)
-      note((await stacked.locator(`[data-testid="detail-full-view-${block}"]`).count()) === 0 &&
-        (await stacked.locator(`[data-testid="detail-${block}"]`).count()) === 1,
-        'Escape leaves the window and lands back in the panel')
-    }
-
-    await stacked.keyboard.press('Escape')
-    await sleep(400)
+    await sleep(300)
     note((await stacked.locator(`[data-testid="detail-${block}"]`).count()) === 0,
-      `and again closes ${block} back to the stack`)
+      `pressing the ${block} header opens no side-panel detail`)
     note((await stacked.locator('[data-testid="panel-dock"]').count()) === 1,
-      'which brings the dock back')
+      `and the dock stays where it was after pressing ${block}`)
   }
 
   // Drag it. The gesture is the one the pane dividers use, and it has to move

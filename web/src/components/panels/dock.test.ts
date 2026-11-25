@@ -32,24 +32,14 @@ describe('what each openable block is called', () => {
     expect(Object.keys(DETAIL_META).sort()).toEqual([...DETAIL_BLOCKS].sort())
   })
 
-  it('calls a block the same thing in the dock and in the header it opens', () => {
-    // Drift nobody would notice, because the two are never on screen at the
-    // same moment: the compact block is replaced by the opened one.
-    for (const block of DOCK_BLOCKS) {
-      // Tokens open the full view rather than a detail, so there is no
-      // header of this kind to agree with.
-      if (block === 'tokens') continue
-      expect(DETAIL_META[block].key, block).toBe(DOCK_META[block].key)
-      expect(DETAIL_META[block].icon, block).toBe(DOCK_META[block].icon)
-    }
-  })
-
-  it('gives each block a glyph of its own', () => {
+  it('gives each block across dock and detail a glyph and key of its own', () => {
     // Two blocks drawn as the same icon is a strip you cannot read at a glance,
     // which is the whole argument for the dock being two named rows.
-    const icons = DETAIL_BLOCKS.map((b) => DETAIL_META[b].icon)
-    expect(new Set(icons).size).toBe(icons.length)
-    const keys = DETAIL_BLOCKS.map((b) => DETAIL_META[b].key)
-    expect(new Set(keys).size).toBe(keys.length)
+    const all = [
+      ...DOCK_BLOCKS.map((b) => DOCK_META[b]),
+      ...DETAIL_BLOCKS.map((b) => DETAIL_META[b]),
+    ]
+    expect(new Set(all.map((m) => m.icon)).size).toBe(all.length)
+    expect(new Set(all.map((m) => m.key)).size).toBe(all.length)
   })
 })

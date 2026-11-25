@@ -137,10 +137,10 @@ export function SystemStrip() {
               pct === null
                 ? 'var(--vp-state-dead)'
                 : pct >= 90
-                  ? 'var(--vp-state-crashed)'
+                  ? 'var(--mon-crit)'
                   : pct >= 70
-                    ? 'var(--vp-state-waiting)'
-                    : 'var(--vp-accent)'
+                    ? 'var(--mon-warn)'
+                    : 'var(--mon-ok)'
             }
           />
           <span className="w-9 shrink-0 text-right tabular text-vp-xs text-ink-2">
@@ -166,7 +166,7 @@ export function SystemStrip() {
       {sample.netReadable && (
         <div className="flex items-center gap-2 py-[3px]" data-testid="system-strip-network">
           <span className="w-12 shrink-0 truncate text-vp-xs text-ink-2">{t('monitor.network')}</span>
-          <Trend values={netScaled} tone={netCombined === null ? 'var(--vp-state-dead)' : 'var(--vp-accent)'} />
+          <Trend values={netScaled} tone={netCombined === null ? 'var(--vp-state-dead)' : 'var(--mon-s1)'} />
           <span className="w-9 shrink-0 text-right tabular text-vp-xs text-ink-2">
             {netCombined === null ? '—' : formatRateCompact(netCombined)}
           </span>

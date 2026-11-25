@@ -117,32 +117,18 @@ export const DOCK_BLOCKS = ['tokens', 'monitor'] as const
 export type DockBlock = (typeof DOCK_BLOCKS)[number]
 
 /**
- * Everything that can be opened out of its compact form, in one list.
+ * Everything that opens inside the side panel via PanelDetail.
  *
- * The two dock blocks plus the repository, which is not in the dock: its
- * compact form is a line in the file tree's own header, because a repository
- * is a fact about the directory above it rather than about the machine. What
- * it shares with the other two is the *gesture* — press the compact form, get
- * the whole side panel; press again, get the window — and that gesture is one
- * component (PanelDetail) reading this list rather than three components that
- * each grew their own.
- *
- * Three states and no more. A block that is expanded is expanded *instead of*
- * the stack, not beside it: two of these open at once is the four-tab panel's
- * mistake in a smaller box.
+ * Both dock blocks (`tokens` and `monitor`) now open purpose-built dashboard
+ * modals owned by App (`TokenUsageView` and `MonitorView`). What remains in
+ * PanelDetail are the two directory-scoped lines in the file tree's header:
+ * the git repository and the share page's Preview.
  */
-//
-// The share page's Preview is the fourth, and the second that is not in the
-// dock: its compact form is the line under the repository's, shown only when
-// the project's directory is a page's draft. It is opened for the same reason
-// the repository is -- it is about the directory -- and it is the one block
-// that is mostly a picture of something else, which is why its full form is
-// the one that earns the window.
-export const DETAIL_BLOCKS = ['repo', 'page', 'monitor'] as const
+export const DETAIL_BLOCKS = ['repo', 'page'] as const
 
 export type DetailBlock = (typeof DETAIL_BLOCKS)[number]
 
-/** Every block in the dock is openable; not every openable block is in the dock. */
+/** True when `v` is one of the side-panel detail blocks. */
 export function isDetailBlock(v: string): v is DetailBlock {
   return (DETAIL_BLOCKS as readonly string[]).includes(v)
 }

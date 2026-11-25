@@ -157,6 +157,12 @@ describe('text contrast', () => {
       it('--ui-badge-ink on --vp-state-waiting is at least 4.5:1', () => {
         expect(ratio(token(block, '--ui-badge-ink').rgb, token(block, '--vp-state-waiting').rgb)).toBeGreaterThanOrEqual(4.5)
       })
+
+      for (const mon of ['--mon-ok', '--mon-warn', '--mon-crit', '--mon-s1', '--mon-s2', '--mon-s3', '--mon-cache']) {
+        it(`${mon} graphical mark on --vp-surface is at least 3:1`, () => {
+          expect(ratio(token(block, mon).rgb, token(block, '--vp-surface').rgb)).toBeGreaterThanOrEqual(3.0)
+        })
+      }
     })
   }
 })

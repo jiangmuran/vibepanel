@@ -20,15 +20,9 @@ export const DOCK_META: Record<DockBlock, { icon: typeof Activity; key: Key }> =
 }
 
 /**
- * The same, for everything PanelDetail can open.
- *
- * Spread from DOCK_META rather than restated, so a block cannot be named one
- * thing in the dock and another in the header it opens into — which is exactly
- * the kind of drift nobody notices, because the two are never on screen at the
- * same moment.
+ * Metadata for the directory-scoped blocks PanelDetail opens inside the side panel.
  */
 export const DETAIL_META: Record<DetailBlock, { icon: typeof Activity; key: Key }> = {
-  monitor: DOCK_META.monitor,
   repo: { icon: GitBranch, key: 'panel.git' },
   page: { icon: PanelsTopLeft, key: 'panel.page' },
 }

@@ -314,30 +314,21 @@ describe('the tabs that divide their own height', () => {
 })
 
 describe('the blocks that open out of their compact form', () => {
-  it('has every dock block but tokens in the openable list', () => {
-    // The dock's header is the press target and PanelDetail is what it opens.
-    // A block in one list and not the other is a control that presses and
-    // draws nothing -- except tokens, whose header opens the full view.
+  it('routes both dock blocks to their full dashboard views rather than the side-panel detail', () => {
     for (const b of DOCK_BLOCKS) {
-      if (b === 'tokens') expect(DETAIL_BLOCKS).not.toContain(b)
-      else expect(DETAIL_BLOCKS).toContain(b)
+      expect(DETAIL_BLOCKS).not.toContain(b)
     }
   })
 
-  it('has two that are not in the dock, and knows them', () => {
-    // The repository and the share page's Preview. Both compact forms are a
-    // line in the file tree's header, because each is a fact about the
-    // directory above it rather than about the machine — but the gesture that
-    // opens them is the same one.
-    const extra = DETAIL_BLOCKS.filter((b) => !(DOCK_BLOCKS as readonly string[]).includes(b))
-    expect(extra).toEqual(['repo', 'page'])
+  it('keeps the two directory-scoped blocks in PanelDetail', () => {
+    expect(DETAIL_BLOCKS).toEqual(['repo', 'page'])
   })
 
   it('recognises exactly the blocks it lists', () => {
     for (const b of DETAIL_BLOCKS) expect(isDetailBlock(b)).toBe(true)
     // A block id out of a stored value or a data attribute is a string like
     // any other, and the panel must not open a detail for one it cannot draw.
-    for (const bad of ['', 'todos', 'files', 'vnc', 'Repo']) {
+    for (const bad of ['', 'todos', 'files', 'vnc', 'monitor', 'tokens', 'Repo']) {
       expect(isDetailBlock(bad), bad).toBe(false)
     }
   })

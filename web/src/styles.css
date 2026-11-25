@@ -146,6 +146,16 @@
   --depth-panel: 0 0 0 0 transparent;
   --depth-selected: #ffffff;
   --depth-waiting-ring: 0px;
+
+  /* Telemetry & chart palette — validated >= 3:1 against --vp-surface and
+     CVD-safe across all pairs (protan/deutan >= 8, normal >= 15 OKLab*100). */
+  --mon-ok: #2d5be3;
+  --mon-warn: #c25e00;
+  --mon-crit: #d92d20;
+  --mon-s1: #2d5be3;
+  --mon-s2: #e06324;
+  --mon-s3: #099268;
+  --mon-cache: #76849b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -226,6 +236,14 @@
     --depth-panel: 0 0 0 0 transparent;
     --depth-selected: #20232b;
     --depth-waiting-ring: 0px;
+
+    --mon-ok: #4d7cfe;
+    --mon-warn: #f59f00;
+    --mon-crit: #f97066;
+    --mon-s1: #4d7cfe;
+    --mon-s2: #e76624;
+    --mon-s3: #00a888;
+    --mon-cache: #737e94;
   }
 }
 
@@ -303,6 +321,14 @@
   --depth-panel: 0 0 0 0 transparent;
   --depth-selected: #20232b;
   --depth-waiting-ring: 0px;
+
+  --mon-ok: #4d7cfe;
+  --mon-warn: #f59f00;
+  --mon-crit: #f97066;
+  --mon-s1: #4d7cfe;
+  --mon-s2: #e76624;
+  --mon-s3: #00a888;
+  --mon-cache: #737e94;
 }
 
 /* ── 棉纸与曜石 (Cotton Paper & Warm Obsidian) ─────────────────────────────
@@ -387,6 +413,14 @@
   --depth-panel: 0 0 0 0 transparent;
   --depth-selected: #fdfcfa;
   --depth-waiting-ring: 0px;
+
+  --mon-ok: #256bb8;
+  --mon-warn: #b85800;
+  --mon-crit: #c92a2a;
+  --mon-s1: #c8562d;
+  --mon-s2: #256bb8;
+  --mon-s3: #0b8c68;
+  --mon-cache: #7f766a;
 }
 
 :root[data-theme='wujin'] {
@@ -467,6 +501,14 @@
   --depth-panel: 0 0 0 0 transparent;
   --depth-selected: #262420;
   --depth-waiting-ring: 0px;
+
+  --mon-ok: #4589df;
+  --mon-warn: #f09c38;
+  --mon-crit: #f27472;
+  --mon-s1: #df6b3f;
+  --mon-s2: #4589df;
+  --mon-s3: #1aa682;
+  --mon-cache: #847c71;
 }
 
 /* Plugin themes only declare `--vp-*` tokens (docs/plugins.md §5), so derive
@@ -477,6 +519,13 @@
   --ui-accent-fill-ink: var(--vp-accent-ink);
   --ui-switch-on: var(--vp-accent);
   --ui-row-bar: var(--vp-accent);
+  --mon-ok: var(--vp-accent);
+  --mon-warn: var(--vp-state-waiting);
+  --mon-crit: var(--vp-state-crashed);
+  --mon-s1: var(--vp-accent);
+  --mon-s2: var(--vp-term-yellow);
+  --mon-s3: var(--vp-term-cyan);
+  --mon-cache: var(--vp-ink-3);
 }
 
 /* Expose the tokens to Tailwind as utilities (bg-surface, text-ink-2, ...).
@@ -2037,6 +2086,42 @@ body {
   transition: width 360ms var(--vp-ease);
 }
 
+/* Segmented composition bar: parts separated by 2px surface gaps rather than
+   borders, so adjacent fills stay distinct without data-weight strokes. */
+.vp-seg-bar {
+  display: flex;
+  overflow: hidden;
+  gap: 2px;
+  border-radius: 999px;
+  background: var(--vp-surface-2);
+  box-shadow: inset 0 0 0 1px var(--vp-hairline);
+}
+
+.vp-seg-bar > span {
+  display: block;
+  height: 100%;
+  transition: width 360ms var(--vp-ease);
+}
+
+/* Smooth height accordion for expandable telemetry rows. Collapses cleanly to
+   zero under prefers-reduced-motion via the global reset above. */
+.vp-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 180ms var(--vp-ease), opacity 150ms var(--vp-ease);
+}
+
+.vp-fold[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.vp-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
 @keyframes vp-row-in {
   from {
     opacity: 0.85;
@@ -2107,7 +2192,8 @@ body {
     border: 1px solid ButtonText;
   }
 
-  .vp-bar {
+  .vp-bar,
+  .vp-seg-bar {
     outline: 1px solid CanvasText;
     outline-offset: -1px;
   }
@@ -2115,7 +2201,8 @@ body {
   /* Both the fill of a meter and the segments of the spend mix. Segments are
      told apart by the Canvas-coloured gap after each one; the legend beside
      the bar says which is which. */
-  .vp-bar > span {
+  .vp-bar > span,
+  .vp-seg-bar > span {
     forced-color-adjust: none;
     background: Highlight !important;
     border-inline-end: 2px solid Canvas;

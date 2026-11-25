@@ -56,6 +56,51 @@ func TestSampleReadsTheMachine(t *testing.T) {
 	if *second.CPUPercent < 0 || *second.CPUPercent > 100 {
 		t.Errorf("CPU = %v, want 0-100", *second.CPUPercent)
 	}
+	if second.CPUUser == nil || second.CPUSystem == nil || second.CPUIowait == nil || second.CPUSteal == nil {
+		t.Errorf("expected CPU split fields on second sample, got user=%v sys=%v wait=%v steal=%v",
+			second.CPUUser, second.CPUSystem, second.CPUIowait, second.CPUSteal)
+	}
+	if len(second.CorePercents) == 0 {
+		t.Error("expected non-empty CorePercents on second sample")
+	}
+	for i, cp := range second.CorePercents {
+		if cp < 0 || cp > 100 {
+			t.Errorf("core %d = %v, want 0-100", i, cp)
+		}
+	}
+	if second.MemFree == 0 || second.MemFree > second.MemTotal {
+		t.Errorf("MemFree = %d against MemTotal = %d", second.MemFree, second.MemTotal)
+	}
+	if second.MemCached == 0 || second.MemCached > second.MemTotal {
+		t.Errorf("MemCached = %d against MemTotal = %d", second.MemCached, second.MemTotal)
+	}
+}
+
+func TestDiskIOWindowRepeatsPreviousRate(t *testing.T) {
+	if _, err := os.Stat("/proc/vmstat"); err != nil {
+		t.Skip("no /proc/vmstat")
+	}
+	s := &Sampler{DiskPath: t.TempDir()}
+	first := s.Sample()
+	if !first.DiskIOReadable {
+		t.Fatal("expected DiskIOReadable on Linux with /proc/vmstat")
+	}
+	if first.DiskReadRate != nil || first.DiskWriteRate != nil {
+		t.Errorf("first sample reported disk I/O rate before second reading: %v / %v",
+			first.DiskReadRate, first.DiskWriteRate)
+	}
+	time.Sleep(600 * time.Millisecond)
+	a := s.Sample()
+	b := s.Sample()
+	if a.DiskReadRate == nil || a.DiskWriteRate == nil {
+		t.Fatalf("expected disk I/O rates after window, got %v / %v", a.DiskReadRate, a.DiskWriteRate)
+	}
+	if b.DiskReadRate == nil || *a.DiskReadRate != *b.DiskReadRate {
+		t.Errorf("disk read rate changed inside minCPUWindow: %v then %v", a.DiskReadRate, b.DiskReadRate)
+	}
+	if b.DiskWriteRate == nil || *a.DiskWriteRate != *b.DiskWriteRate {
+		t.Errorf("disk write rate changed inside minCPUWindow: %v then %v", a.DiskWriteRate, b.DiskWriteRate)
+	}
 }
 
 func TestFormatBytes(t *testing.T) {

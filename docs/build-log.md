@@ -28780,3 +28780,35 @@ observed live: the jobs had finished before the fix was built. The Resources
 tab's stall figure reads 0 through such a stall, and nothing tells anybody the
 machine is compacting. A stall from compaction with under a quarter available
 is still reported as a shortage.
+
+## 2026-11-24 — Rebuilding the Monitor view
+
+The dock's `Monitor` block still opened into the September side-panel detail
+(`SystemMonitor`), forcing two columns into a 280px strip on the first press
+and stretching that same uncarded list across the full viewport on the second.
+Meanwhile `Tokens` right above it opened a bounded dashboard modal, and the
+resources governor already knew cgroup held memory, archived-project sessions
+and the host's largest processes while the monitor read none of them.
+
+- **Symmetric dock handoff (`MonitorView`).** Both dock blocks (`tokens` and
+  `monitor`) now open bounded, centered dashboard modals (`72rem` standard,
+  expandable to `92rem`, plus a non-modal `28rem` right-edge companion drawer
+  for watching live telemetry beside an active terminal), leaving `DETAIL_BLOCKS`
+  to the two directory-scoped file-tree lines (`repo` and `page`).
+- **Kernel telemetry (`internal/sysmon`).** `Sample` now exposes CPU user,
+  kernel, I/O-wait and steal splits plus per-core percentages from the already
+  open `/proc/stat`, `memFree` and `memCached` (`Buffers + Cached + SReclaimable`)
+  from `/proc/meminfo`, block device read/write byte rates from `/proc/vmstat`
+  (`pgpgin`/`pgpgout`, avoiding partition double-counting and replacing the
+  flat disk-capacity sparkline with live block I/O), and 10-second PSI stall
+  averages from `/proc/pressure/{cpu,memory,io}`.
+- **Validated telemetry palette (`--mon-*`).** Seven internal tokens across all
+  four built-in themes (`light`, `dark`, `porcelain`, `wujin`) and the plugin
+  theme fallback, validated >= 3:1 against each theme's `--vp-surface` in
+  `contrast.test.ts` and CVD-safe across all categorical pairs.
+- **Attribution & actions.** Combines `/api/system`, `/api/usage` and
+  `/api/resources` into three sliding-marker inspector tabs (`Per session`,
+  `By project`, `Host processes`), sortable by CPU, memory or process count,
+  with smooth CSS grid accordions, pause/cadence controls, cgroup pause/resume
+  and one-click jump to the session's terminal.
+

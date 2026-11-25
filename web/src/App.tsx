@@ -34,6 +34,7 @@ import { SETTINGS_HOME } from './components/settings/groups'
 import type { SettingsSection } from './components/settings/groups'
 import { SETTINGS_SECTIONS } from './components/settings/groups'
 import { TokenUsageView } from './components/TokenUsageView'
+import { MonitorView } from './components/MonitorView'
 import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { DisconnectedBar, useDisconnected } from './components/Disconnected'
@@ -393,6 +394,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // one.
   const [settingsAt, setSettingsAt] = useState<SettingsSection | null>(null)
   const [tokensOpen, setTokensOpen] = useState(false)
+  const [monitorOpen, setMonitorOpen] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   // Which vanished sessions the restore offer has been dismissed for, by id.
   //
@@ -2116,6 +2118,23 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         />
       )}
 
+      {monitorOpen && (
+        <MonitorView
+          sessions={state.sessions}
+          projects={state.projects}
+          onClose={() => setMonitorOpen(false)}
+          onManage={(id) => {
+            setMonitorOpen(false)
+            setFocusSession(id)
+            setSettingsAt(id ? 'usage' : 'allocation')
+          }}
+          onSelectSession={(id) => {
+            selectSession(id)
+            focusTerminal(id)
+          }}
+        />
+      )}
+
       {restoreOpen && pendingRestorable.length > 0 && (
         <RestoreDialog
           sessions={pendingRestorable}
@@ -2143,10 +2162,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onWidthChange={setRightSize}
           onCollapse={() => (sheetLayout ? setSheet(null) : setRightOpen(false))}
           onOpenTokens={() => setTokensOpen(true)}
-          onOpenResources={(id) => {
-            setFocusSession(id)
-            setSettingsAt('usage')
-          }}
+          onOpenMonitor={() => setMonitorOpen(true)}
           currentSession={current}
           onPaste={pasteToSession}
           previewAsk={previewAsk}
@@ -2217,10 +2233,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             onWidthChange={setRightSize}
             onCollapse={() => (sheetLayout ? setSheet(null) : setRightOpen(false))}
             onOpenTokens={() => setTokensOpen(true)}
-            onOpenResources={(id) => {
-              setFocusSession(id)
-              setSettingsAt('usage')
-            }}
+            onOpenMonitor={() => setMonitorOpen(true)}
             currentSession={current}
             onPaste={pasteToSession}
             previewAsk={previewAsk}
