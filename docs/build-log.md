@@ -28882,3 +28882,26 @@ custom passwords mint a fresh link rather than mutating an existing one,
 Sharing UI were aligned to the Graphite WCAG AA tokens, 16px touch inputs and
 `.vp-segmented` tabs.
 
+
+## 2026-11-25 — A long line that could not be scrolled to
+
+With wrap off, a line wider than the file viewer could not be scrolled across:
+a minified JSON file in Source, the 500-number array in the fixture's
+`config.json`, any log with a long line. The body is drawn in blocks, each
+`content-visibility: auto` so a 50,000-line file paints only what is on
+screen, and that property always contains the block's paint. A block is as
+wide as the box, so everything past the box's edge was clipped at the block,
+and the box's `scrollWidth` equalled its `clientWidth`: nothing to scroll.
+Measured on a bare page: 300 with the property, 3913 without.
+
+Unwrapped, a block is now `w-max min-w-full`: as wide as its widest line and
+never narrower than the box. That makes the block's width intrinsic, and an
+undrawn block is sized by `contain-intrinsic-size`, which had one value for
+both axes; the estimated height would have become the width of every block
+not yet drawn, and the box would scroll across into nothing. It is now
+`auto 0px auto <height>`, so an undrawn block is the box's width until it is
+drawn and then keeps the width it was.
+
+`preview-check` asks that the JSON tree scrolls to its end and that
+`config.json` as Source, unwrapped, scrolls across; the second failed before
+the change.

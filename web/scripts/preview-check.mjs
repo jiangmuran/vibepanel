@@ -738,6 +738,22 @@ try {
       const str = await tree.locator('[data-json-path="/escaped"]').textContent()
       if (!str?.includes('"quoted"') || str.includes('\\"')) note('FAIL', 'json', `a string is not shown as the text it holds: ${str}`)
       await page.keyboard.press('Escape')
+      // Every part of a body can be scrolled to: the tree to its last record,
+      // and, unwrapped, a line wider than the dialog to its end. Each block is
+      // `content-visibility: auto`, which contains its paint: a block as wide as
+      // the box clipped every longer line, and the box had nothing to scroll.
+      const reach = (sel) => v.locator(sel).evaluate((b) => {
+        b.scrollTop = b.scrollHeight
+        b.scrollLeft = b.scrollWidth
+        return { down: b.scrollTop > 0, across: b.scrollWidth > b.clientWidth + 1 && b.scrollLeft > 0 }
+      })
+      if (!(await reach('[data-testid="viewer-json"]')).down) note('FAIL', 'scroll', 'config.json: the tree does not scroll down')
+      await page.keyboard.press('s')
+      await v.locator('[data-testid="viewer-text"]').waitFor({ timeout: 5000 })
+      if ((await v.locator('[data-testid="viewer-text"]').getAttribute('data-wrap')) === 'on') await page.keyboard.press('w')
+      const src = await reach('[data-testid="viewer-text"]')
+      // Eleven lines, so only across: down is the tree's, above.
+      if (!src.across) note('FAIL', 'scroll', 'config.json as source, unwrapped: its 500-number line does not scroll across')
     }
     await page.keyboard.press('Escape')
 

@@ -222,10 +222,18 @@ const BlockView = memo(function BlockView({
     [rows, lang, shown, block.start, block.end],
   )
   const count = block.end - block.start
+  // `content-visibility: auto` contains the block's paint, so a line wider
+  // than the block is clipped at its edge and gives the box nothing to scroll:
+  // a minified JSON file or any long line could not be scrolled across.
+  // Unwrapped, the block is as wide as its widest line (and never narrower
+  // than the box). The intrinsic width is 0 rather than the one value given
+  // for both axes: a block not yet drawn is sized by it, and the height used
+  // as a width made the box scroll across into nothing.
   const style = {
     contentVisibility: 'auto',
-    containIntrinsicSize: `auto ${count * ESTIMATED_ROW_PX}px`,
+    containIntrinsicSize: `auto 0px auto ${count * ESTIMATED_ROW_PX}px`,
   } as const
+  const width = wrap ? undefined : 'w-max min-w-full'
   const space = wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre'
   // The same element in both shapes: the observer that turns a block into
   // rows is watching this one, and a block that swapped its element for
@@ -234,7 +242,7 @@ const BlockView = memo(function BlockView({
     // One text node for the whole block. Indented by the gutter it does not
     // draw yet, so the swap to rows does not shift the text sideways.
     return (
-      <div data-block={index} style={style}>
+      <div data-block={index} style={style} className={width}>
         <pre
           style={{ paddingLeft: numbers ? `calc(${gutter} + 1.5rem)` : '0.75rem' }}
           className={`m-0 pr-3 font-mono ${space}`}
@@ -309,7 +317,7 @@ const BlockView = memo(function BlockView({
     )
   }
   return (
-    <div data-block={index} style={style}>
+    <div data-block={index} style={style} className={width}>
       {out}
     </div>
   )
