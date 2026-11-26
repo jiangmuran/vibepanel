@@ -84,7 +84,21 @@ function domHolder(): KeyboardHolder {
 
 /** How often to look for a terminal that has not mounted yet, and for how long. */
 const RETRY_MS = 16
-const GIVE_UP_MS = 600
+const GIVE_UP_MS = 1200
+
+/**
+ * Whether a live xterm instance is actually laid out and able to take focus.
+ *
+ * Cached terminals stay in `liveTerminals` while their wrapper carries
+ * `className="hidden"` (`display: none`). Calling `term.focus()` before React
+ * commits the unhide is a silent no-op in every browser, leaving focus stranded
+ * on the sidebar button so typing never reaches the TUI.
+ */
+function terminalFocusable(term: { element?: HTMLElement; textarea?: HTMLTextAreaElement }): boolean {
+  const el = term.element
+  if (!el || typeof el.getClientRects !== 'function') return true
+  return el.getClientRects().length > 0
+}
 
 /**
  * Aim the keyboard at a terminal, unless somebody is already typing.
@@ -124,14 +138,20 @@ export function focusTerminal(sessionId: string, holder: () => KeyboardHolder = 
     if (keyboardIsSpokenFor(holder())) return
     const term = liveTerminals.get(sessionId)
     if (term) {
-      if (!term.options.disableStdin) term.focus()
-      return
+      if (term.options.disableStdin) return
+      if (terminalFocusable(term)) {
+        term.focus()
+        const ta = term.textarea
+        if (typeof document === 'undefined' || !ta || document.activeElement === ta) {
+          return
+        }
+      }
     }
     waited += RETRY_MS
     if (waited >= GIVE_UP_MS) return
     setTimeout(attempt, RETRY_MS)
   }
   // Never synchronously: the caller is a click handler, and the render that
-  // mounts the terminal it is asking for has not happened yet.
+  // mounts or unhides the terminal it is asking for has not happened yet.
   setTimeout(attempt, 0)
 }

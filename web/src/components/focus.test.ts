@@ -140,4 +140,25 @@ describe('aiming the keyboard at a terminal', () => {
     vi.advanceTimersByTime(1000)
     expect(focused).toBe(0)
   })
+
+  it('waits until a cached hidden terminal becomes laid out before focusing it', () => {
+    let visible = false
+    let focused = 0
+    const cached = {
+      options: { disableStdin: false },
+      element: { getClientRects: () => (visible ? [{}] : []) },
+      focus: () => {
+        focused++
+      },
+    } as unknown as Xterm
+    liveTerminals.set('cached', cached)
+
+    focusTerminal('cached', () => ({}))
+    vi.advanceTimersByTime(50)
+    expect(focused).toBe(0)
+
+    visible = true
+    vi.advanceTimersByTime(32)
+    expect(focused).toBe(1)
+  })
 })

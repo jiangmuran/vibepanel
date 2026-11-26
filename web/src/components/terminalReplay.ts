@@ -15,6 +15,57 @@ type Schedule = (callback: () => void) => number
 type Cancel = (handle: number) => void
 
 /**
+ * Fallback bound when requestAnimationFrame is paused (backgrounded browser
+ * tab or off-screen display:none cached terminal). Without this, multi-chunk
+ * replays stall for minutes with `replaying === true`, eating keystrokes once
+ * the user switches back.
+ */
+const FRAME_BACKSTOP_MS = 100
+
+let nextFrameHandle = 1
+const pendingFrames = new Map<number, () => void>()
+
+function defaultSchedule(callback: () => void): number {
+  const id = nextFrameHandle++
+  let done = false
+  let rafId: number | null = null
+  let timerId: ReturnType<typeof setTimeout> | null = null
+
+  const fire = () => {
+    if (done) return
+    done = true
+    pendingFrames.delete(id)
+    if (rafId !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId)
+    if (timerId !== null) clearTimeout(timerId)
+    callback()
+  }
+
+  pendingFrames.set(id, () => {
+    if (done) return
+    done = true
+    if (rafId !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId)
+    if (timerId !== null) clearTimeout(timerId)
+  })
+
+  if (typeof document !== 'undefined' && document.hidden) {
+    timerId = setTimeout(fire, 0)
+    return id
+  }
+  if (typeof requestAnimationFrame === 'function') {
+    rafId = requestAnimationFrame(fire)
+  }
+  timerId = setTimeout(fire, FRAME_BACKSTOP_MS)
+  return id
+}
+
+function defaultCancel(handle: number): void {
+  const stop = pendingFrames.get(handle)
+  if (!stop) return
+  pendingFrames.delete(handle)
+  stop()
+}
+
+/**
  * Keeps replay parsing ordered while yielding between chunks.
  *
  * xterm's write callback means that parsing finished, not that the browser had
@@ -34,8 +85,8 @@ export class TerminalReplay {
 
   constructor(
     private readonly term: ReplayTerminal,
-    private readonly schedule: Schedule = (callback) => requestAnimationFrame(callback),
-    private readonly cancel: Cancel = (handle) => cancelAnimationFrame(handle),
+    private readonly schedule: Schedule = defaultSchedule,
+    private readonly cancel: Cancel = defaultCancel,
     private readonly onReplayDone?: () => void,
     /**
      * Bytes of snapshot xterm has finished parsing, reported per chunk.

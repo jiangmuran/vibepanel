@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
+import { AlertCircle, RotateCw } from 'lucide-react'
 import { panelShortcut } from './shortcuts'
 import { shortcutOptions } from './keyprefs'
 import { alternateScrollKeys, attachTouchSelection, cellAt, wheelReport } from './mobile/touchSelect'
 import { wheelReports } from './wheel'
 import { sgrMouseReport, wantsReport } from './mouseReport'
-import { iosInputText, shouldBypassXtermKeydown } from './iosInput'
+import { iosInputText, isIOSWebKit, shouldBypassXtermKeydown } from './iosInput'
 import { liveTerminals } from './terminals'
 import { copyText, copyTextInGesture } from '../clipboard'
 import { isBrowserCopy, isBrowserPaste } from './clipboardKeys'
-import { attachImeCommitFix } from './imeInput'
+import { attachImeCommitFix, resetStuckComposition } from './imeInput'
+import { safeText } from './text'
 import type { EchoAgent } from './localEcho'
 import { attachLocalEcho } from './localEchoLayer'
 import { rendererPreference } from './renderer'
@@ -90,7 +92,7 @@ interface Props {
   hidden?: boolean
 }
 
-type LoadPhase = 'connecting' | 'replay' | 'ready'
+type LoadPhase = 'connecting' | 'replay' | 'ready' | 'error'
 
 /**
  * A resumed gap smaller than this is parsed without a bar. About a tenth of a
@@ -156,6 +158,7 @@ export function TerminalView({
   // nothing to gain by it.
   const [ownFit, setOwnFit] = useState({ cols: 0, rows: 0 })
   const [loadPhase, setLoadPhase] = useState<LoadPhase>('connecting')
+  const [loadError, setLoadError] = useState('')
   const [loadCounts, setLoadCounts] = useState({ total: 0, received: 0, parsed: 0 })
   const replayTotalRef = useRef(0)
   const replayReceivedRef = useRef(0)
@@ -627,9 +630,16 @@ export function TerminalView({
     // and punctuation disappear from the PTY. Stop the keydown on the parent
     // before xterm's target listener sees it, but leave the default action alone:
     // the textarea must still update for the input event below.
+    //
+    // Scoped strictly to iOS/iPadOS WebKit: desktop Windows/macOS Chrome CJK
+    // IMEs also fire keydown(229, isComposing=false) on composition start and on
+    // non-text keys (Enter, Backspace, Escape, arrows) that never produce an
+    // iosInputText input event, so running this on desktop swallowed keys and
+    // left desktop IME input feeling frozen.
+    const iosWebKit = isIOSWebKit()
     let forwardingIOSInput = false
     const bypassIOSKeydown = (event: KeyboardEvent) => {
-      if (!shouldBypassXtermKeydown(event)) {
+      if (!iosWebKit || !shouldBypassXtermKeydown(event)) {
         // Any other key closes the window this opened, as well as the keyup
         // below. The keyup is what iOS sends after a space-to-punctuation
         // pair, so it is the one that ends the pair -- but a keyup that never
@@ -648,8 +658,11 @@ export function TerminalView({
       const text = iosInputText(event as InputEvent)
       if (text === null) return
       if (replayQueue.replaying) return
-      echo.input(text)
-      socket.writeText(sessionId, text)
+      if (socket.writeText(sessionId, text)) {
+        echo.input(text)
+      } else {
+        echo.reset()
+      }
       // Prevent xterm's own input listener from seeing the same character. The
       // keyup clears the flag after iOS finishes a space-to-punctuation pair.
       event.stopPropagation()
@@ -660,11 +673,16 @@ export function TerminalView({
     host.addEventListener('keydown', bypassIOSKeydown, true)
     host.addEventListener('input', forwardIOSInput, true)
     host.addEventListener('keyup', finishIOSInput, true)
+    host.addEventListener('compositionstart', finishIOSInput, true)
+    host.addEventListener('blur', finishIOSInput, true)
 
     const dataSub = term.onData((data) => {
       if (replayQueue.replaying) return
-      echo.input(data)
-      socket.write(sessionId, encoder.encode(data))
+      if (socket.write(sessionId, encoder.encode(data))) {
+        echo.input(data)
+      } else {
+        echo.reset()
+      }
     })
     // Binary input is what arrives for pasted bytes that are not valid UTF-16
     // text; without this branch those keystrokes vanish.
@@ -697,9 +715,20 @@ export function TerminalView({
         // screen from the top, so there is real waiting to account for; hiding
         // the bar there only made the blank terminal look broken.
         timer.begin(true)
+        setLoadError('')
         setLoadPhase('replay')
       },
+      onError: (message) => {
+        // Only take over the loading indicator when the terminal has not yet
+        // finished connecting/replaying. Runtime write/paste errors on a live
+        // terminal are already surfaced by App's error banner.
+        if (disposed || finishedRef.current) return
+        setCovering(false)
+        setLoadError(message)
+        setLoadPhase('error')
+      },
       onSubscribed: ({ replayBytes, resumed }) => {
+        setLoadError('')
         if (resumed) {
           // Only what was missed while the connection was down, appended to
           // what is on screen. onReset was not called, so the size and the
@@ -916,11 +945,14 @@ export function TerminalView({
       // The next terminal starts uncovered and connecting, not in whatever
       // state this one was left. See the reset at the top.
       setCovering(false)
+      setLoadError('')
       setLoadPhase('connecting')
       liveTerminals.delete(sessionId)
       host.removeEventListener('keydown', bypassIOSKeydown, true)
       host.removeEventListener('input', forwardIOSInput, true)
       host.removeEventListener('keyup', finishIOSInput, true)
+      host.removeEventListener('compositionstart', finishIOSInput, true)
+      host.removeEventListener('blur', finishIOSInput, true)
       detachIme()
       echo.dispose()
       detachTouch?.()
@@ -1000,6 +1032,9 @@ export function TerminalView({
     if (hidden) return
     const term = termRef.current
     if (!term) return
+    // Hiding a cached terminal via display:none can drop compositionend in
+    // Chromium; clear any orphaned IME flag before the user types again.
+    resetStuckComposition(term)
     const frame = requestAnimationFrame(() => {
       term.refresh(0, term.rows - 1)
     })
@@ -1131,8 +1166,43 @@ export function TerminalView({
       data-session-id={sessionId}
       data-fullscreen={fullscreen ? 'true' : undefined}
       className={`relative overflow-hidden ${className ?? ''}`}
+      onMouseDown={(e) => {
+        // Clicking the empty backdrop beside a smaller passive grid still
+        // expects the keyboard to land in this terminal.
+        if (e.target === wrapRef.current && !readOnly) {
+          termRef.current?.focus()
+        }
+      }}
     >
-      {!hidden && loadPhase !== 'ready' && (() => {
+      {!hidden && loadPhase === 'error' && (
+        <div
+          className="absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 border-b border-hairline bg-elevated/95 px-3 py-2 text-vp-xs text-warn-ink shadow-sm backdrop-blur"
+          data-testid="terminal-load-error"
+          role="alert"
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            <AlertCircle size={14} aria-hidden="true" className="shrink-0" />
+            <span className="truncate">
+              {t('term.loadingError')}
+              {loadError ? `: ${safeText(loadError)}` : ''}
+            </span>
+          </span>
+          <button
+            type="button"
+            data-testid="terminal-load-retry"
+            onClick={() => {
+              setLoadError('')
+              setLoadPhase('connecting')
+              socket.resubscribe(sessionId)
+            }}
+            className="vp-press inline-flex shrink-0 items-center gap-1 rounded-vp border border-hairline bg-surface px-2 py-1 text-vp-xs font-medium text-ink hover:bg-surface-2"
+          >
+            <RotateCw size={12} aria-hidden="true" />
+            {t('term.retry')}
+          </button>
+        </div>
+      )}
+      {!hidden && (loadPhase === 'connecting' || loadPhase === 'replay') && (() => {
         const pct = loadPercents(loadCounts)
         const shown = loadPhase === 'connecting' ? 0 : pct.parsed
         const label = t(loadCopyKey[loadPhase])

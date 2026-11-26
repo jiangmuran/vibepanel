@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { TerminalReplay, type ReplayTerminal } from './terminalReplay'
 
@@ -191,5 +191,34 @@ describe('parsed-byte reporting', () => {
     queue.enqueue(new Uint8Array(7), true)
     term.finish()
     expect(parsed).toEqual([7])
+  })
+})
+
+describe('background-tab frame backstop', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps draining replay chunks when requestAnimationFrame is paused', () => {
+    vi.useFakeTimers()
+    // Simulate a backgrounded tab where rAF never calls back.
+    vi.stubGlobal('requestAnimationFrame', () => 999)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+
+    const term = new FakeTerminal()
+    const done: number[] = []
+    const queue = new TerminalReplay(term, undefined, undefined, () => done.push(1))
+
+    queue.enqueue(bytes(1), true)
+    queue.enqueue(bytes(2), true)
+    term.finish()
+    expect(term.writes).toHaveLength(1)
+
+    vi.advanceTimersByTime(100)
+    expect(term.writes).toHaveLength(2)
+    term.finish()
+    expect(queue.replaying).toBe(false)
+    expect(done).toEqual([1])
   })
 })

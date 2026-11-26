@@ -41,9 +41,15 @@
 /** The xterm internals this reaches into. See the file comment for why. */
 interface XtermCore {
   _keyDownSeen?: boolean
+  textarea?: { value?: string }
   _compositionHelper?: {
     _isComposing?: boolean
     _isSendingComposition?: boolean
+    _dataAlreadySent?: string
+    _compositionView?: {
+      textContent: string | null
+      classList?: { remove(name: string): void }
+    }
   }
 }
 
@@ -86,6 +92,47 @@ export function releaseImeCommit(terminal: unknown, ev: TextInputLike): boolean 
 }
 
 /**
+ * Reset xterm's IME composition state if blur or hiding left it stuck.
+ *
+ * xterm 6.0's `_handleTextAreaBlur` clears `textarea.value` but does not clear
+ * `_compositionHelper._isComposing`, `_isSendingComposition`, or `_keyDownSeen`.
+ * Switching sessions (`display: none` on a cached terminal), switching browser
+ * tabs, or clicking away when Chrome drops `compositionend` leaves
+ * `_isComposing === true` permanently: every later IME keydown (keyCode 229)
+ * then hits `CompositionHelper.keydown` and returns false, freezing CJK typing
+ * in the TUI input box until a full reload.
+ *
+ * Returns whether any stuck flag was cleared.
+ */
+export function resetStuckComposition(terminal: unknown): boolean {
+  const core = (terminal as { _core?: XtermCore } | null)?._core
+  if (!core) return false
+  let reset = false
+  if (core._keyDownSeen === true) {
+    core._keyDownSeen = false
+    reset = true
+  }
+  const helper = core._compositionHelper
+  if (helper) {
+    if (helper._isComposing === true) {
+      helper._isComposing = false
+      reset = true
+    }
+    if (helper._isSendingComposition === true) {
+      helper._isSendingComposition = false
+      reset = true
+    }
+    if (reset) {
+      if (typeof helper._dataAlreadySent === 'string') helper._dataAlreadySent = ''
+      helper._compositionView?.classList?.remove('active')
+      if (helper._compositionView) helper._compositionView.textContent = ''
+      if (core.textarea && typeof core.textarea.value === 'string') core.textarea.value = ''
+    }
+  }
+  return reset
+}
+
+/**
  * Attach the fix to the element containing xterm's textarea, and return the
  * detach. Called from Terminal.tsx's terminal-lifetime effect.
  */
@@ -93,7 +140,36 @@ export function attachImeCommitFix(host: EventTarget, terminal: unknown): () => 
   const onBeforeInput = (ev: Event) => {
     releaseImeCommit(terminal, ev as unknown as TextInputLike)
   }
-  // Capture, so this runs before the textarea's own listeners. See above.
+  let blurTimer: ReturnType<typeof setTimeout> | null = null
+  const onBlur = () => {
+    // Wait one macrotask so a legitimate `compositionend` firing alongside blur
+    // can run xterm's own `setTimeout(..., 0)` finalize callback first. Only if
+    // the textarea is still unfocused afterwards is any remaining composition
+    // flag genuinely orphaned.
+    if (blurTimer !== null) clearTimeout(blurTimer)
+    blurTimer = setTimeout(() => {
+      blurTimer = null
+      const core = (terminal as { _core?: XtermCore } | null)?._core
+      if (
+        typeof document !== 'undefined' &&
+        core?.textarea &&
+        document.activeElement === (core.textarea as unknown)
+      ) {
+        return
+      }
+      resetStuckComposition(terminal)
+    }, 0)
+  }
+  // Capture, so both listeners see events on xterm's textarea ahead of it
+  // (`blur` does not bubble, so capture is required for it as well).
   host.addEventListener('beforeinput', onBeforeInput, true)
-  return () => host.removeEventListener('beforeinput', onBeforeInput, true)
+  host.addEventListener('blur', onBlur, true)
+  return () => {
+    if (blurTimer !== null) {
+      clearTimeout(blurTimer)
+      blurTimer = null
+    }
+    host.removeEventListener('beforeinput', onBeforeInput, true)
+    host.removeEventListener('blur', onBlur, true)
+  }
 }

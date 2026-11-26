@@ -1511,6 +1511,8 @@ const DICT = {
   },
   'term.loadingConnecting': { zh: '连接终端', en: 'Connecting terminal' },
   'term.loadingReplay': { zh: '加载终端内容', en: 'Loading terminal content' },
+  'term.loadingError': { zh: '终端连接失败', en: 'Terminal connection failed' },
+  'term.retry': { zh: '重试', en: 'Retry' },
 
   'notify.waitingTitle': { zh: '有 agent 在等你', en: 'An agent is waiting' },
   'notify.noticeTitle': { zh: '一个会话在叫你', en: 'A session is calling' },

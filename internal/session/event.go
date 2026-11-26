@@ -39,6 +39,13 @@ type Event struct {
 	Rows   int    // EventSize, EventCatchUp
 }
 
+// byteLen is the live output backlog this event adds to a subscriber's queue.
+//
+// EventCatchUp carries a one-shot replay snapshot (up to the full 2 MiB ring
+// plus a mode prefix) when a hidden terminal becomes visible again. Counting
+// that snapshot against subscriberBytes put sub.queued above the 2 MiB drop
+// limit immediately, so the very next byte of live output dropped the viewer
+// before pumpStream could even dequeue the catch-up.
 func (e Event) byteLen() int {
-	return len(e.Data) + len(e.Replay.Data)
+	return len(e.Data)
 }

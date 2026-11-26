@@ -27,6 +27,8 @@ export interface StreamHandlers {
    * connection was down, not the whole buffer again.
    */
   onSubscribed?: (info: { replayBytes: number; replayChunks: number; resumed: boolean }) => void
+  /** Called when the server rejects a request for this stream (e.g. subscribe failed). */
+  onError?: (message: string) => void
 }
 
 interface Stream {
@@ -65,6 +67,10 @@ interface Stream {
    * typing into it went nowhere.
    */
   ended: boolean
+  /** Timestamp when an unconfirmed `subscribe` was sent on an open socket, or 0. */
+  awaitingSubSince: number
+  /** Triggers a liveness probe if `subscribed` does not arrive promptly. */
+  ackTimer: ReturnType<typeof setTimeout> | null
 }
 
 /** Connection state, for the UI to show honestly rather than pretending. */
@@ -72,6 +78,21 @@ export type SocketStatus = 'connecting' | 'open' | 'closed'
 
 const MAX_BACKOFF_MS = 10_000
 const PING_INTERVAL_MS = 25_000
+/**
+ * How long to wait for any frame after actually sending a ping before treating
+ * the socket as half-open and replacing it.
+ *
+ * Checking `Date.now() - lastSeenAt > 60_000` *before* pinging broke on desktop
+ * Chrome: background-tab timer throttling delays `setInterval` to 60 s, so a
+ * healthy idle socket woke up at 60 s and killed itself before sending a single
+ * ping, then sat in WebSocket.CLOSING for another 60 s. Waiting for an answer
+ * to a ping that was actually sent detects dead sockets in seconds without
+ * false-killing throttled tabs.
+ */
+const PING_TIMEOUT_MS = 10_000
+const WAKE_PING_TIMEOUT_MS = 5_000
+const SUBSCRIBE_ACK_TIMEOUT_MS = 5_000
+const CONNECT_STALL_MS = 15_000
 
 /**
  * How long without a single byte from the server before the connection is
@@ -130,27 +151,21 @@ function clientID(): string {
   return cachedClientID
 }
 
-const DEAD_AFTER_MS = 60_000
-
-/**
- * One WebSocket for the whole page, shared by every terminal on it.
- *
- * Per-terminal sockets would be simpler, but a user with a main session and
- * four bottom terminals would hold five of them, and mobile browsers throttle
- * background sockets hard enough that some would stall without ever erroring.
- */
 export class PanelSocket {
   private ws: WebSocket | null = null
   private streams = new Map<string, Stream>()
   private byRef = new Map<number, Stream>()
   private backoff = 500
   private pingTimer: number | null = null
+  private pingDeadline: ReturnType<typeof setTimeout> | null = null
   private closed = false
   // The pending reconnect, so close() can cancel it. Without that a socket
   // closed while a retry was scheduled reopened itself a moment later.
   private retry: ReturnType<typeof setTimeout> | undefined
-  /** When the last frame of any kind arrived. See DEAD_AFTER_MS. */
+  /** When the last frame of any kind arrived. */
   private lastSeenAt = 0
+  /** When the current WebSocket handshake started, to recover from stalled CONNECTING across sleep. */
+  private connectStartedAt = 0
   private statusListeners = new Set<(s: SocketStatus) => void>()
 
   status: SocketStatus = 'closed'
@@ -162,6 +177,10 @@ export class PanelSocket {
   private errorListeners = new Set<(sessionId: string, message: string) => void>()
 
   constructor() {
+    this.attachLifecycle()
+  }
+
+  private attachLifecycle() {
     // The browser knows before we can: a phone leaving coverage, wifi
     // dropping, the laptop being closed. Without this the status dot stays
     // green — the socket is not closed, it is simply never going to hear
@@ -170,6 +189,19 @@ export class PanelSocket {
     // this particular application to fail, because nothing looks wrong.
     window.addEventListener('offline', this.onOffline)
     window.addEventListener('online', this.onOnline)
+    window.addEventListener('pageshow', this.onPageShow)
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', this.onVisibilityChange)
+    }
+  }
+
+  private detachLifecycle() {
+    window.removeEventListener('offline', this.onOffline)
+    window.removeEventListener('online', this.onOnline)
+    window.removeEventListener('pageshow', this.onPageShow)
+    if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange)
+    }
   }
 
   private onOffline = () => {
@@ -185,18 +217,96 @@ export class PanelSocket {
     this.connect()
   }
 
-  /** Close the socket and let onclose start the reconnect. */
-  private dropConnection() {
+  private onVisibilityChange = () => {
+    if (this.closed || typeof document === 'undefined') return
+    if (!document.hidden) this.checkAliveOnWake()
+  }
+
+  private onPageShow = () => {
+    if (this.closed) return
+    if (typeof document === 'undefined' || !document.hidden) this.checkAliveOnWake()
+  }
+
+  /**
+   * Re-verify liveness when a tab returns to the foreground (or wakes from
+   * laptop sleep / mobile lock). If the socket already closed, reconnect
+   * immediately instead of sitting out backoff; if it looks open after an idle
+   * gap, probe immediately so a half-open connection is replaced in seconds
+   * rather than waiting for the next 25 s ping interval.
+   */
+  private checkAliveOnWake() {
+    if (this.closed) return
     const ws = this.ws
     if (!ws) {
-      // Nothing open; make sure the status is not left claiming otherwise.
-      if (this.status !== 'closed') this.setStatus('closed')
+      if (this.retry !== undefined) {
+        this.backoff = 500
+        this.connect()
+      }
       return
     }
-    // close() fires onclose asynchronously, and while the network is down a
-    // socket can sit in CLOSING for a long time. Report the truth now.
+    if (ws.readyState === WebSocket.OPEN) {
+      const now = Date.now()
+      const idleLong = this.lastSeenAt > 0 && now - this.lastSeenAt > PING_INTERVAL_MS
+      const stalledSub = [...this.streams.values()].some(
+        (s) => !s.hidden && s.awaitingSubSince > 0 && now - s.awaitingSubSince >= SUBSCRIBE_ACK_TIMEOUT_MS,
+      )
+      if (idleLong || stalledSub) {
+        this.probe(WAKE_PING_TIMEOUT_MS)
+      }
+      return
+    }
+    if (ws.readyState === WebSocket.CONNECTING) {
+      if (this.connectStartedAt > 0 && Date.now() - this.connectStartedAt > CONNECT_STALL_MS) {
+        this.dropConnection(true)
+      }
+      return
+    }
+    // CLOSING or CLOSED: detach and open a fresh socket right away.
+    this.dropConnection(true)
+  }
+
+  private scheduleReconnect() {
+    if (this.closed || this.retry !== undefined) return
+    this.retry = setTimeout(() => this.connect(), this.backoff)
+    this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS)
+  }
+
+  /**
+   * Detach a dead or offline socket immediately so a half-open CLOSING
+   * handshake cannot block reconnection for ~60 s.
+   *
+   * Leaving `this.ws` set until `ws.onclose` fired kept Chromium's 60 s close
+   * timeout blocking `connect()` and `onOnline()`, leaving every newly clicked
+   * terminal stuck at "Connecting terminal 0%" for 40-67 s. Detaching here lets
+   * the stale socket finish closing in the background (its late `onclose` is
+   * ignored by the `this.ws !== ws` guard) while a fresh socket opens at once.
+   */
+  private dropConnection(reconnectNow = false) {
+    const ws = this.ws
+    this.ws = null
+    this.stopPing()
+    for (const stream of this.streams.values()) {
+      stream.ref = null
+      this.clearAckTimer(stream)
+    }
+    this.byRef.clear()
+    if (ws) {
+      try {
+        ws.close()
+      } catch {
+        // Best effort: the socket is already detached.
+      }
+    }
     this.setStatus('closed')
-    ws.close()
+    if (this.closed) return
+    if (reconnectNow) {
+      clearTimeout(this.retry)
+      this.retry = undefined
+      this.backoff = 500
+      this.connect()
+      return
+    }
+    this.scheduleReconnect()
   }
 
   connect() {
@@ -208,11 +318,11 @@ export class PanelSocket {
       // panel never connected at all. Production runs the effect once, which
       // is why nothing else saw it.
       this.closed = false
-      window.addEventListener('offline', this.onOffline)
-      window.addEventListener('online', this.onOnline)
+      this.attachLifecycle()
     }
     clearTimeout(this.retry)
     this.retry = undefined
+    this.connectStartedAt = Date.now()
     this.setStatus('connecting')
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -241,6 +351,7 @@ export class PanelSocket {
       if (this.ws !== ws) return
       // Any frame, of any kind, is proof the connection is alive.
       this.lastSeenAt = Date.now()
+      this.clearPingDeadline()
       if (ev.data instanceof ArrayBuffer) {
         this.handleFrame(ev.data)
         return
@@ -260,13 +371,13 @@ export class PanelSocket {
       if (this.ws !== ws) return
       this.ws = null
       this.stopPing()
-      for (const stream of this.streams.values()) stream.ref = null
+      for (const stream of this.streams.values()) {
+        stream.ref = null
+        this.clearAckTimer(stream)
+      }
       this.byRef.clear()
       this.setStatus('closed')
-      if (!this.closed) {
-        this.retry = setTimeout(() => this.connect(), this.backoff)
-        this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS)
-      }
+      this.scheduleReconnect()
     }
 
     ws.onerror = () => {
@@ -299,6 +410,7 @@ export class PanelSocket {
       case 'subscribed': {
         const stream = msg.sessionId ? this.streams.get(msg.sessionId) : undefined
         if (!stream || msg.ref === undefined) return
+        this.clearAckTimer(stream)
         // A second confirmation for the same session means the subscription
         // restarted, so the replay that follows is the whole buffer again.
         // Clearing here rather than on the replay frame keeps this correct
@@ -436,8 +548,17 @@ export class PanelSocket {
         // senders are `write failed` twice and `paste failed`, which is the
         // hazard TestMessageTypesMatchTheClient was written about -- fixed for
         // `dropped` and not for this.
+        const sessionId = msg.sessionId ?? ''
+        const message = msg.message ?? 'the panel could not do that'
+        if (sessionId) {
+          const stream = this.streams.get(sessionId)
+          if (stream) {
+            this.clearAckTimer(stream)
+            stream.handlers.onError?.(message)
+          }
+        }
         for (const fn of this.errorListeners) {
-          fn(msg.sessionId ?? '', msg.message ?? 'the panel could not do that')
+          fn(sessionId, message)
         }
         break
       }
@@ -537,9 +658,47 @@ export class PanelSocket {
   }
 
   subscribe(sessionId: string, cols: number, rows: number, handlers: StreamHandlers, hidden = false) {
-    const stream: Stream = { sessionId, handlers, ref: null, cols, rows, confirmed: false, hidden, position: null, ended: false }
+    const prev = this.streams.get(sessionId)
+    if (prev) this.clearAckTimer(prev)
+    const stream: Stream = {
+      sessionId,
+      handlers,
+      ref: null,
+      cols,
+      rows,
+      confirmed: false,
+      hidden,
+      position: null,
+      ended: false,
+      awaitingSubSince: 0,
+      ackTimer: null,
+    }
     this.streams.set(sessionId, stream)
     this.sendSubscribe(stream)
+  }
+
+  /** Retry subscribing an already-mounted terminal from scratch. */
+  resubscribe(sessionId: string) {
+    const stream = this.streams.get(sessionId)
+    if (!stream) return
+    if (stream.ref !== null) this.byRef.delete(stream.ref)
+    stream.ref = null
+    stream.ended = false
+    stream.position = null
+    if (!this.ws && !this.closed) {
+      this.backoff = 500
+      this.connect()
+      return
+    }
+    this.sendSubscribe(stream)
+  }
+
+  private clearAckTimer(stream: Stream) {
+    stream.awaitingSubSince = 0
+    if (stream.ackTimer !== null) {
+      clearTimeout(stream.ackTimer)
+      stream.ackTimer = null
+    }
   }
 
   /**
@@ -548,6 +707,8 @@ export class PanelSocket {
    * megabytes parsed onto a cleared screen for every mounted terminal.
    */
   private sendSubscribe(stream: Stream) {
+    this.clearAckTimer(stream)
+    if (this.ws?.readyState !== WebSocket.OPEN) return
     this.send({
       t: 'subscribe',
       sessionId: stream.sessionId,
@@ -557,11 +718,20 @@ export class PanelSocket {
       hidden: stream.hidden,
       ...(stream.position ? { stream: stream.position.stream, since: stream.position.next } : {}),
     })
+    stream.awaitingSubSince = Date.now()
+    stream.ackTimer = setTimeout(() => {
+      stream.ackTimer = null
+      if (stream.awaitingSubSince === 0 || this.ws?.readyState !== WebSocket.OPEN) return
+      // No `subscribed` confirmation after 5 s: probe the socket so a half-open
+      // connection is detected and replaced instead of leaving the terminal at 0%.
+      this.probe(WAKE_PING_TIMEOUT_MS)
+    }, SUBSCRIBE_ACK_TIMEOUT_MS)
   }
 
   unsubscribe(sessionId: string) {
     const stream = this.streams.get(sessionId)
     if (!stream) return
+    this.clearAckTimer(stream)
     this.streams.delete(sessionId)
     if (stream.ref !== null) this.byRef.delete(stream.ref)
     this.send({ t: 'unsubscribe', sessionId })
@@ -669,9 +839,11 @@ export class PanelSocket {
     this.closed = true
     clearTimeout(this.retry)
     this.retry = undefined
-    window.removeEventListener('offline', this.onOffline)
-    window.removeEventListener('online', this.onOnline)
+    this.detachLifecycle()
     this.stopPing()
+    for (const stream of this.streams.values()) {
+      this.clearAckTimer(stream)
+    }
     this.ws?.close()
     this.ws = null
   }
@@ -686,18 +858,32 @@ export class PanelSocket {
     this.ws.send(JSON.stringify(msg))
   }
 
+  /**
+   * Send an application-level ping and arm a bounded response deadline. Any
+   * incoming frame clears the deadline; silence past it means the socket is
+   * half-open and is replaced immediately.
+   */
+  private probe(timeoutMs: number) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return
+    if (this.pingDeadline !== null) return
+    this.send({ t: 'ping' })
+    this.pingDeadline = setTimeout(() => {
+      this.pingDeadline = null
+      this.dropConnection(true)
+    }, timeoutMs)
+  }
+
+  private clearPingDeadline() {
+    if (this.pingDeadline !== null) {
+      clearTimeout(this.pingDeadline)
+      this.pingDeadline = null
+    }
+  }
+
   private startPing() {
     this.stopPing()
     this.pingTimer = window.setInterval(() => {
-      // Check before pinging: send() on a socket whose network has gone is not
-      // an error, it just buffers, so pinging alone proves nothing and the
-      // status stayed green forever. What the pings are for is giving the
-      // server something to answer, so that silence means something.
-      if (this.lastSeenAt > 0 && Date.now() - this.lastSeenAt > DEAD_AFTER_MS) {
-        this.dropConnection()
-        return
-      }
-      this.send({ t: 'ping' })
+      this.probe(PING_TIMEOUT_MS)
     }, PING_INTERVAL_MS)
   }
 
@@ -706,5 +892,6 @@ export class PanelSocket {
       clearInterval(this.pingTimer)
       this.pingTimer = null
     }
+    this.clearPingDeadline()
   }
 }

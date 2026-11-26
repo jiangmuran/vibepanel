@@ -641,3 +641,113 @@ func TestReadOutputBatchLeavesInteractiveEchoImmediateAndCoalescesRedrawBursts(t
 		t.Fatalf("trailing control event = (%+v, open=%v), want EventTitle \"done\"", next, open)
 	}
 }
+
+type blockingResolver struct {
+	started  chan string
+	canceled chan string
+	release  chan struct{}
+}
+
+func (r *blockingResolver) Resolve(ctx context.Context, sessionID string) (string, int, int, error) {
+	select {
+	case r.started <- sessionID:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		select {
+		case r.canceled <- sessionID:
+		default:
+		}
+		return "", 0, 0, ctx.Err()
+	case <-r.release:
+		return "", 0, 0, errors.New("not found")
+	}
+}
+
+func (*blockingResolver) RecordSize(context.Context, string, int, int) error { return nil }
+
+// A slow Resolve/Attach/captureForReplay must never block readLoop. Before
+// subscribes moved off readLoop, one stalled tmux capture or slow replay write
+// froze ping/pong, keystrokes, unsubscribe and every subsequent subscribe on
+// the page's single WebSocket.
+func TestSlowSubscribeDoesNotBlockPingOrUnsubscribe(t *testing.T) {
+	res := &blockingResolver{
+		started:  make(chan string, 1),
+		canceled: make(chan string, 1),
+		release:  make(chan struct{}),
+	}
+	defer close(res.release)
+
+	h := &Handler{
+		Manager:         session.NewManager(nil, 1<<10),
+		Resolve:         res,
+		StillAuthorized: func(*http.Request) bool { return true },
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"t":"subscribe","sessionId":"slow","cols":80,"rows":24}`)); err != nil {
+		t.Fatalf("write subscribe: %v", err)
+	}
+	select {
+	case <-res.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscribe never reached Resolve")
+	}
+
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"t":"ping"}`)); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	rctx, rcancel := context.WithTimeout(ctx, 2*time.Second)
+	defer rcancel()
+	_, data, err := c.Read(rctx)
+	if err != nil {
+		t.Fatalf("ping went unanswered while subscribe was blocked: %v", err)
+	}
+	var msg ServerMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if msg.Type != MsgPong {
+		t.Fatalf("got %q while subscribe was blocked, want %q", msg.Type, MsgPong)
+	}
+
+	// Unsubscribing while Resolve is still blocked cancels the in-flight attempt.
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"t":"unsubscribe","sessionId":"slow"}`)); err != nil {
+		t.Fatalf("write unsubscribe: %v", err)
+	}
+	select {
+	case got := <-res.canceled:
+		if got != "slow" {
+			t.Fatalf("canceled %q, want slow", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("unsubscribe did not cancel the in-flight subscribe")
+	}
+}
+
+// A second subscribe for the same session replaces the old stream and answers
+// with a fresh MsgSubscribed rather than returning nil silently (which left
+// the browser stuck at "Connecting terminal 0%" forever).
+func TestDuplicateSubscribeReplacesAndReconfirms(t *testing.T) {
+	s := serveSession(t, "vp_ws_dup_sub", `echo hello-dup`)
+	v := dialViewer(t, s, "dup-viewer")
+
+	v.send(map[string]any{"t": MsgSubscribe, "sessionId": "s1", "cols": 80, "rows": 24})
+	first := v.await(MsgSubscribed)
+
+	v.send(map[string]any{"t": MsgSubscribe, "sessionId": "s1", "cols": 80, "rows": 24})
+	second := v.await(MsgSubscribed)
+	if second.Ref == first.Ref {
+		t.Errorf("second subscribe reused ref %d, want a fresh replacement stream", second.Ref)
+	}
+}
