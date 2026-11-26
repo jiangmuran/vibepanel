@@ -146,6 +146,11 @@ export class PanelSocket {
   private backoff = 500
   private pingTimer: number | null = null
   private closed = false
+  // Whether this browser tab itself is hidden (switched tab, minimised window,
+  // locked phone or sleeping laptop). Carried on subscribe and visibility so an
+  // unattended background tab gives up control and never reclaims it when its
+  // socket reconnects periodically.
+  private pageHidden = typeof document !== 'undefined' ? Boolean(document.hidden) : false
   // The pending reconnect, so close() can cancel it. Without that a socket
   // closed while a retry was scheduled reopened itself a moment later.
   private retry: ReturnType<typeof setTimeout> | undefined
@@ -162,6 +167,10 @@ export class PanelSocket {
   private errorListeners = new Set<(sessionId: string, message: string) => void>()
 
   constructor() {
+    this.attachLifecycle()
+  }
+
+  private attachLifecycle() {
     // The browser knows before we can: a phone leaving coverage, wifi
     // dropping, the laptop being closed. Without this the status dot stays
     // green — the socket is not closed, it is simply never going to hear
@@ -170,6 +179,22 @@ export class PanelSocket {
     // this particular application to fail, because nothing looks wrong.
     window.addEventListener('offline', this.onOffline)
     window.addEventListener('online', this.onOnline)
+    window.addEventListener('pagehide', this.onPageHide)
+    window.addEventListener('pageshow', this.onPageShow)
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      this.pageHidden = Boolean(document.hidden)
+      document.addEventListener('visibilitychange', this.onVisibilityChange)
+    }
+  }
+
+  private detachLifecycle() {
+    window.removeEventListener('offline', this.onOffline)
+    window.removeEventListener('online', this.onOnline)
+    window.removeEventListener('pagehide', this.onPageHide)
+    window.removeEventListener('pageshow', this.onPageShow)
+    if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange)
+    }
   }
 
   private onOffline = () => {
@@ -183,6 +208,38 @@ export class PanelSocket {
     // a backoff that was measured against a problem that has gone away.
     this.backoff = 500
     this.connect()
+  }
+
+  private onVisibilityChange = () => {
+    if (this.closed || typeof document === 'undefined') return
+    this.setPageHidden(Boolean(document.hidden))
+  }
+
+  private onPageHide = (ev: PageTransitionEvent) => {
+    if (this.closed) return
+    this.setPageHidden(true)
+    // Mobile browsers swiped closed often leave the TCP socket half-open until
+    // the server's 40s keepalive times out, holding the grid the whole time.
+    // Closing cleanly on non-BFCache unload lets the server release control at
+    // once; a real reload reconnects within a second and reclaims via clientID.
+    if (!ev?.persisted && this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.close(1000)
+    }
+  }
+
+  private onPageShow = () => {
+    if (this.closed) return
+    this.setPageHidden(typeof document !== 'undefined' ? Boolean(document.hidden) : false)
+  }
+
+  private setPageHidden(next: boolean) {
+    if (this.pageHidden === next) return
+    this.pageHidden = next
+    for (const stream of this.streams.values()) {
+      // A DOM-hidden terminal is already inactive on the server.
+      if (stream.hidden) continue
+      this.sendVisibility(stream)
+    }
   }
 
   /** Close the socket and let onclose start the reconnect. */
@@ -208,8 +265,7 @@ export class PanelSocket {
       // panel never connected at all. Production runs the effect once, which
       // is why nothing else saw it.
       this.closed = false
-      window.addEventListener('offline', this.onOffline)
-      window.addEventListener('online', this.onOnline)
+      this.attachLifecycle()
     }
     clearTimeout(this.retry)
     this.retry = undefined
@@ -555,7 +611,17 @@ export class PanelSocket {
       rows: stream.rows,
       dark: this.dark(),
       hidden: stream.hidden,
+      ...(this.pageHidden ? { background: true } : {}),
       ...(stream.position ? { stream: stream.position.stream, since: stream.position.next } : {}),
+    })
+  }
+
+  private sendVisibility(stream: Stream) {
+    this.send({
+      t: 'visibility',
+      sessionId: stream.sessionId,
+      hidden: stream.hidden,
+      ...(this.pageHidden ? { background: true } : {}),
     })
   }
 
@@ -632,7 +698,7 @@ export class PanelSocket {
     const stream = this.streams.get(sessionId)
     if (!stream || stream.hidden === hidden) return
     stream.hidden = hidden
-    this.send({ t: 'visibility', sessionId, hidden })
+    this.sendVisibility(stream)
   }
 
   /** Reports how long a terminal took to load. See LoadTiming. */
@@ -669,8 +735,7 @@ export class PanelSocket {
     this.closed = true
     clearTimeout(this.retry)
     this.retry = undefined
-    window.removeEventListener('offline', this.onOffline)
-    window.removeEventListener('online', this.onOnline)
+    this.detachLifecycle()
     this.stopPing()
     this.ws?.close()
     this.ws = null

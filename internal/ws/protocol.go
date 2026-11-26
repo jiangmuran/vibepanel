@@ -104,6 +104,12 @@ type ClientMessage struct {
 	// this terminal mounted off-screen. See session.Live.SetHidden.
 	Hidden bool `json:"hidden,omitempty"`
 
+	// Background rides on MsgSubscribe and MsgVisibility: the browser tab
+	// itself is in the background (another tab active, window minimised or
+	// screen locked). Unlike Hidden, live output still flows, but a
+	// backgrounded tab does not hold or claim grid control.
+	Background bool `json:"background,omitempty"`
+
 	// Stream and Since ride on MsgSubscribe from a viewer whose terminal
 	// already shows that stream up to byte offset Since, as the last
 	// MsgSubscribed told it. The server then sends only what came after, if it

@@ -275,3 +275,45 @@ func TestVisibilityMovesTheGridAndTellsTheViewer(t *testing.T) {
 		t.Errorf("controller = %q after coming back on screen, want %q", got, client)
 	}
 }
+
+func TestBackgroundTabReleasesControlOverTheWire(t *testing.T) {
+	s := serveSession(t, "vp_ws_bg", "true")
+
+	const macID = "mac-background-tab"
+	mac := dialViewer(t, s, macID)
+	mac.send(map[string]any{"t": MsgSubscribe, "sessionId": "s1", "cols": 107, "rows": 32})
+	if !mac.await(MsgSubscribed).Controlling {
+		t.Fatal("initial foreground viewer was not given control")
+	}
+	mac.await(MsgSize)
+
+	// Tab goes to the background: releases control immediately and learns it is
+	// no longer controlling, while staying subscribed.
+	mac.send(map[string]any{"t": MsgVisibility, "sessionId": "s1", "hidden": false, "background": true})
+	if mac.await(MsgSize).Controlling {
+		t.Error("backgrounded tab was still told it controls the grid")
+	}
+	if got := s.live.Controller(); got != "" {
+		t.Errorf("controller = %q after tab went to background, want unowned", got)
+	}
+
+	// Reconnecting while still backgrounded must not claim control even if the
+	// session has no controller.
+	bg := dialViewer(t, s, "sleeping-mac")
+	bg.send(map[string]any{"t": MsgSubscribe, "sessionId": "s1", "cols": 107, "rows": 32, "hidden": false, "background": true})
+	if bg.await(MsgSubscribed).Controlling {
+		t.Error("a backgrounded reconnect claimed control of the grid")
+	}
+	if got := s.live.Controller(); got != "" {
+		t.Errorf("controller = %q after background subscribe, want unowned", got)
+	}
+
+	// Returning the original tab to the foreground reclaims control within grace.
+	mac.send(map[string]any{"t": MsgVisibility, "sessionId": "s1", "hidden": false, "background": false})
+	if !mac.await(MsgSize).Controlling {
+		t.Error("tab returning to foreground within grace did not reclaim control")
+	}
+	if got := s.live.Controller(); got != macID {
+		t.Errorf("controller = %q after returning to foreground, want %q", got, macID)
+	}
+}

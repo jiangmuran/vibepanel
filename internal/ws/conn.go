@@ -386,6 +386,9 @@ func (h *Handler) revalidate(ctx context.Context, cancel context.CancelFunc, r *
 			return
 		case <-t.C:
 			if !h.StillAuthorized(r) {
+				if ctx.Err() != nil {
+					return
+				}
 				h.logger().Info("closing a websocket whose session is no longer valid")
 				cancel()
 				return
@@ -504,7 +507,7 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 		c.sendJSON(ServerMessage{Type: MsgPong})
 
 	case MsgSubscribe:
-		if err := c.subscribe(ctx, msg.SessionID, msg.Cols, msg.Rows, msg.Hidden, msg.resume()); err != nil {
+		if err := c.subscribe(ctx, msg.SessionID, msg.Cols, msg.Rows, msg.Hidden, msg.Background, msg.resume()); err != nil {
 			c.sendError(msg.SessionID, err.Error())
 			return
 		}
@@ -591,7 +594,7 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 		if s == nil {
 			return
 		}
-		s.live.SetHidden(s.sub, msg.Hidden)
+		s.live.SetVisibility(s.sub, msg.Hidden, msg.Background)
 		// Always answered, and to this viewer only. Nobody else's controlling
 		// flag can change here: hiding leaves the grid unowned and showing only
 		// claims an unowned one. This viewer's can change either way, and a
@@ -626,7 +629,7 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 
 // subscribe attaches (if needed), registers a viewer and starts pumping its
 // events onto the socket.
-func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, hidden bool, from session.Resume) error {
+func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, hidden, background bool, from session.Resume) error {
 	subscribeStarted := time.Now()
 	if sessionID == "" {
 		return errors.New("subscribe: missing sessionId")
@@ -651,7 +654,7 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 		return fmt.Errorf("subscribe: %w", err)
 	}
 	attachedAt := time.Now()
-	sub, snap := live.SubscribeFrom(c.clientID, hidden, from)
+	sub, snap := live.SubscribeView(c.clientID, hidden, background, from)
 	replay := snap.Data
 
 	c.mu.Lock()
@@ -693,6 +696,7 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 		c.h.logger().Info("terminal subscribe",
 			"session", sessionID,
 			"hidden", hidden,
+			"background", background,
 			"resumed", snap.Continued,
 			"attach_ms", attachedAt.Sub(subscribeStarted).Milliseconds(),
 			"replay_bytes", len(replay),
