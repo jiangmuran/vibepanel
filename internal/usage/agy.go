@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -101,6 +102,41 @@ func agySession(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
+// agyHistory is the one copy of history.jsonl in memory, shared by every
+// transcript that asks for its workspace during a pass. The file is
+// append-only, so stat time+size is a complete key: without the cache, each
+// pass read the whole file once per transcript -- years of prompts, N full
+// reads where one would do.
+var agyHistory = struct {
+	mu          sync.Mutex
+	path        string
+	mtime, size int64
+	data        []byte
+}{}
+
+// agyHistoryFile returns history.jsonl's bytes, re-read only when stat says
+// the file moved on from the cached copy.
+func agyHistoryFile(path string) []byte {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	agyHistory.mu.Lock()
+	defer agyHistory.mu.Unlock()
+	if agyHistory.path == path && agyHistory.mtime == fi.ModTime().UnixNano() && agyHistory.size == fi.Size() {
+		return agyHistory.data
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	agyHistory.path = path
+	agyHistory.mtime = fi.ModTime().UnixNano()
+	agyHistory.size = fi.Size()
+	agyHistory.data = b
+	return b
+}
+
 // agyWorkspace is the directory a conversation was started in, read from
 // agy's prompt history, which is the only place that records it -- the
 // transcript does not.
@@ -114,8 +150,8 @@ func agyWorkspace(path, session string) string {
 	for i := 0; i < 5; i++ {
 		root = filepath.Dir(root)
 	}
-	b, err := os.ReadFile(filepath.Join(root, "history.jsonl"))
-	if err != nil {
+	b := agyHistoryFile(filepath.Join(root, "history.jsonl"))
+	if b == nil {
 		return ""
 	}
 	var cwd string
