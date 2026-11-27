@@ -2,14 +2,16 @@ module github.com/jiangmuran/vibepanel
 
 go 1.26.0
 
-// go1.26.9 fixes ten standard-library vulnerabilities reachable from this
-// code, mostly in net/http's HTTP/2 server (GO-2026-6617, -6613, -6612, -6611,
-// -6610, -6609, -6608, -6607, -6605, -6603), on top of the five go1.26.6 was
+// go1.26.11 fixes two standard-library vulnerabilities reachable from this
+// code (GO-2026-6859, an HTTP/1 server crash via the MaxBytesReader header
+// race, and GO-2026-6809, distrusting compromised x509 intermediates), on top
+// of the ten go1.26.9 was pinned for (GO-2026-6617, -6613, -6612, -6611,
+// -6610, -6609, -6608, -6607, -6605, -6603) and the five go1.26.6 was first
 // pinned for (GO-2026-6089, -6090, -6218, -5972, -5026); pinned so release
 // binaries are built with the fixed stdlib, not whichever the runner happens
-// to have. govulncheck is how this was found; it is worth running before a
-// release, because nothing else will say.
-toolchain go1.26.9
+// to have. govulncheck is how each of these was found; it runs in CI (see
+// .github/workflows/check.yml) precisely because the pins drift otherwise.
+toolchain go1.26.11
 
 require (
 	github.com/caddyserver/certmagic v0.25.4
@@ -19,7 +21,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/libdns/cloudflare v0.2.2
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 	modernc.org/sqlite v1.57.0
 )
 
@@ -50,11 +52,11 @@ require (
 	go.uber.org/zap v1.27.1 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
-	golang.org/x/tools v0.49.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
