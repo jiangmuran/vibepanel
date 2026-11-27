@@ -8,10 +8,11 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/session"
 )
 
-// NOT RUN. Written in a stretch where nothing could be executed, so it has
-// neither compiled nor been checked against the drift it describes. Run it
-// first; then rename session.StateWaiting's value and confirm it fails, because
-// a test that has not been seen to fail is a decoration.
+// Runs in make check. The mutation that proves it: rename a State's value
+// (StateWaiting is the convenient one) and this file goes red, because the
+// literals below stop being members of AllStates. It has been run; the banner
+// above it used to claim otherwise, which is the one way a live guard gets
+// skipped when someone goes looking for what to mutate.
 //
 // What reading did establish, so the remaining risk is a typo rather than a
 // design mistake: `events` is a map[string]string in this package;
