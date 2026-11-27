@@ -28905,3 +28905,41 @@ drawn and then keeps the width it was.
 `preview-check` asks that the JSON tree scrolls to its end and that
 `config.json` as Source, unwrapped, scrolls across; the second failed before
 the change.
+
+
+## 2026-11-27 — The security audit batch (v1.47.2)
+
+A full audit (six parallel auditors plus a live attack bench against an
+isolated panel; the report sits in `audit-2026-11/`) found no exploitable
+hole, one medium and a tail of lows. Everything actionable is in this
+release.
+
+The medium: the share-unlock failure window was keyed to the link alone
+and checked before the password was read, so anyone holding a URL could
+hold its password gate shut for every visitor, forever, from a plain
+cross-site form. The window is gone — the per-address throttle, the
+Argon2 slot queue and the unlock_fail rows are the layers that stay —
+and the test that pins it is the one an reintroduced link-global gate
+has to argue with. (`57d366c`)
+
+With it: the same-second mint-and-revoke race on password epochs
+(`now()+1`), share passwords at eight characters, `/api/me/v1` and the
+origin probe honouring `--allow-from`, the viewer refusing writes into
+the panel's own data directory, refused kills writing audit rows, the
+origin check on a two-second cooldown, the WebSocket event queue bounded
+at 256 after the dedupe premise failed on notice texts, Telegram notice
+buttons trimmed to the 64-byte callback budget at rune boundaries,
+agy's `history.jsonl` read once per pass, and a database's schema SQL
+bounded like any other cell. Every guard arrived with the test that goes
+red without it; five were mutation-verified by hand.
+
+Toolchain go1.26.11 and x/net v0.62.0 (govulncheck named both reachable
+stdlib vulnerabilities; it runs in CI now, and the three actions are
+pinned by SHA). vite 8.2.6, not 8.4.0: 8.2.6 clears the advisory while
+keeping the rolldown whose bundle fits the size guard. `npm audit` is 0.
+
+Not done, recorded as decisions rather than edits: SHA256SUMS is still
+unsigned (signing needs a key whose public half ships in the binary —
+a trust-model change, not a patch), and the hook root token still
+authorises state writes for any session, the accepted decay from the
+September audit.
