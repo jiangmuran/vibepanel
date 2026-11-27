@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -400,6 +401,36 @@ func TestAnEventIsNotDroppedByASnapshot(t *testing.T) {
 	c.queueEvent(notes)
 	if events, _ = c.takePending(); len(events) != 1 {
 		t.Errorf("the same event after a drain came back %d times, want 1", len(events))
+	}
+}
+
+// The event queue is bounded even though its dedupe cannot coalesce every
+// payload: the resources tick and a notice's text differ every emission, and
+// a writer stalled on the socket used to hold one entry per distinct payload
+// with no ceiling. The oldest yields; the comment above maxEventPending says
+// why the oldest and not the newest.
+func TestTheEventQueueYieldsItsOldestPastTheCap(t *testing.T) {
+	c := &Conn{}
+	first := []byte(`{"kind":"first"}`)
+	c.queueEvent(first)
+	for i := 0; i < maxEventPending; i++ {
+		c.queueEvent([]byte(fmt.Sprintf(`{"kind":"tick","n":%d}`, i)))
+	}
+	events, _ := c.takePending()
+	if len(events) != maxEventPending {
+		t.Fatalf("queue held %d events, want %d", len(events), maxEventPending)
+	}
+	if string(events[0]) == string(first) {
+		t.Error("the first queued event survived the cap; the oldest should have yielded")
+	}
+	if string(events[len(events)-1]) != fmt.Sprintf(`{"kind":"tick","n":%d}`, maxEventPending-1) {
+		t.Errorf("the newest event was dropped instead of the oldest: tail %q", events[len(events)-1])
+	}
+	// Retiring the oldest also retires its dedupe entry: a re-emit of the
+	// first event must be queueable again.
+	c.queueEvent(first)
+	if events, _ = c.takePending(); len(events) != 1 || string(events[0]) != string(first) {
+		t.Errorf("the retired event could not re-queue: %d events", len(events))
 	}
 }
 

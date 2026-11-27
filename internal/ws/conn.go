@@ -47,6 +47,12 @@ const maxInboundMessage = 4 << 20
 // and the connection is the right thing to lose.
 const readLimit = 2 * maxInboundMessage
 
+// maxEventPending caps the deduplicated event queue below queueEvent. The
+// dedupe's own premise -- identical payloads are one -- holds only for the
+// state kinds; payloads that differ every time are not coalesced by it, so
+// the queue needs a number after all.
+const maxEventPending = 256
+
 // Resolver turns a session id into the tmux identity and size needed to attach.
 // The HTTP layer supplies it so this package does not depend on the store.
 type Resolver interface {
@@ -161,12 +167,16 @@ func (c *Conn) queueState(payload []byte) {
 // seconds, so the window is not theoretical: a note saved in one browser did
 // not appear in another until something unrelated woke it.
 //
-// A queue rather than a second single slot, and deduplicated by payload rather
-// than bounded by a number. These messages carry no content -- they say what
-// changed and the panel that cares fetches it -- so two identical ones are one,
-// and the queue's length is the number of distinct (project, kind) pairs with
-// an unsent notification. That is small for the same reason the message is
-// small, and it cannot grow without bound however hard a writer stalls.
+// A queue rather than a second single slot, and deduplicated by payload.
+// These messages carry no content -- they say what changed and the panel that
+// cares fetches it -- so two identical ones are one. The dedupe premise holds
+// for the state kinds and nothing else: the resources tick and a notice's
+// text ride in event payloads too, and those differ every time, so the
+// queue's length is not "distinct kinds with an unsent notification" but
+// "distinct payloads a stalled writer has absorbed", which has no natural
+// ceiling. maxEventPending is that ceiling; the oldest yields, because the
+// newest facts are the ones a refetch will answer and the receiver's next
+// snapshot is the truth either way.
 //
 // What this must not become is un-coalesced: the whole reason snapshots go
 // through a slot is that "a viewer whose socket cannot take another byte must
@@ -179,6 +189,11 @@ func (c *Conn) queueEvent(payload []byte) {
 		c.eventSeen = map[string]bool{}
 	}
 	if !c.eventSeen[key] {
+		if len(c.eventPending) >= maxEventPending {
+			// Retire the oldest, so a re-emit of it can queue again later.
+			delete(c.eventSeen, string(c.eventPending[0]))
+			c.eventPending = c.eventPending[1:]
+		}
 		c.eventSeen[key] = true
 		c.eventPending = append(c.eventPending, payload)
 	}
