@@ -884,7 +884,7 @@ function NewLink({
         <button
           type="button"
           onClick={() => void create()}
-          disabled={busy || (accessMode === 'custom' && customPw.length < 6)}
+          disabled={busy || (accessMode === 'custom' && customPw.length < 8)}
           data-testid="share-create"
           className="vp-primary text-vp-sm"
         >
@@ -1022,8 +1022,8 @@ function LinkEditor({
     }
   }
 
-  const needsNewCustomPw = accessMode === 'custom' && link.accessMode !== 'custom' && customPw.length < 6
-  const badNewCustomPw = accessMode === 'custom' && customPw.length > 0 && customPw.length < 6
+  const needsNewCustomPw = accessMode === 'custom' && link.accessMode !== 'custom' && customPw.length < 8
+  const badNewCustomPw = accessMode === 'custom' && customPw.length > 0 && customPw.length < 8
 
   return (
     // Inset under the row it belongs to, with the accent edge on its left, so

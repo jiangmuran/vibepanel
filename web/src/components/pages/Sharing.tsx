@@ -1180,7 +1180,7 @@ function SharePasswordLine({
                 value={pw}
                 onChange={(e) => setPw(e.target.value)}
                 onKeyDown={(e) => {
-                  if (isEnter(e) && pw.length >= 6) void save(pw)
+                  if (isEnter(e) && pw.length >= 8) void save(pw)
                 }}
                 placeholder={t('sharing.passwordPlaceholder')}
                 style={showInput || pw === '' ? undefined : ({ WebkitTextSecurity: 'disc' } as CSSProperties)}
@@ -1212,7 +1212,7 @@ function SharePasswordLine({
             </button>
             <button
               type="button"
-              disabled={busy || pw.length < 6}
+              disabled={busy || pw.length < 8}
               data-testid="share-password-save"
               onClick={() => void save(pw)}
               className="vp-primary text-vp-sm"

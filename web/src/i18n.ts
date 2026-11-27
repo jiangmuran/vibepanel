@@ -1882,7 +1882,7 @@ const DICT = {
   'sharing.passwordHide': { zh: '隐藏密码', en: 'Hide password' },
   'sharing.passwordCopy': { zh: '复制密码', en: 'Copy password' },
   'sharing.passwordCopied': { zh: '密码已复制', en: 'Password copied' },
-  'sharing.passwordPlaceholder': { zh: '输入至少6位密码', en: 'At least 6 characters' },
+  'sharing.passwordPlaceholder': { zh: '输入至少8位密码', en: 'At least 8 characters' },
   'sharing.passwordGenerate': { zh: '随机生成', en: 'Generate' },
   'sharing.passwordSave': { zh: '保存密码', en: 'Save password' },
   'sharing.passwordClear': { zh: '清除密码', en: 'Clear password' },
