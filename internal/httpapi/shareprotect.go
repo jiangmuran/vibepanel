@@ -42,7 +42,12 @@ const (
 	sharedPasswordEpochKey    = "sharing.password_epoch"
 	sharedPasswordSealContext = "share-global-password"
 
-	minSharePasswordLen = 6
+	// Eight, not the six this used to be: the online paths are throttled, but
+	// the stored Argon2id hash is attacked offline where nothing else holds
+	// and the only cost is the hash itself. Six lowercase characters are ~19
+	// bits; eight are ~37. Passwords already stored keep working -- only new
+	// and changed ones are held to this.
+	minSharePasswordLen = 8
 	maxSharePasswordLen = 256
 
 	shareUnlockCookieTTL = 7 * 24 * time.Hour
@@ -53,9 +58,6 @@ const (
 
 	shareAccessEventMaxAge  = 30 * 24 * 3600
 	shareAccessEventMaxRows = 20000
-
-	linkUnlockFailCap    = 30
-	linkUnlockFailWindow = 5 * time.Minute
 )
 
 const (
@@ -74,13 +76,13 @@ type shareProtectState struct {
 	mu             sync.Mutex
 	unlockSecret   []byte
 	unlockThrottle *auth.Throttle
-	linkFails      map[string]*failWindow
 	visitCool      *auth.Cooldown
 	pollCool       *auth.Cooldown
 	okEventCool    *auth.Cooldown
 	failEventCool  *auth.Cooldown
 	actionCool     *auth.Cooldown
 	trimCool       *auth.Cooldown
+	checkCool      *auth.Cooldown
 }
 
 // shareClientKey canonicalizes an IP address for composite Throttle/Cooldown
@@ -97,11 +99,6 @@ func shareClientKey(ip string) string {
 	return parsed.Mask(net.CIDRMask(64, 128)).String()
 }
 
-type failWindow struct {
-	start time.Time
-	count int
-}
-
 func (p *shareProtectState) throttle() *auth.Throttle {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -113,51 +110,7 @@ func (p *shareProtectState) throttle() *auth.Throttle {
 	return p.unlockThrottle
 }
 
-func (p *shareProtectState) linkFailBlocked(linkID string, now time.Time) (time.Duration, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.linkFails == nil {
-		return 0, false
-	}
-	fw, ok := p.linkFails[linkID]
-	if !ok {
-		return 0, false
-	}
-	if now.Sub(fw.start) >= linkUnlockFailWindow {
-		delete(p.linkFails, linkID)
-		return 0, false
-	}
-	if fw.count >= linkUnlockFailCap {
-		return linkUnlockFailWindow - now.Sub(fw.start), true
-	}
-	return 0, false
-}
-
-func (p *shareProtectState) recordLinkFail(linkID string, now time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.linkFails == nil {
-		p.linkFails = map[string]*failWindow{}
-	}
-	if len(p.linkFails) > 4096 {
-		for k, fw := range p.linkFails {
-			if now.Sub(fw.start) >= linkUnlockFailWindow {
-				delete(p.linkFails, k)
-			}
-		}
-		if len(p.linkFails) > 4096 {
-			p.linkFails = map[string]*failWindow{}
-		}
-	}
-	fw, ok := p.linkFails[linkID]
-	if !ok || now.Sub(fw.start) >= linkUnlockFailWindow {
-		p.linkFails[linkID] = &failWindow{start: now, count: 1}
-		return
-	}
-	fw.count++
-}
-
-func (p *shareProtectState) cooldowns() (visit, poll, okEv, failEv, action, trim *auth.Cooldown) {
+func (p *shareProtectState) cooldowns() (visit, poll, okEv, failEv, action, trim, check *auth.Cooldown) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.visitCool == nil {
@@ -167,8 +120,9 @@ func (p *shareProtectState) cooldowns() (visit, poll, okEv, failEv, action, trim
 		p.failEventCool = auth.NewCooldown(5 * time.Second)
 		p.actionCool = auth.NewCooldown(time.Minute)
 		p.trimCool = auth.NewCooldown(10 * time.Minute)
+		p.checkCool = auth.NewCooldown(2 * time.Second)
 	}
-	return p.visitCool, p.pollCool, p.okEventCool, p.failEventCool, p.actionCool, p.trimCool
+	return p.visitCool, p.pollCool, p.okEventCool, p.failEventCool, p.actionCool, p.trimCool, p.checkCool
 }
 
 func (s *Server) shareUnlockSecret(ctx context.Context) ([]byte, error) {
@@ -618,13 +572,26 @@ func (s *Server) handleShareUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
+	// The layers against password guessing, in the order they fire:
+	//
+	//  1. this throttle, exponential per address+link. shareClientKey has
+	//     already masked IPv6 to its /64, so address rotation inside one
+	//     allocation shares a counter;
+	//  2. the Argon2 slot queue below, which bounds what every source
+	//     together can cost the panel, whatever the number of addresses;
+	//  3. the unlock_fail access rows, which put the attempt on the owner's
+	//     statistics page.
+	//
+	// There is deliberately no link-global failure window on top. One existed
+	// (30 failures per link per 5 minutes), it was checked before the password
+	// was even read, and it was keyed to the link alone -- so anyone holding
+	// the URL, no password required, could hold a protected link shut for all
+	// of its visitors and renew that every five minutes, from a plain
+	// cross-site form. Any gate this wide that fires before the password check
+	// reintroduces that lock; TestAWrongPasswordBurstDoesNotLockTheLinkFor-
+	// OtherVisitors is where changing that decision is argued, out loud.
 	throttleKey := shareClientKey(ip) + "|" + link.ID
 	if wait, blocked := s.pb.protect.throttle().Delay(throttleKey, now); blocked {
-		secs := int(wait.Seconds() + 0.999)
-		writePasswordGatePage(w, r, http.StatusTooManyRequests, "throttled", secs)
-		return
-	}
-	if wait, blocked := s.pb.protect.linkFailBlocked(link.ID, now); blocked {
 		secs := int(wait.Seconds() + 0.999)
 		writePasswordGatePage(w, r, http.StatusTooManyRequests, "throttled", secs)
 		return
@@ -688,16 +655,10 @@ func (s *Server) handleShareUnlock(w http.ResponseWriter, r *http.Request) {
 		writePasswordGatePage(w, r, http.StatusTooManyRequests, "throttled", secs)
 		return
 	}
-	if wait, blocked := s.pb.protect.linkFailBlocked(link.ID, now); blocked {
-		secs := int(wait.Seconds() + 0.999)
-		writePasswordGatePage(w, r, http.StatusTooManyRequests, "throttled", secs)
-		return
-	}
 	s.pb.protect.throttle().Fail(throttleKey, now)
 
 	matched, verr := auth.VerifyPassword(password, targetHash)
 	if verr != nil || !matched {
-		s.pb.protect.recordLinkFail(link.ID, now)
 		s.recordShareAccess(ctx, link.ID, ip, "unlock_fail", r.UserAgent(), "wrong password")
 		s.auditFromOutside(ctx, "share.unlock_failed", "", ip, link.Name)
 		writePasswordGatePage(w, r, http.StatusUnauthorized, "wrong", 0)
@@ -846,7 +807,7 @@ func (s *Server) recordShareAccess(ctx context.Context, linkID, ip, event, rawUA
 		return
 	}
 	now := time.Now()
-	visitCool, pollCool, okEvCool, failEvCool, actionCool, trimCool := s.pb.protect.cooldowns()
+	visitCool, pollCool, okEvCool, failEvCool, actionCool, trimCool, _ := s.pb.protect.cooldowns()
 	ua := summarizeUA(rawUA)
 	ipKey := shareClientKey(ip)
 

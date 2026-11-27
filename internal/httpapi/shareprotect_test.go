@@ -493,3 +493,105 @@ func TestShareSharedAndCustomPasswordLifecycle(t *testing.T) {
 	// Silence unused auth import check if refactored.
 	_ = auth.HashToken
 }
+
+// Thirty wrong passwords from thirty addresses must not lock the link for
+// everybody else.
+//
+// The unlock path used to keep a link-global failure window (30 per link per
+// 5 minutes) checked before the password was read. Anyone holding the URL --
+// no password needed -- could hold a protected link shut for all of its
+// visitors indefinitely, renewed every five minutes, from a plain cross-site
+// form; correct passwords got the same 429 as wrong ones. The window is gone
+// on purpose (see the layering comment in handleShareUnlock); this test is
+// what makes reintroducing any gate that wide before the password check a
+// decision that has to argue with a red test first.
+func TestAWrongPasswordBurstDoesNotLockTheLinkForOtherVisitors(t *testing.T) {
+	ts, srv := newTestServer(t)
+	nets, err := auth.ParseCIDRs([]string{"127.0.0.1/32", "::1/128"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Auth.TrustedProxies = nets
+	p := newPublishedPage(t, ts, kioskManifest, kioskFiles)
+	custom := pageLink(t, ts, p.page.ID, `,"accessMode":"custom","password":"only-for-c"`)
+
+	wrong := url.Values{"password": {"wrong-pw"}}.Encode()
+	for i := 0; i < 30; i++ {
+		abuser := newVisitorClient(t)
+		code, body, _ := doVisitor(t, abuser, http.MethodPost, ts.URL+"/share/"+custom.Token+"/unlock",
+			wrong, "", fmt.Sprintf("203.0.113.%d", 100+i), "")
+		if code != http.StatusUnauthorized {
+			t.Fatalf("wrong password from address %d = %d, want 401: %s", i, code, body)
+		}
+	}
+
+	// A different address, the correct password: this is the line the
+	// link-global window failed. 303 means the gate read the password.
+	if code, body, _ := doVisitor(t, newVisitorClient(t), http.MethodPost, ts.URL+"/share/"+custom.Token+"/unlock",
+		url.Values{"password": {"only-for-c"}}.Encode(), "", "198.51.100.200", ""); code != http.StatusSeeOther {
+		t.Fatalf("correct password from a fresh address = %d, want 303 (locked for everyone?): %s", code, body)
+	}
+}
+
+// An unlock must queue behind the password slots, not derive around them.
+//
+// The sign-in burst test (TestASignInBurstCannotMultiplyTheDerivation) can
+// count derivations because its sixteen attempts share one throttle key, so
+// the queued ones hit the post-acquire re-check. Unlock visitors are distinct
+// by design and never accumulate each other's failures, so there is no count
+// to assert here — the property to pin is the gate itself: while every slot
+// is held, an unlock waits inside acquirePasswordSlot and runs no derivation;
+// deleting that acquire block would let each burst member allocate 64 MiB
+// the moment it arrived.
+func TestAnUnlockQueuesBehindThePasswordSlots(t *testing.T) {
+	ts, srv := newTestServer(t)
+	nets, err := auth.ParseCIDRs([]string{"127.0.0.1/32", "::1/128"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Auth.TrustedProxies = nets
+	p := newPublishedPage(t, ts, kioskManifest, kioskFiles)
+	custom := pageLink(t, ts, p.page.ID, `,"accessMode":"custom","password":"only-for-c"`)
+
+	for i := 0; i < cap(passwordSlots); i++ {
+		passwordSlots <- struct{}{}
+	}
+	held := cap(passwordSlots)
+
+	done := make(chan int, 1)
+	go func() {
+		client := newVisitorClient(t)
+		res, err := client.Post(ts.URL+"/share/"+custom.Token+"/unlock",
+			"application/x-www-form-urlencoded",
+			strings.NewReader(url.Values{"password": {"wrong-pw"}}.Encode()))
+		if err != nil {
+			done <- 0
+			return
+		}
+		res.Body.Close()
+		done <- res.StatusCode
+	}()
+
+	select {
+	case code := <-done:
+		t.Fatalf("unlock answered %d while every derivation slot was held: the slot queue is not on this path", code)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// One slot free: the queued unlock proceeds, reaches the password check,
+	// and answers 401 like any wrong password.
+	<-passwordSlots
+	held--
+	var code int
+	select {
+	case code = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("queued unlock never completed after a slot was released")
+	}
+	if code != http.StatusUnauthorized {
+		t.Errorf("queued unlock = %d, want 401", code)
+	}
+	for i := 0; i < held; i++ {
+		<-passwordSlots
+	}
+}

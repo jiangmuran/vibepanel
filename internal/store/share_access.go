@@ -112,7 +112,12 @@ func (d *DB) SetShareLinkAccess(ctx context.Context, id string, mode ShareAccess
 	}
 	var res sql.Result
 	var err error
-	ts := now()
+	// +1 so the new epoch is strictly after any unlock minted during this
+	// second: a shared-mode cookie stores the mint time as its epoch and loses
+	// to the bumped value only while the bump is the later one (share.go's
+	// `tok.LinkEpoch < link.PasswordEpoch`). Same-second mint+bump otherwise
+	// leaves the cookie valid through its full TTL.
+	ts := now() + 1
 	if mode == ShareAccessCustom && keepExistingPassword {
 		res, err = d.sql.ExecContext(ctx, `
 			UPDATE share_links
@@ -140,12 +145,13 @@ func (d *DB) SetShareLinkAccess(ctx context.Context, id string, mode ShareAccess
 }
 
 // BumpShareLinkPasswordEpoch advances a link's password_epoch to at least the
-// current unix timestamp (and strictly above its previous value) so both
-// per-link cookies/grants and older shared-password cookies must re-authenticate.
+// current unix timestamp (and strictly above its previous value and any unlock
+// minted during this second) so both per-link cookies/grants and older
+// shared-password cookies must re-authenticate.
 func (d *DB) BumpShareLinkPasswordEpoch(ctx context.Context, id string) error {
 	res, err := d.sql.ExecContext(ctx,
 		`UPDATE share_links SET password_epoch = MAX(password_epoch + 1, ?) WHERE id = ? AND purpose = ''`,
-		now(), id)
+		now()+1, id)
 	if err != nil {
 		return fmt.Errorf("store: bump share link password epoch: %w", err)
 	}
@@ -161,7 +167,7 @@ func (d *DB) ApplySharedPasswordToPublicLinks(ctx context.Context) (int64, error
 	res, err := d.sql.ExecContext(ctx, `
 		UPDATE share_links
 		SET access_mode = 'shared', password_hash = '', password_enc = x'', password_epoch = MAX(password_epoch + 1, ?)
-		WHERE purpose = '' AND access_mode = 'none'`, now())
+		WHERE purpose = '' AND access_mode = 'none'`, now()+1)
 	if err != nil {
 		return 0, fmt.Errorf("store: apply shared password to public links: %w", err)
 	}
