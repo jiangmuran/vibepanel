@@ -36,7 +36,10 @@ const PORT = await new Promise((resolve, reject) => {
 const SOCKET = `vppreview-${process.pid}`
 const DATA = mkdtempSync(join(tmpdir(), 'vppreview-'))
 const FAKE_HOME = mkdtempSync(join(tmpdir(), 'vppreview-home-'))
-const PROJ = join(DATA, 'fixtures')
+// The project is a sibling of the data directory, not inside it: the viewer
+// refuses writes into the panel's own data directory, and a fixture living
+// there would make every save in this check that refusal.
+const PROJ = mkdtempSync(join(tmpdir(), 'vpproject-'))
 
 const findings = []
 const note = (sev, area, msg) => findings.push({ sev, area, msg })
@@ -140,7 +143,7 @@ async function cleanup() {
   await sleep(400)
   try { execSync(`tmux -L ${SOCKET} kill-server`, { stdio: 'ignore' }) } catch { /* none */ }
   try { rmSync(join('/tmp', `tmux-${process.getuid()}`, SOCKET), { force: true }) } catch { /* best effort */ }
-  for (const dir of [DATA, FAKE_HOME]) {
+  for (const dir of [DATA, FAKE_HOME, PROJ]) {
     try { rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
   }
 }
