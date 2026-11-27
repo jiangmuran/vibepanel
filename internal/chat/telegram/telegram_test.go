@@ -300,7 +300,7 @@ func TestRegistered(t *testing.T) {
 		t.Fatalf("defaults: %+v", ad.(*Adapter))
 	}
 	caps := ad.Capabilities()
-	want := chat.Capabilities{Edit: true, Buttons: true, QuoteRefs: true, Proactive: true, MaxText: 4096, Images: true, Typing: true}
+	want := chat.Capabilities{Edit: true, Buttons: true, QuoteRefs: true, Proactive: true, MaxText: 4096, CallbackBytes: 64, Images: true, Typing: true}
 	if caps != want || ad.Kind() != "telegram" {
 		t.Fatalf("caps = %+v", caps)
 	}

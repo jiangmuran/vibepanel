@@ -50,6 +50,11 @@ type Capabilities struct {
 	// MaxText is the longest text one message may carry, in runes; the
 	// bridge splits past it. Zero means the adapter has no known limit.
 	MaxText int
+	// CallbackBytes is how many bytes one button's Value may carry; the
+	// bridge trims a notice's words to fit. Telegram rejects callback_data
+	// past 64 whole, which is the failure this exists for: the notice is
+	// undelivered, not the button shortened. Zero means no known limit.
+	CallbackBytes int
 	// Images: SendImage works.
 	Images bool
 	// Typing: Typing works and is worth calling.

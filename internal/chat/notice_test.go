@@ -3,6 +3,7 @@ package chat
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
@@ -36,6 +37,37 @@ func TestANoticeReachesThePhoneWhateverTheState(t *testing.T) {
 	}
 	if c := CleanNotice(Notice{Level: "loud", Text: "x"}); c.Level != "info" {
 		t.Errorf("level: %q", c.Level)
+	}
+}
+
+// A channel with a callback budget gets its buttons' values trimmed to it,
+// whole runes only. Telegram caps callback_data at 64 bytes; twelve runes of
+// emoji are 48 bytes, and with the "reply:<session>:0:" frame that was a
+// notice Telegram refused to deliver at all.
+func TestANoticesButtonsFitTheChannelsCallbackBudget(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true, Buttons: true, CallbackBytes: 64})
+	r.peer("me", store.PeerPaired, store.ModeNormal)
+	row := r.session("s1", "agent", "claude", session.StateWorking)
+	choice := strings.Repeat("👎", 12) // 12 runes, 48 bytes; value 76 bytes before trimming
+	n := r.b.Notify(r.ctx, row, Notice{Text: "ready?", Choices: []string{choice}})
+	if n != 1 {
+		t.Fatalf("sent to %d contacts, want 1", n)
+	}
+	last := r.ad.sent[len(r.ad.sent)-1]
+	if len(last.Buttons) != 1 {
+		t.Fatalf("buttons: %+v", last.Buttons)
+	}
+	b := last.Buttons[0]
+	if len(b.Value) > 64 {
+		t.Errorf("button value is %d bytes, want at most 64: %q", len(b.Value), b.Value)
+	}
+	// The trimmed tail is what gets typed: it must still be whole runes, so
+	// the pressed button does not type mojibake.
+	if got := strings.TrimPrefix(b.Value, "reply:"+row.ID+":0:"); got != "" && !utf8.ValidString(got) {
+		t.Errorf("the trimmed value cut a rune in half: %q", b.Value)
+	}
+	if !strings.Contains(b.Value, "reply:"+row.ID+":0:") {
+		t.Errorf("the trim ate the framing: %q", b.Value)
 	}
 }
 

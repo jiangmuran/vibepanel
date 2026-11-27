@@ -150,8 +150,12 @@ func (a *Adapter) Capabilities() chat.Capabilities {
 		QuoteRefs: true,
 		Proactive: true,
 		MaxText:   4096,
-		Images:    true,
-		Typing:    true,
+		// callback_data is 64 bytes whole, prefix included. Twelve runes of a
+		// choice can be 48 bytes of emoji, and with the "reply:<session>:0:"
+		// frame that is a notice Telegram refuses to send.
+		CallbackBytes: 64,
+		Images:        true,
+		Typing:        true,
 	}
 }
 

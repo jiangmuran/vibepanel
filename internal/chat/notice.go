@@ -119,7 +119,20 @@ func (b *Bridge) Notify(ctx context.Context, row store.Session, n Notice) int {
 			for i, c := range n.Choices {
 				// reply:<session>:0:<text> -- the verb, the session the button
 				// belongs to, no bound message, and the words to type.
-				out.Buttons = append(out.Buttons, Button{Label: c, Value: "reply:" + row.ID + ":0:" + c, Danger: i > 0 && n.Level == "warn"})
+				// A channel with a callback budget gets the value trimmed to
+				// it, words side only, at rune boundaries: Telegram rejects
+				// the whole callback_data past 64 bytes and the failure is a
+				// notice undelivered, not a shorter button -- and a cut
+				// mid-rune would type mojibake into the session on press.
+				value := "reply:" + row.ID + ":0:" + c
+				if ch.caps.CallbackBytes > 0 && len(value) > ch.caps.CallbackBytes {
+					for c != "" && len(value) > ch.caps.CallbackBytes {
+						r := []rune(c)
+						c = string(r[:len(r)-1])
+						value = "reply:" + row.ID + ":0:" + c
+					}
+				}
+				out.Buttons = append(out.Buttons, Button{Label: c, Value: value, Danger: i > 0 && n.Level == "warn"})
 			}
 		} else if len(n.Choices) > 0 {
 			shown := *card
