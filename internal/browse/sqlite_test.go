@@ -302,3 +302,25 @@ func TestADatabaseAnswerIsBounded(t *testing.T) {
 		}
 	}
 }
+
+// The answer's bound covers a table's schema SQL the way it covers a text
+// cell. A hostile database ships megabyte CREATE clauses -- a CHECK holding a
+// giant literal is enough -- and the rows and tables bounds said nothing
+// about the list's own text.
+func TestASchemaStatementIsBoundedLikeAnyOtherCell(t *testing.T) {
+	dir := t.TempDir()
+	huge := "CREATE TABLE big(a INTEGER CHECK(a IN ('" + strings.Repeat("x", 100000) + "')))"
+	path := makeDB(t, dir, "huge.db", huge)
+	l, err := ReadDatabase(context.Background(), path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Tables) == 0 {
+		t.Fatal("no tables listed")
+	}
+	for _, tb := range l.Tables {
+		if got := len([]rune(tb.SQL)); got > dbMaxText {
+			t.Errorf("%s carries %d runes of schema SQL, want at most %d", tb.Name, got, dbMaxText)
+		}
+	}
+}

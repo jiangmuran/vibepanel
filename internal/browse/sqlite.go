@@ -101,6 +101,21 @@ type DBError struct {
 
 func (e *DBError) Error() string { return e.Reason }
 
+// cutSchema bounds one sqlite_schema CREATE statement. dbMaxText bounds what
+// a cell of the answer carries and the schema is a cell like any other: a
+// hostile database ships megabyte CREATE clauses, and the bound on rows was
+// never the bound on the list.
+func cutSchema(s string) string {
+	if len(s) <= dbMaxText {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= dbMaxText {
+		return s
+	}
+	return string(r[:dbMaxText])
+}
+
 // ReadDatabase lists the database at path and reads the first rows of table,
 // or of the first table when table is empty.
 func ReadDatabase(ctx context.Context, path, table string) (*DBListing, error) {
@@ -129,7 +144,7 @@ func ReadDatabase(ctx context.Context, path, table string) (*DBListing, error) {
 			if err := rows.Scan(&t.Kind, &t.Name, &stmt); err != nil {
 				return err
 			}
-			t.SQL, t.Rows, t.Columns = stmt.String, -1, []DBColumn{}
+			t.SQL, t.Rows, t.Columns = cutSchema(stmt.String), -1, []DBColumn{}
 			if len(l.Tables) == dbMaxTables {
 				l.Note = fmt.Sprintf("Only the first %d tables are listed.", dbMaxTables)
 				break
