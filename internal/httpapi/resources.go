@@ -359,6 +359,15 @@ func (s *Server) handleResourceKill(w http.ResponseWriter, r *http.Request) {
 	}
 	act, err := s.Resources.Kill(req.SessionID, req.PID, req.Start, who)
 	if err != nil {
+		// A refused attempt is as much part of the record as a made one: the
+		// button was pressed on a process the panel could not prove belonged
+		// to the named session, and "nothing happened" with no row is the
+		// shape an abuse probe looks like from the inside. ErrGone is the
+		// benign race with an exit and stays out of the journal.
+		if !errors.Is(err, resources.ErrGone) && !errors.Is(err, resources.ErrNoAlert) {
+			s.audit(r.Context(), "resources.kill_refused", who, s.clientIP(r),
+				fmt.Sprintf("session %s pid %d: %v", req.SessionID, req.PID, err))
+		}
 		writeResourceErr(w, err)
 		return
 	}

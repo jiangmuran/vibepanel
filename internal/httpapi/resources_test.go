@@ -241,3 +241,30 @@ func TestTheResourcePageNamesASessionsProjectAndWhetherItIsArchived(t *testing.T
 		t.Fatalf("%+v", got)
 	}
 }
+
+// A refused kill leaves a row. The success path records one; the refusal --
+// a button pressed on a process the panel could not prove belonged to the
+// named session -- used to be invisible, and "nothing happened, no row" is
+// the shape an abuse probe looks like from the inside.
+func TestARefusedKillIsAudited(t *testing.T) {
+	ts, srv := newTestServer(t)
+	srv.Resources = resources.New(resources.Env{})
+	code, body := doJSON(t, ts, http.MethodPost, "/api/resources/kill",
+		`{"sessionId":"nosuchsession","pid":999999,"start":1}`)
+	if code != http.StatusNotFound {
+		t.Fatalf("kill naming no session = %d %s, want 404", code, body)
+	}
+	rows, err := srv.DB.RecentAuditPrefix(context.Background(), "resources.", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.Event == "resources.kill_refused" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no resources.kill_refused row among %d rows", len(rows))
+	}
+}

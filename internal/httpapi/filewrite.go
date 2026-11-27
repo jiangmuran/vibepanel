@@ -48,6 +48,15 @@ var fileWriteMu sync.Mutex
 // window there to show two saves cannot both pass it.
 var fileWriteChecked = func() {}
 
+// underDir says whether abs is dir itself or inside it.
+func underDir(abs, dir string) bool {
+	rel, err := filepath.Rel(dir, abs)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // contentETag is the validator for a text file's bytes, strong and quoted as
 // RFC 9110 has it.
 func contentETag(b []byte) string {
@@ -85,6 +94,18 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveWriteFile(w http.ResponseWriter, r *http.Request, abs string, auditDetail func(int) string) {
 	ctx := r.Context()
+	// The panel's own data directory is the one tree the editor must not be
+	// able to replace with text: the live database and secrets.key live there,
+	// and a save over either is one wrong click away from deleting the
+	// panel's memory. Reads stay open (docs/design.md); this bounds writes.
+	// Symlinks are already resolved into abs by the callers, so a link
+	// pointing in is caught here as the file it points at.
+	if s.Cfg.DataDir != "" {
+		if root, derr := filepath.EvalSymlinks(s.Cfg.DataDir); derr == nil && underDir(abs, root) {
+			writeErr(w, http.StatusForbidden, "the panel's own data directory is not writable from here")
+			return
+		}
+	}
 	info, err := os.Stat(abs)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "no such file")

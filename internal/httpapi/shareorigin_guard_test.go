@@ -279,6 +279,7 @@ func TestTheCheckDialsOnlyPublicAddresses(t *testing.T) {
 		mu.Lock()
 		answer = ips
 		mu.Unlock()
+		resetOriginCheck(t, srv)
 		got := postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 		if got.Status != "not_public" || got.Ready || got.Reachable {
 			t.Errorf("resolving to %v: status %q ready=%v, want not_public", ips, got.Status, got.Ready)
@@ -310,6 +311,7 @@ func TestTheCheckDialsOnlyPublicAddresses(t *testing.T) {
 		"http://share.example.com:8080",
 		"https://localhost",
 	} {
+		resetOriginCheck(t, srv)
 		code, body, _ := sendRaw(t, ts, http.MethodPost, "/api/settings/sharing/check", "application/json",
 			[]byte(`{"origin":"`+origin+`"}`))
 		if code != http.StatusBadRequest {
@@ -337,6 +339,7 @@ func TestTheCheckDialsOnlyPublicAddresses(t *testing.T) {
 	mu.Lock()
 	answer = []string{sharePublicIP}
 	mu.Unlock()
+	resetOriginCheck(t, srv)
 	got := postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com:8443"}`)
 	if got.Status != "needs_https" || !got.HTTPPortOpen {
 		t.Errorf("public address with only port 80 open: %+v, want needs_https", got)

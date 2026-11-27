@@ -133,6 +133,14 @@ func (b *shareProbeBook) lookup(nonce string) (*shareProbeHit, bool) {
 // `/api/share/` so red line 8 stays untouched). Only an active 128-bit nonce
 // minted seconds ago by a signed-in owner gets 200; everything else gets 404.
 func (s *Server) handleShareProbe(w http.ResponseWriter, r *http.Request) {
+	// The same rule every capability surface applies, for the same reason as
+	// AUDIT.md #1: a route the allowlist does not reach is a route an excluded
+	// address can. The probe answers nothing without a live nonce, but the
+	// exemption was never written down as a decision, and unwritten is how
+	// the preview route's omission happened.
+	if s.refuseAddress(r.Context(), w, r) {
+		return
+	}
 	nonce := chi.URLParam(r, "nonce")
 	if len(nonce) != 32 {
 		http.NotFound(w, r)
@@ -617,6 +625,17 @@ func (s *Server) handleCheckShareOrigin(w http.ResponseWriter, r *http.Request) 
 	}
 	if why := s.collidesWithPanelHost(r, host); why != "" {
 		refuse(host, why)
+		return
+	}
+	// The check resolves a name somebody typed, runs `nginx -T` and probes up
+	// to three URLs each call; provision is held to one-at-a-time panel-wide
+	// and the check had nothing. Past the shape refusals above so that a
+	// malformed origin costs no budget; two seconds between checks from one
+	// address is faster than anybody reads the first answer.
+	_, _, _, _, _, _, checkCool := s.pb.protect.cooldowns()
+	if !checkCool.Allow("origin.check", shareClientKey(ip), time.Now()) {
+		s.audit(actx, "sharing.origin_checked", who, ip, host+" refused: wait between domain checks")
+		writeErr(w, http.StatusTooManyRequests, "wait a moment between domain checks")
 		return
 	}
 	res := s.checkShareOrigin(r.Context(), origin, scheme, host, hostname, r.Host)

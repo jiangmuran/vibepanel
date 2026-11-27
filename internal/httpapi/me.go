@@ -60,6 +60,14 @@ func meFrom(r *http.Request) store.Session {
 func (s *Server) requireSessionToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		// The same rule every capability surface applies, for the same reason
+		// as AUDIT.md #1: an address the operator excluded must not reach a
+		// credential-resolving route just because it is new. The callers are
+		// sessions on this machine, so loopback unless the operator says
+		// otherwise -- exactly what --allow-from is for.
+		if s.refuseAddress(ctx, w, r) {
+			return
+		}
 		id := strings.TrimSpace(r.Header.Get(meSessionHeader))
 		presented := bearerToken(r)
 		if id == "" || presented == "" {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
@@ -277,5 +278,32 @@ func TestASessionSendsAFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(srv.attachmentsDir(sess.ID), "big.bin")); err == nil {
 		t.Error("the oversized file was kept")
+	}
+}
+
+// The me door resolves a credential, so the address allowlist applies to it
+// like every capability surface: an address the operator excluded must not
+// reach it just because the route is new (AUDIT.md #1's shape).
+func TestTheMeDoorHonoursTheAddressAllowlist(t *testing.T) {
+	ts, srv := newTestServer(t)
+	row, token := meSession(t, ts, srv)
+	nets, err := auth.ParseCIDRs([]string{"203.0.113.0/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Auth.Allow = nets
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/me/v1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(meSessionHeader, row.ID)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := anonymousClient(t).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Errorf("me from an excluded address = %d, want 403", res.StatusCode)
 	}
 }

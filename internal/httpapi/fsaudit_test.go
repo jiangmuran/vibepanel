@@ -324,3 +324,36 @@ func indexOf(route string) int {
 	}
 	return -1
 }
+
+// The panel's own data directory is not writable through the viewer, not even
+// signed in: the live database and secrets.key live there, and a save over
+// either is one click from deleting the panel's memory. Reads stay open; the
+// write is what this refuses, on the resolved path so a symlink does not
+// launder it.
+func TestThePanelsOwnDataDirectoryIsNotWritable(t *testing.T) {
+	ts, srv, _, _ := writeFixture(t)
+	target := filepath.Join(srv.Cfg.DataDir, "secrets.key")
+	if err := os.WriteFile(target, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, body, _ := putFile(t, ts, ts.URL+"/api/fs/file?path="+url.QueryEscape(target),
+		contentETag([]byte("old\n")), []byte("new\n"))
+	if code != http.StatusForbidden || !strings.Contains(body, "data directory") {
+		t.Errorf("write into the data directory = %d %s, want 403", code, body)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "old\n" {
+		t.Fatalf("the write landed: %q", got)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	code, body, _ = putFile(t, ts, ts.URL+"/api/fs/file?path="+url.QueryEscape(link),
+		contentETag([]byte("old\n")), []byte("new\n"))
+	if code != http.StatusForbidden {
+		t.Errorf("write through a symlink into the data directory = %d %s, want 403", code, body)
+	}
+	if rows := fsRows(t, srv); len(rows) != 0 {
+		t.Errorf("refused writes left rows %v", rows)
+	}
+}

@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/config"
 )
 
@@ -240,6 +241,7 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 	_, tsPort, _ := net.SplitHostPort(ts.Listener.Addr().String())
 
 	// Lockout guard: checking the panel's own domain returns 400.
+	resetOriginCheck(t, srv)
 	if code, body, _ := sendRaw(t, ts, http.MethodPost, "/api/settings/sharing/check", "application/json",
 		[]byte(`{"origin":"panel.example.com"}`)); code != http.StatusBadRequest {
 		t.Fatalf("panel collision = %d (%s), want 400", code, body)
@@ -259,6 +261,7 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 			return nil, errors.New("not installed")
 		},
 	}
+	resetOriginCheck(t, srv)
 	got := postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"share.example.com"}`)
 	if got.Status != "needs_dns" || got.Ready || got.DNSOK {
 		t.Errorf("missing DNS: got status=%q ready=%v dnsOk=%v", got.Status, got.Ready, got.DNSOK)
@@ -280,6 +283,7 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 		rootCAs:  pool,
 		runCmd:   noNginx,
 	}
+	resetOriginCheck(t, srv)
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if !got.Ready || got.Status != "ready" || !got.TLSOK || !got.Reachable || !got.HostForwarded || !got.DNSMatchesHost {
 		t.Errorf("ready check = %+v", got)
@@ -299,6 +303,7 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 		rootCAs:  x509.NewCertPool(),
 		runCmd:   noNginx,
 	}
+	resetOriginCheck(t, srv)
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if got.Status != "needs_https" || got.Ready || got.TLSOK || !got.Reachable || !got.HTTPPortOpen {
 		t.Errorf("needs_https check = %+v", got)
@@ -315,6 +320,7 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 		rootCAs:  rwPool,
 		runCmd:   noNginx,
 	}
+	resetOriginCheck(t, srv)
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if got.Status != "host_mismatch" || got.Ready || !got.Reachable || got.HostForwarded || got.SeenHost != "127.0.0.1:9884" {
 		t.Errorf("host_mismatch check = %+v", got)
@@ -330,6 +336,7 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 		rootCAs:  fPool,
 		runCmd:   noNginx,
 	}
+	resetOriginCheck(t, srv)
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if got.Status != "needs_proxy" || got.Ready || got.Reachable {
 		t.Errorf("needs_proxy check = %+v", got)
@@ -350,6 +357,7 @@ func TestCheckShareOriginStatuses(t *testing.T) {
 		rootCAs:  rPool,
 		runCmd:   noNginx,
 	}
+	resetOriginCheck(t, srv)
 	got = postJSON[shareOriginCheckResponse](t, ts, "/api/settings/sharing/check", `{"origin":"https://share.example.com"}`)
 	if got.Status != "needs_proxy" || followed.Load() {
 		t.Errorf("redirecting host: status %q, redirect followed = %v; want needs_proxy and not followed", got.Status, followed.Load())
@@ -607,5 +615,57 @@ Ask for help or search for solutions at https://community.letsencrypt.org. See t
 	want := "During secondary validation: DNS problem: NXDOMAIN looking up A for share.example.com"
 	if got != want {
 		t.Errorf("trimCmdErr = %q, want %q", got, want)
+	}
+}
+
+// resetOriginCheck clears the sharing/check cooldown. The status tests call
+// the check half a dozen times in a second while swapping provisioner stubs;
+// real callers read one answer before asking again.
+func resetOriginCheck(t *testing.T, srv *Server) {
+	t.Helper()
+	srv.pb.protect.mu.Lock()
+	srv.pb.protect.checkCool = nil
+	srv.pb.protect.mu.Unlock()
+}
+
+// The check resolves a typed name and probes up to three URLs per call, and
+// provision was already held to one at a time. A second check from the same
+// address inside two seconds is refused rather than spent.
+func TestTheOriginCheckHasACooldown(t *testing.T) {
+	ts, srv := newTestServer(t)
+	srv.pb.provisioner = &shareOriginProvisioner{
+		lookupIP: func(context.Context, string) ([]net.IPAddr, error) {
+			return nil, errors.New("no dns in this test")
+		},
+	}
+	code, body, _ := sendRaw(t, ts, http.MethodPost, "/api/settings/sharing/check", "application/json",
+		[]byte(`{"origin":"https://share.example.com"}`))
+	if code != http.StatusOK {
+		t.Fatalf("first check = %d (%s), want 200", code, body)
+	}
+	code, body, _ = sendRaw(t, ts, http.MethodPost, "/api/settings/sharing/check", "application/json",
+		[]byte(`{"origin":"https://share.example.com"}`))
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("immediate second check = %d (%s), want 429", code, body)
+	}
+}
+
+// The probe is a capability surface like the share routes: an address the
+// operator's allowlist excludes cannot reach it. AUDIT.md #1 was this
+// omission on another route, paid for once already.
+func TestTheProbeRouteHonoursTheAddressAllowlist(t *testing.T) {
+	ts, srv := newTestServer(t)
+	nets, err := auth.ParseCIDRs([]string{"203.0.113.0/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Auth.Allow = nets
+	nonce, _, cleanup, err := srv.pb.probes.mint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if res, _ := anonGET(t, ts, "/.well-known/vibepanel-probe/"+nonce); res.StatusCode != http.StatusForbidden {
+		t.Errorf("probe from an excluded address = %d, want 403", res.StatusCode)
 	}
 }

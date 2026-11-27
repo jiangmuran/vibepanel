@@ -572,12 +572,13 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		// Memory. The governor's own rows (resources.kill, .freeze, .thaw and
 		// the .auto forms) reach the log through AuditResources, which the
 		// scan cannot see; these two are the handlers'.
-		"resources.policy":      true,
-		"resources.boost":       true,
-		"resources.boost_ended": true,
-		"resources.project_end": true,
-		"chat.consent":          true,
-		"chat.alerts":           true,
+		"resources.policy":       true,
+		"resources.boost":        true,
+		"resources.boost_ended":  true,
+		"resources.project_end":  true,
+		"resources.kill_refused": true,
+		"chat.consent":           true,
+		"chat.alerts":            true,
 		// Hiding a project and bringing it back, by hand or by the idle rule,
 		// and the setting that turns the rule on. One prefix, so a GROUP BY
 		// answers "what happened to my projects".
