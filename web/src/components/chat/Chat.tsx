@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bell, Bot, Cable, Gauge, ScrollText, Users, Waypoints } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Bell, Bot, LayoutGrid, Gauge, ScrollText, Users, Waypoints } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import { api } from '../../protocol/api'
@@ -7,7 +7,8 @@ import type { ChatSettings } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
 import type { Key } from '../../i18n'
 import { safeText } from '../text'
-import { useSlidingMarker } from '../useSlidingMarker'
+import { ChannelIcon } from './ChannelIcon'
+import './chat.css'
 import { errText } from './form'
 import { Alerts } from './Alerts'
 import { Assistant } from './Assistant'
@@ -56,24 +57,19 @@ export function Section({
 
 export function Card({ children, testid, className = '' }: { children: React.ReactNode; testid?: string; className?: string }) {
   return (
-    <div data-testid={testid} className={`rounded-vp border border-hairline bg-surface p-3 sm:p-4 ${className}`}>
+    <div data-testid={testid} className={`rounded-vp border border-hairline bg-surface p-4 @xl:p-5 ${className}`}>
       {children}
     </div>
   )
 }
 
 /**
- * The tabs, in the order a person sets the thing up: an app to talk through,
- * who may talk, what they are told, the machine, the advanced mode with its
- * key table, and what happened.
- *
- * Tabs rather than one page of seven blocks: the page had become a scroll of
- * forms where the thing being looked for was always four screens down, and a
- * 400px phone made it twice that. The hash keeps the tab, so a link or a
- * reload lands where it was.
+ * Keep management destinations separate from the adapter list. With all
+ * credentials inline, configuring one adapter meant scanning unrelated forms;
+ * each adapter now has its own address and the overview only shows health.
  */
 const TABS: { id: string; label: Key; icon: LucideIcon }[] = [
-  { id: 'channels', label: 'chat.channels', icon: Cable },
+  { id: 'channels', label: 'chat.overview', icon: LayoutGrid },
   { id: 'peers', label: 'chat.peers', icon: Users },
   { id: 'routes', label: 'chat.routes', icon: Waypoints },
   { id: 'alerts', label: 'chat.alertsTab', icon: Gauge },
@@ -83,7 +79,7 @@ const TABS: { id: string; label: Key; icon: LucideIcon }[] = [
 
 function tabFromHash(): string {
   const id = location.hash.replace(/^#/, '')
-  return TABS.some((x) => x.id === id) ? id : 'channels'
+  return TABS.some((x) => x.id === id.split('/')[0]) ? id : 'channels'
 }
 
 /**
@@ -93,22 +89,10 @@ function tabFromHash(): string {
  * peer paired in one tab show up as a destination in the next.
  */
 export function Chat() {
-  const lang = useLang()
+  useLang()
   const [data, setData] = useState<ChatSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState(tabFromHash)
-  const [slide, setSlide] = useState<{ tab: string; dir: 'none' | 'right' | 'left' }>(() => ({
-    tab: tabFromHash(),
-    dir: 'none',
-  }))
-  if (slide.tab !== tab) {
-    const from = TABS.findIndex((x) => x.id === slide.tab)
-    const to = TABS.findIndex((x) => x.id === tab)
-    setSlide({ tab, dir: to >= from ? 'right' : 'left' })
-  }
-  const tabsRef = useRef<HTMLDivElement>(null)
-  const marker = useSlidingMarker(tabsRef, `${tab}:${lang}:${Boolean(data?.available)}`)
-
   // One fetch, used by the poll and by every section after a write. The
   // poll's copy is cancelled on unmount; a section's reload after the page
   // has gone is harmless and does not need to be.
@@ -160,65 +144,50 @@ export function Chat() {
   // stranger's code to enter.
   const pending = data.peers.filter((p) => p.status === 'pending').length
 
+  const section = tab.split('/')[0]
+  const channelKind = section === 'channels' ? tab.split('/')[1] : undefined
+  const factory = data.factories.find((f) => f.kind === channelKind)
+  const currentTitle = factory?.label ?? t(TABS.find((x) => x.id === section)?.label ?? 'chat.overview')
+
   return (
-    <div data-testid="chat" className="@container">
-      <div className="mb-5">
-        <div
-          ref={tabsRef}
-          role="tablist"
-          aria-label={t('grp.chat')}
-          data-marker={marker ? 'on' : 'off'}
-          className="vp-segmented w-fit max-w-full"
-        >
-          {marker && (
-            <span
-              aria-hidden="true"
-              className="vp-marker-2d"
-              style={{
-                width: marker.width,
-                height: marker.height,
-                transform: `translate3d(${marker.left}px, ${marker.top}px, 0)`,
-              }}
-            />
-          )}
-          {TABS.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={tab === id}
-              data-active={tab === id}
-              data-testid={`chat-tab-${id}`}
-              onClick={() => choose(id)}
-              // Padding inline, not px-: .vp-tab is unlayered and would win
-              // over a utility, and the default leaves labels touching.
-              style={{ paddingInline: '0.625rem' }}
-              className="vp-tab shrink-0 gap-1.5 text-vp-base whitespace-nowrap"
-            >
-              <Icon size={13} className="shrink-0" aria-hidden="true" />
-              {t(label)}
-              {id === 'peers' && pending > 0 && (
-                <span className="flex items-center gap-0.5 rounded-full bg-surface-2 px-1.5 text-vp-xs text-ink-2 tabular">
-                  <Bell size={10} aria-hidden="true" />
-                  {pending}
-                </span>
-              )}
-            </button>
-          ))}
+    <div data-testid="chat" className="chat-layout">
+      <nav className="chat-nav" aria-label={t('grp.chat')}>
+        <button type="button" className="chat-nav-item" data-active={section === 'channels' && !factory}
+          data-testid="chat-tab-channels" onClick={() => choose('channels')}>
+          <LayoutGrid size={18} aria-hidden="true" />{t('chat.overview')}
+        </button>
+        <p className="chat-nav-label">{t('chat.channels')}</p>
+        {data.factories.map((f) => (
+          <button key={f.kind} type="button" className="chat-nav-item"
+            data-active={channelKind === f.kind} aria-current={channelKind === f.kind ? 'page' : undefined}
+            data-testid={`chat-nav-${f.kind}`} onClick={() => choose(`channels/${f.kind}`)}>
+            <ChannelIcon kind={f.kind} size={19} />{f.label}
+          </button>
+        ))}
+        <p className="chat-nav-label">{t('chat.manage')}</p>
+        {TABS.filter((x) => x.id !== 'channels').map(({ id, label, icon: Icon }) => (
+          <button key={id} type="button" className="chat-nav-item" data-active={section === id}
+            aria-current={section === id ? 'page' : undefined}
+            data-testid={`chat-tab-${id}`} onClick={() => choose(id)}>
+            <Icon size={18} aria-hidden="true" />{t(label)}
+            {id === 'peers' && pending > 0 && (
+              <span className="chat-nav-count"><Bell size={11} aria-hidden="true" />{pending}</span>
+            )}
+          </button>
+        ))}
+      </nav>
+      <div className="chat-content @container">
+        <div className={`chat-heading ${factory ? 'chat-heading-detail' : ''}`}>
+          <h1>{currentTitle}</h1>
+          {section === 'channels' && <p>{factory ? (['feishu', 'telegram', 'weixin'].includes(factory.kind) ? t(`chat.description.${factory.kind}` as Key) : t('chat.channelsLead')) : t('chat.intro')}</p>}
         </div>
-      </div>
-      <div key={tab} role="tabpanel" data-slide={slide.dir} className="vp-pane-slide">
-        {tab === 'channels' && <Channels data={data} onChange={reload} />}
-        {tab === 'peers' && <Peers data={data} onChange={reload} />}
-        {tab === 'routes' && <Routes data={data} onChange={reload} />}
-        {tab === 'alerts' && <Alerts data={data} onChange={reload} />}
-        {tab === 'assistant' && (
-          <>
-            <Assistant data={data} onChange={reload} />
-            <Keys data={data} onChange={reload} />
-          </>
-        )}
-        {tab === 'log' && <Log />}
+        {error && <p role="status" className="mb-4 text-vp-sm text-danger-ink">{safeText(error)}</p>}
+        {section === 'channels' && <Channels data={data} selected={factory?.kind} onSelect={(kind) => choose(`channels/${kind}`)} onChange={reload} />}
+        {section === 'peers' && <Peers data={data} onChange={reload} />}
+        {section === 'routes' && <Routes data={data} onChange={reload} />}
+        {section === 'alerts' && <Alerts data={data} onChange={reload} />}
+        {section === 'assistant' && <><Assistant data={data} onChange={reload} /><Keys data={data} onChange={reload} /></>}
+        {section === 'log' && <Log />}
       </div>
     </div>
   )

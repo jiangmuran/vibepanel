@@ -37,9 +37,9 @@ export function ChatPage({ auth, onSignOut }: { auth: AuthState; onSignOut: () =
   })
 
   return (
-    <div data-testid="chat-page" className="h-full w-full overflow-y-auto bg-bg text-ink">
+    <div data-testid="chat-page" className="h-full w-full overflow-y-auto bg-surface text-ink">
       <header className="vp-blur vp-safe-pad-top sticky top-0 z-10 border-b border-hairline">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 px-4 py-2 sm:px-6">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 px-4 py-2 sm:px-6">
           <a
             href={PANEL_PATH}
             data-testid="chat-back"
@@ -72,9 +72,7 @@ export function ChatPage({ auth, onSignOut }: { auth: AuthState; onSignOut: () =
         </div>
       </header>
 
-      <main className="vp-safe-bottom mx-auto max-w-6xl px-4 pt-6 [--vp-safe-pad:2.5rem] sm:px-6 sm:pt-8">
-        <h1 className="mb-1 text-vp-xl font-semibold tracking-tight text-ink">{t('chat.title')}</h1>
-        <p className="mb-5 max-w-3xl text-vp-base leading-relaxed text-ink-2">{t('chat.intro')}</p>
+      <main className="vp-safe-bottom mx-auto max-w-[1600px] [--vp-safe-pad:2.5rem]">
         <Chat />
       </main>
       <ConfirmDialog />

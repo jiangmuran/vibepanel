@@ -1,1 +1,0 @@
-export{t as javascript}from"./dist-D_9ckcXn.js";

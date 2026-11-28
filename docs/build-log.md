@@ -29002,3 +29002,67 @@ while letting `/favicon.ico` hit a 404 on dedicated share hosts.
   iframe.contentWindow`.
 
 
+## 2026-11-28 — Channel overview and setup pages
+
+The chat page now has a left navigation rail with an overview, one entry per
+adapter and the existing management destinations. The overview uses three
+illustrated channel cards; credentials are edited on the adapter's own page
+instead of three unrelated forms sharing a row. Each card retains the actual
+health, last inbound message, current errors and people waiting to say hello.
+The artwork is local CSS and SVG, so it adds no external image request.
+
+Adapter details use numbered, expandable steps for credentials or QR sign-in,
+the Feishu callback URL, pairing and a test message. Saved credentials collapse
+to make room for the following step and can be reopened for editing. Progress
+comes from the existing server data. The existing consent, secret clearing,
+QR polling, channel toggle, removal and test APIs are unchanged. Switching
+between adapters retains unfinished credentials and an active QR login, while
+hash addresses reopen the selected adapter on reload. Narrow screens use a
+scrolling navigation row; card and form breakpoints use their container widths.
+
+The browser regression suite now follows adapter detail navigation and checks
+draft retention, reloadable addresses, every detail's layout and navigation
+reachability. Local verification exercised the real React page with intercepted
+API fixtures: consent acceptance and refusal, credential writes and clearing,
+Feishu callback disclosure, QR and verification-code login, management views,
+current health errors and all four channel views at 320, 390, 820 and 1440 pixels
+in both languages and both themes. The fixture run reported 34 passing checks
+and no browser runtime errors. TypeScript, ESLint (existing warnings only), all
+1478 frontend tests and the production frontend build passed. `make chat-check`
+could not reach its real-backend browser suite because Go is unavailable.
+`make verify` also stopped on the system make's unsupported `--output-sync`
+option, and its separate release stage stopped on the missing Go compiler.
+
+
+## 2026-11-28 — Channel setup advances one step at a time
+
+The initial setup layout used independent native disclosure elements. A person
+could open a later step before saving credentials, and successful credential
+saving opened both callback setup and pairing. The setup now owns one active
+step. Later headings remain disabled until the preceding step is complete;
+completed steps can be reopened, replacing the currently visible body.
+
+Credential saving and QR completion advance from server state, pairing advances
+when a paired person appears, and the Feishu callback step has an explicit
+confirmation after the person configures its URL in Feishu. The server exposes
+no callback-handshake completion flag, so the presence of a callback URL is not
+used as proof of that work. The confirmation is remembered locally for that
+URL and cleared when credentials are saved or the channel is removed. Existing
+paired people or inbound messages also demonstrate that callback setup works.
+
+
+Validation covered failed saves, delayed settings refreshes, exclusive expansion,
+callback confirmation and its reload behaviour, reopening completed steps,
+pairing and QR completion. The fixture browser run passed 26 checks. A local
+Go 1.26.11 toolchain was located after the earlier environment limitation;
+`make chat-check` now runs against the real backend and passed with 0 failures
+and 0 warnings. TypeScript, ESLint, all 1478 frontend tests and the production
+build passed. The running local preview has the same sequential setup UI.
+
+
+The clean-HEAD check passed the CGO-free Go build, vet, all frontend checks and
+embedded-bundle consistency. Its Go test stage failed on this macOS host:
+system samples lack the Linux memory readings expected by the tests, systemctl
+is absent, temporary paths differ by the /private prefix, and resource-governor
+process fixtures did not become observable as sleep. Those failures are recorded
+separately from the passing real-backend chat browser suite.
