@@ -29001,3 +29001,11 @@ Go 1.26.11 toolchain was located after the earlier environment limitation;
 `make chat-check` now runs against the real backend and passed with 0 failures
 and 0 warnings. TypeScript, ESLint, all 1478 frontend tests and the production
 build passed. The running local preview has the same sequential setup UI.
+
+
+The clean-HEAD check passed the CGO-free Go build, vet, all frontend checks and
+embedded-bundle consistency. Its Go test stage failed on this macOS host:
+system samples lack the Linux memory readings expected by the tests, systemctl
+is absent, temporary paths differ by the /private prefix, and resource-governor
+process fixtures did not become observable as sleep. Those failures are recorded
+separately from the passing real-backend chat browser suite.
