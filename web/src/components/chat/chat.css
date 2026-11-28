@@ -92,9 +92,7 @@
 .chat-step-chevron { margin-left: auto; flex-shrink: 0; color: var(--vp-ink-3); }
 .chat-setup-step[data-active='true'] .chat-step-chevron { transform: rotate(180deg); }
 .chat-step-body { padding: 0 24px 24px 63px; }
-.chat-step-body > .mt-3 { margin-top: 0; }
 .chat-step-body input:not([type='checkbox']) { min-height: 42px; background: var(--vp-bg); border-radius: 8px; }
-.chat-step-body > .grid { gap: 18px; }
 .chat-people-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 36px 0 16px; }
 .chat-people-heading h3 { font-size: 18px; font-weight: 550; }
 .chat-people-card { display: flex; align-items: center; gap: 18px; padding: 24px; border: 1px solid var(--vp-hairline); border-radius: 12px; background: var(--vp-surface); text-decoration: none; }

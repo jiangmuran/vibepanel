@@ -227,6 +227,12 @@ try {
   await openChannel('telegram')
   if (await page.inputValue('#chat-telegram-token') !== 'unfinished-token') note('FAIL', 'channels', 'changing adapters discarded the token draft')
   else pass('channels', 'adapter navigation retains the credential draft')
+  // And across sections: People is where somebody goes mid-setup to see who
+  // has said hello, and the cards were unmounted on the way.
+  await openTab(page, 'peers')
+  await openChannel('telegram')
+  if (await page.inputValue('#chat-telegram-token') !== 'unfinished-token') note('FAIL', 'channels', 'visiting People discarded the token draft')
+  else pass('channels', 'a visit to People keeps the credential draft')
   await page.reload({ waitUntil: 'networkidle' })
   await page.getByTestId('chat-channel-telegram').waitFor({ state: 'visible' })
   if (!page.url().endsWith('#channels/telegram')) note('FAIL', 'channels', 'the selected adapter did not survive reload')

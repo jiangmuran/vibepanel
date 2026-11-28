@@ -182,7 +182,12 @@ export function Chat() {
           {section === 'channels' && <p>{factory ? (['feishu', 'telegram', 'weixin'].includes(factory.kind) ? t(`chat.description.${factory.kind}` as Key) : t('chat.channelsLead')) : t('chat.intro')}</p>}
         </div>
         {error && <p role="status" className="mb-4 text-vp-sm text-danger-ink">{safeText(error)}</p>}
-        {section === 'channels' && <Channels data={data} selected={factory?.kind} onSelect={(kind) => choose(`channels/${kind}`)} onChange={reload} />}
+        {/* Mounted while another section is open, only hidden: a half-typed
+            token and a QR sign-in in progress live in the cards, and going to
+            People to check a name and coming back used to lose both. */}
+        <div hidden={section !== 'channels'}>
+          <Channels data={data} selected={factory?.kind} onSelect={(kind) => choose(`channels/${kind}`)} onChange={reload} />
+        </div>
         {section === 'peers' && <Peers data={data} onChange={reload} />}
         {section === 'routes' && <Routes data={data} onChange={reload} />}
         {section === 'alerts' && <Alerts data={data} onChange={reload} />}

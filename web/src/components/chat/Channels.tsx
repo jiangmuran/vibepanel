@@ -349,7 +349,7 @@ function ChannelCard({
         <SetupStep {...stepProps(1)} title={t(factory.login ? 'chat.setupAccount' : factory.webhook ? 'chat.setupCredentials' : 'chat.setupBot')}
           done={configured}>
           {factory.login ? (
-            <div className="mt-3">
+            <div>
               {signedIn && (
                 <p className="mb-2 text-vp-sm text-ink-2">
                   {t('chat.signedInAs', { id: safeText(channel?.values.user_id ?? '') })}
@@ -397,7 +397,7 @@ function ChannelCard({
               )}
             </div>
           ) : (
-            <div className="mt-3 grid grid-cols-1 gap-2">
+            <div className="grid grid-cols-1 gap-4.5">
               {factory.fields.map((f) => (
                 <div key={f.name} className="min-w-0">
                   <label htmlFor={`chat-${factory.kind}-${f.name}`} className="mb-1 block text-vp-sm text-ink-3">
