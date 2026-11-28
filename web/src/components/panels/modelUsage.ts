@@ -11,7 +11,31 @@ export function modelTone(name: string): string {
   if (/gemini/.test(key)) return 'var(--usage-gemini)'
   if (/deepseek/.test(key)) return 'var(--usage-deepseek)'
   if (/kimi|moonshot/.test(key)) return 'var(--usage-kimi)'
-  return 'var(--usage-grok)'
+  // Not grok's grey: a model nobody recognised drawn in grok's colour read as
+  // grok.
+  return 'var(--vp-ink-3)'
+}
+
+const STEPS = [1, 0.7, 0.5, 0.35]
+
+/**
+ * A model's fill among a set of models: its family's hue, and a step of
+ * opacity for each further model of the same family. Opus and Sonnet in one
+ * stacked bar were the same orange, two segments told apart by nothing. The
+ * names are sorted first, so every place that draws the same set -- the bars,
+ * the legend, the ranking -- gives a model the same fill whatever order it
+ * was handed them in.
+ */
+export function modelFills(names: readonly string[]): Map<string, { background: string; opacity: number }> {
+  const seen = new Map<string, number>()
+  const out = new Map<string, { background: string; opacity: number }>()
+  for (const name of [...new Set(names)].sort()) {
+    const tone = modelTone(name)
+    const k = seen.get(tone) ?? 0
+    seen.set(tone, k + 1)
+    out.set(name, { background: tone, opacity: STEPS[Math.min(k, STEPS.length - 1)] })
+  }
+  return out
 }
 
 /** Preserve actual daily amounts, including days when a model was not used. */

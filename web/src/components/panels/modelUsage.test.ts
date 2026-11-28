@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dailyModels, modelTone } from './modelUsage'
+import { dailyModels, modelFills, modelTone } from './modelUsage'
 import type { UsageModelDay } from '../../protocol/wire'
 
 const bucket = (day: string, model: string, output: number, cacheRead = 0): UsageModelDay => ({
@@ -15,6 +15,15 @@ describe('the model colours', () => {
       expect(modelTone(name)).toBe('var(--usage-codex)')
     }
     expect(modelTone('grok-4')).toBe('var(--usage-grok)')
+    expect(modelTone('some-new-model')).not.toBe(modelTone('grok-4'))
+  })
+
+  it('tells two models of one family apart, the same way whatever the order', () => {
+    const a = modelFills(['claude-sonnet-4-5', 'gpt-5', 'claude-opus-4-6'])
+    const b = modelFills(['claude-opus-4-6', 'claude-sonnet-4-5', 'gpt-5'])
+    expect(a.get('claude-opus-4-6')).toEqual(b.get('claude-opus-4-6'))
+    expect(a.get('claude-opus-4-6')).not.toEqual(a.get('claude-sonnet-4-5'))
+    expect(a.get('gpt-5')!.opacity).toBe(1)
   })
 })
 

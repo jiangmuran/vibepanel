@@ -19,7 +19,7 @@ import {
   type Metric,
   type Ranked,
 } from './panels/spend'
-import { dailyModels, modelTone } from './panels/modelUsage'
+import { dailyModels, modelFills, modelTone } from './panels/modelUsage'
 import { useDialogFocus } from './useDialogFocus'
 import { useSlidingMarker } from './useSlidingMarker'
 
@@ -464,7 +464,9 @@ const MIX: { key: keyof Omit<UsageTotals, 'requests'>; label: Key; tone: string 
   { key: 'cacheRead', label: 'spend.cacheRead', tone: 'var(--vp-state-dead)' },
   { key: 'cacheWrite', label: 'spend.cacheWrite', tone: 'var(--vp-hairline-strong)' },
   { key: 'input', label: 'spend.input', tone: 'var(--vp-ink-3)' },
-  { key: 'output', label: 'spend.output', tone: 'var(--usage-claude)' },
+  // The accent, not Claude's orange: in a dialog where orange means Claude,
+  // an orange output slice read as Claude's output.
+  { key: 'output', label: 'spend.output', tone: 'var(--vp-accent)' },
 ]
 
 function Mix({ totals, className }: { totals: UsageTotals; className?: string }) {
@@ -539,6 +541,7 @@ function Trend({
     () => [...new Set(data.byDayModel.map((row) => row.model))].sort(),
     [data.byDayModel],
   )
+  const fills = useMemo(() => modelFills(modelNames), [modelNames])
   const [hover, setHover] = useState<number | null>(null)
   const peak = points.reduce((m, p) => Math.max(m, p.value), 0)
   const p = pace(points, data.today)
@@ -599,6 +602,9 @@ function Trend({
               />
             )}
             {points.map((pt, i) => {
+              // Today, or the bar under the pointer, at full strength: the
+              // readout above names one day, and this is which.
+              const active = hover === null ? pt.day === data.today : hover === i
               const breakdown = modelNames.flatMap((model) => {
                 const value = modelsByDay.get(pt.day)?.get(model) ?? 0
                 return value > 0 ? [`${safeText(model || t('spend.unknownModel'))}: ${exact(value)}`] : []
@@ -617,6 +623,7 @@ function Trend({
                     style={{
                       height: pt.value > 0 ? `${(pt.value / peak) * 100}%` : '1px',
                       background: 'var(--vp-hairline)',
+                      opacity: pt.value === 0 || active ? 1 : 0.45,
                     }}
                   >
                     {modelNames.map((model) => {
@@ -630,7 +637,10 @@ function Trend({
                           title={label}
                           aria-label={label}
                           className="w-full shrink-0"
-                          style={{ height: `${(value / pt.value) * 100}%`, background: modelTone(model) }}
+                          // A line of the surface between segments, so two
+                          // models are two shapes and not only two fills
+                          // (red line 4).
+                          style={{ height: `${(value / pt.value) * 100}%`, ...fills.get(model), borderTop: '1px solid var(--vp-surface)' }}
                         />
                       )
                     })}
@@ -656,7 +666,7 @@ function Trend({
         <ul className="mt-6 flex flex-wrap gap-x-6 gap-y-3" data-testid="spend-model-legend">
           {modelNames.map((model) => (
             <li key={model} className="flex min-w-0 items-center gap-2 text-vp-sm text-ink-2">
-              <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-md" style={{ background: modelTone(model) }} />
+              <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-md" style={fills.get(model)} />
               <span className="break-all">{safeText(model || t('spend.unknownModel'))}</span>
             </li>
           ))}
@@ -690,6 +700,10 @@ function Ranking({
 }) {
   const [all, setAll] = useState(false)
   const shown = all ? rows : rows.slice(0, limit)
+  // The same fills as the chart's legend, so a model is one colour across the
+  // dialog; tools keep their family's hue alone.
+  const fills = useMemo(() => modelFills(testid === 'models' ? rows.map((r) => r.key) : []), [rows, testid])
+  const fill = (key: string) => (testid === 'models' ? fills.get(key) : undefined) ?? { background: modelTone(key) }
   return (
     <Card testid={`spend-rank-${testid}`} className={className} title={title}>
       {rows.length === 0 ? (
@@ -705,7 +719,7 @@ function Ranking({
                     className="min-w-0 flex-1 truncate text-vp-base text-ink"
                     title={safeText(r.hint || r.label)}
                   >
-                    {testid === 'models' && <span aria-hidden="true" className="mr-2 inline-block h-2 w-2 rounded-md" style={{ background: modelTone(r.key) }} />}
+                    {testid === 'models' && <span aria-hidden="true" className="mr-2 inline-block h-2 w-2 rounded-md" style={fill(r.key)} />}
                     {safeText(r.label)}
                   </span>
                   <span className="tabular shrink-0 text-vp-base text-ink" title={exact(v)}>
@@ -718,7 +732,7 @@ function Ranking({
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2">
                   <div
                     className="h-full rounded-full"
-                    style={{ width: `${Math.max(1, r.share * 100)}%`, background: testid === 'models' || testid === 'tools' ? modelTone(r.key) : 'var(--vp-ink-3)' }}
+                    style={{ width: `${Math.max(1, r.share * 100)}%`, ...(testid === 'models' || testid === 'tools' ? fill(r.key) : { background: 'var(--vp-ink-3)' }) }}
                   />
                 </div>
               </li>
@@ -917,7 +931,8 @@ function shade(total: number | null, level: number): React.CSSProperties {
     return { background: 'transparent', border: '1px dashed var(--vp-hairline)' }
   }
   if (level === 0) return { background: 'var(--vp-surface-2)' }
-  return { background: 'var(--usage-claude)', opacity: 0.25 + level * 0.1875 }
+  // The accent, for the reason the mix gives: orange is Claude's here.
+  return { background: 'var(--vp-accent)', opacity: 0.25 + level * 0.1875 }
 }
 
 /** The last directory of a path: the part that tells two rows apart. */
