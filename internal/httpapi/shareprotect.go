@@ -422,7 +422,9 @@ func (s *Server) resolveShareUnlockGrant(ctx context.Context, rawGrant string, n
 
 const passwordGateHTML = `<!doctype html><html lang="%s"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>%s</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="%s">
+<title>%s</title>
 <style>
 :root{color-scheme:light dark;--bg:#f4f5f7;--card:#ffffff;--border:rgba(15,23,42,.12);--ink:#141518;--muted:#454b55;--accent:#364fc7;--btn:#18191c;--btn-ink:#ffffff;--err:#c22525;--err-bg:rgba(194,37,37,.08)}
 @media (prefers-color-scheme:dark){:root{--bg:#131417;--card:#181a1f;--border:rgba(255,255,255,.12);--ink:#eceef2;--muted:#a5abb8;--accent:#7c96ff;--btn:#eceef2;--btn-ink:#111215;--err:#ff7b7b;--err-bg:rgba(255,123,123,.12)}}
@@ -513,7 +515,7 @@ func writePasswordGatePage(w http.ResponseWriter, r *http.Request, status int, e
 
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'")
 	h.Set("Permissions-Policy", sharePagePermissions)
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Robots-Tag", "noindex, nofollow")
@@ -521,27 +523,34 @@ func writePasswordGatePage(w http.ResponseWriter, r *http.Request, status int, e
 		h.Set("Retry-After", strconv.Itoa(retryAfter))
 	}
 	w.WriteHeader(status)
-	_, _ = fmt.Fprintf(w, passwordGateHTML, lang, title, heading, subtitle, errHTML, label, placeholder, submit)
+	_, _ = fmt.Fprintf(w, passwordGateHTML, lang, html.EscapeString(defaultShareFaviconHref), title, heading, subtitle, errHTML, label, placeholder, submit)
 }
 
 const unlockShellHTML = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>vibepanel</title>
+<link rel="icon" href="%s">
+<title>%s</title>
 <style>:root{color-scheme:light dark}html,body{margin:0;padding:0;height:100%%;overflow:hidden;background:#f4f5f7}@media(prefers-color-scheme:dark){html,body{background:#0d0e11}}iframe{position:fixed;inset:0;width:100%%;height:100%%;border:0}</style>
 <iframe id="vp-frame" src="/share-u/%s/" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
-<script>(function(){var f=document.getElementById('vp-frame'),done=false;window.addEventListener('message',function(e){if(!done&&f&&e.source===f.contentWindow&&e.data&&e.data.type==='vp.reauth'){done=true;location.reload()}})})();</script>
+<script>(function(){var f=document.getElementById('vp-frame'),done=false;window.addEventListener('message',function(e){if(!f||e.source!==f.contentWindow||!e.data)return;if(!done&&e.data.type==='vp.reauth'){done=true;location.reload()}else if(e.data.type==='vp.title'&&typeof e.data.title==='string'){var t=e.data.title.replace(/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/g,'').trim().slice(0,160);if(t)document.title=t}})})();</script>
 `
 
-func writeUnlockShellPage(w http.ResponseWriter, grant string) {
+func writeUnlockShellPage(w http.ResponseWriter, grant string, meta shareShellMeta) {
+	if meta.Title == "" {
+		meta.Title = "vibepanel"
+	}
+	if meta.IconHref == "" {
+		meta.IconHref = defaultShareFaviconHref
+	}
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src 'self'; frame-ancestors 'none'")
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'none'")
 	h.Set("Permissions-Policy", sharePagePermissions)
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Robots-Tag", "noindex, nofollow")
 	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, unlockShellHTML, grant)
+	_, _ = fmt.Fprintf(w, unlockShellHTML, html.EscapeString(meta.IconHref), html.EscapeString(meta.Title), grant)
 }
 
 // ─── unlock route & sandbox grant routes ───────────────────────────────────

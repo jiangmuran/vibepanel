@@ -595,3 +595,126 @@ func TestAnUnlockQueuesBehindThePasswordSlots(t *testing.T) {
 		<-passwordSlots
 	}
 }
+
+func TestShareUnlockShellForwardsTitleAndFavicon(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	// Configure a global shared password so newly created links default to shared.
+	if code, body, _ := sendRaw(t, ts, http.MethodPut, "/api/settings/sharing/password", "application/json", []byte(`{"password":"shell-meta-pw"}`)); code != http.StatusOK {
+		t.Fatalf("set shared password = %d: %s", code, body)
+	}
+
+	publishNamed := func(name string, files map[string]string) testPage {
+		t.Helper()
+		manifest := fmt.Sprintf(`{"sdk":1,"name":%q,"sections":[]}`, name)
+		dir := pageDir(t, manifest, files)
+		body, _ := json.Marshal(map[string]string{"name": name, "sourceDir": dir})
+		page := postJSON[store.SharePage](t, ts, "/api/settings/pages", string(body))
+		postJSON[map[string]int](t, ts, "/api/settings/pages/"+page.ID+"/publish", `{"note":"first"}`)
+		return testPage{dir: dir, page: page}
+	}
+
+	customIcon := `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230f4d92'/%3E%3C/svg%3E`
+	pInline := publishNamed("inline-icon-page", map[string]string{
+		"index.html": `<!doctype html><head><meta charset="utf-8">` +
+			`<link rel="icon" href="` + customIcon + `">` +
+			`<title>Q4 Revenue &amp; Metrics</title></head><body><h1>ok</h1></body>`,
+	})
+	linkInline := pageLink(t, ts, pInline.page.ID, ``)
+
+	pRel := publishNamed("rel-icon-page", map[string]string{
+		"brand.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#0969da"/></svg>`,
+		"index.html": `<!doctype html><head><meta charset="utf-8">` +
+			`<link rel="icon" href="./brand.svg">` +
+			`<title>Brand Report</title></head><body><h1>ok</h1></body>`,
+	})
+	linkRel := pageLink(t, ts, pRel.page.ID, ``)
+
+	pFallback := publishNamed("Fallback Named Page", map[string]string{
+		"index.html": `<!doctype html><head><meta charset="utf-8">` +
+			`<link rel="icon" href="data:,">` +
+			`<title>vibepanel</title></head><body><h1>ok</h1></body>`,
+	})
+	linkFallback := pageLink(t, ts, pFallback.page.ID, ``)
+
+	pExternal := publishNamed("external-icon-page", map[string]string{
+		"index.html": `<!doctype html><head><meta charset="utf-8">` +
+			`<link rel="icon" href="https://evil.example/tracker.png">` +
+			`<title>External Refused</title></head><body><h1>ok</h1></body>`,
+	})
+	linkExternal := pageLink(t, ts, pExternal.page.ID, ``)
+
+	// 1. Before unlocking, the password gate must NOT leak the page's title or custom icon,
+	//    and must carry the default vibepanel favicon with img-src data:.
+	visitor := newVisitorClient(t)
+	code, gateBody, gateHdr := doVisitor(t, visitor, http.MethodGet, ts.URL+"/share/"+linkInline.Token+"/", "", "", "198.51.100.11", "")
+	if code != http.StatusOK {
+		t.Fatalf("gate status = %d", code)
+	}
+	if strings.Contains(gateBody, "Q4 Revenue") || strings.Contains(gateBody, "%230f4d92") {
+		t.Fatalf("password gate leaked protected page title or icon:\n%s", gateBody)
+	}
+	if !strings.Contains(gateBody, `<link rel="icon" href="data:image/svg+xml,`) {
+		t.Errorf("password gate missing default inline favicon:\n%s", gateBody)
+	}
+	if !strings.Contains(gateHdr.Get("Content-Security-Policy"), "img-src data:") {
+		t.Errorf("password gate CSP missing img-src data:: %q", gateHdr.Get("Content-Security-Policy"))
+	}
+
+	// Unlock once with shared password -> covers all four shared links.
+	if code, _, _ := doVisitor(t, visitor, http.MethodPost, ts.URL+"/share/"+linkInline.Token+"/unlock",
+		url.Values{"password": {"shell-meta-pw"}}.Encode(), "", "198.51.100.11", ""); code != http.StatusSeeOther {
+		t.Fatalf("unlock = %d, want 303", code)
+	}
+
+	// 2. Inline data:image/svg+xml icon + escaped HTML title forwarded to outer shell.
+	code, shellInline, shellHdr := doVisitor(t, visitor, http.MethodGet, ts.URL+"/share/"+linkInline.Token+"/", "", "", "198.51.100.11", "")
+	if code != http.StatusOK {
+		t.Fatalf("shellInline = %d", code)
+	}
+	if !strings.Contains(shellInline, "<title>Q4 Revenue &amp; Metrics</title>") {
+		t.Errorf("shellInline missing forwarded title:\n%s", shellInline)
+	}
+	if !strings.Contains(shellInline, "%230f4d92") {
+		t.Errorf("shellInline missing custom inline SVG favicon:\n%s", shellInline)
+	}
+	if !strings.Contains(shellHdr.Get("Content-Security-Policy"), "img-src 'self' data:") {
+		t.Errorf("shellInline CSP missing img-src 'self' data:: %q", shellHdr.Get("Content-Security-Policy"))
+	}
+
+	// 3. Relative bundle icon is rewritten to /share-u/{grant}/brand.svg and serves 200.
+	code, shellRel, _ := doVisitor(t, visitor, http.MethodGet, ts.URL+"/share/"+linkRel.Token+"/", "", "", "198.51.100.11", "")
+	if code != http.StatusOK {
+		t.Fatalf("shellRel = %d", code)
+	}
+	grantRel := extractGrant(t, shellRel)
+	wantRelHref := `/share-u/` + grantRel + `/brand.svg`
+	if !strings.Contains(shellRel, "<title>Brand Report</title>") || !strings.Contains(shellRel, `href="`+wantRelHref+`"`) {
+		t.Errorf("shellRel did not rewrite title/relative icon (want %q):\n%s", wantRelHref, shellRel)
+	}
+	code, iconBody, iconHdr := doVisitor(t, anonymousClient(t), http.MethodGet, ts.URL+wantRelHref, "", "", "198.51.100.11", "")
+	if code != http.StatusOK || !strings.Contains(iconHdr.Get("Content-Type"), "image/svg+xml") || !strings.Contains(iconBody, "#0969da") {
+		t.Fatalf("GET rewritten icon %s = %d ct=%q body=%q", wantRelHref, code, iconHdr.Get("Content-Type"), iconBody)
+	}
+
+	// 4. Blank-template "vibepanel" title and empty "data:," icon fall back to page name and default vibepanel icon.
+	code, shellFallback, _ := doVisitor(t, visitor, http.MethodGet, ts.URL+"/share/"+linkFallback.Token+"/", "", "", "198.51.100.11", "")
+	if code != http.StatusOK {
+		t.Fatalf("shellFallback = %d", code)
+	}
+	if !strings.Contains(shellFallback, "<title>Fallback Named Page</title>") {
+		t.Errorf("shellFallback did not fall back to page name:\n%s", shellFallback)
+	}
+	if !strings.Contains(shellFallback, "%230A84FF") {
+		t.Errorf("shellFallback did not fall back to default vibepanel favicon:\n%s", shellFallback)
+	}
+
+	// 5. External https:// icon is refused and falls back to the default vibepanel icon.
+	code, shellExternal, _ := doVisitor(t, visitor, http.MethodGet, ts.URL+"/share/"+linkExternal.Token+"/", "", "", "198.51.100.11", "")
+	if code != http.StatusOK {
+		t.Fatalf("shellExternal = %d", code)
+	}
+	if strings.Contains(shellExternal, "evil.example") || !strings.Contains(shellExternal, "%230A84FF") {
+		t.Errorf("shellExternal allowed external icon or missed fallback:\n%s", shellExternal)
+	}
+}

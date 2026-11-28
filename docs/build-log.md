@@ -28971,3 +28971,34 @@ disconnected states across seven screen sizes, plus resize checks (59 checks
 in total). The frontend production build
 passed. The full `make pages-check` stopped before its browser suite because
 Go is absent from this environment.
+
+## 2026-11-25 — Share page tab title and favicon forwarding
+
+Password-protected share links render a fullscreen outer shell framing the
+sandboxed page at `/share-u/{grant}/`, and browser tabs take `<title>` and
+`<link rel="icon">` only from the top-level document. The shell had hardcoded
+`<title>vibepanel</title>` with no `<link rel="icon">` and no `img-src` in its
+CSP, hiding every page's real title and custom favicon behind a generic tab
+while letting `/favicon.ico` hit a 404 on dedicated share hosts.
+
+- **Server-side `<head>` extraction (`internal/httpapi/sharemeta.go`).** After
+  unlock only (never on the password gate, which stays generic before
+  authentication), `resolveShareShellMeta` scans up to 64 KiB of the published
+  `index.html` `<head>` — skipping comments, `<script>`, and `<style>`, stopping
+  at `</head>` / `<body>`, stripping control and bidi override runes — to
+  forward `<title>` (falling back to `page.Name` / `link.Name` when missing or
+  left at the blank scaffold's `"vibepanel"`) and `<link rel="icon">`.
+- **Safe icon handling.** Inline `data:image/*` favicons (SVG, PNG, WebP, ICO,
+  GIF, JPEG, up to 32 KiB, skipping empty `data:,` placeholders) are forwarded
+  directly; relative bundle paths (such as `./favicon.svg`) are validated via
+  `pages.ValidPath` and `manifest.Private` and rewritten to
+  `/share-u/{grant}/<path>`; external `http(s)://` icons are refused. Pages
+  without a custom icon, the password gate, the gone page, and built-in page
+  templates fall back to an inline SVG data URI of the vibepanel mark under
+  `img-src 'self' data:` (or `img-src data:` on the gate and gone page).
+- **Dynamic title sync.** `vibepanel.js` forwards `document.title` mutations
+  inside the unlock shell via `postMessage({ type: 'vp.title', title })`, and
+  the shell updates `document.title` as plain text only when `e.source ===
+  iframe.contentWindow`.
+
+
