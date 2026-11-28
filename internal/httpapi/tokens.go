@@ -100,11 +100,12 @@ type tokenUsageResponse struct {
 	To    string `json:"to"`
 	Days  int    `json:"days"`
 
-	Total   store.UsageTotals       `json:"total"`
-	ByDay   []store.UsageDay        `json:"byDay"`
-	Heatmap []store.UsageDay        `json:"heatmap"`
-	ByMonth []store.UsageDay        `json:"byMonth"`
-	ByTool  []store.UsageToolTotals `json:"byTool"`
+	Total      store.UsageTotals       `json:"total"`
+	ByDay      []store.UsageDay        `json:"byDay"`
+	ByDayModel []store.UsageModelDay   `json:"byDayModel"`
+	Heatmap    []store.UsageDay        `json:"heatmap"`
+	ByMonth    []store.UsageDay        `json:"byMonth"`
+	ByTool     []store.UsageToolTotals `json:"byTool"`
 	// ByModel is the axis that maps onto money. The column has been written
 	// since the first pass and only the share board ever read it, so the
 	// owner's own panel could tell you that "claude" spent 29B and not that
@@ -231,6 +232,10 @@ func (s *Server) handleTokenUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if out.ByDay, err = s.DB.UsageByDay(ctx, ranged); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if out.ByDayModel, err = s.DB.UsageByDayModel(ctx, ranged); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}

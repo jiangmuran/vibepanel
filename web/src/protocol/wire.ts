@@ -452,6 +452,17 @@ export interface UsageDay {
   requests: number
 }
 
+/** A daily model bucket; its totals add up to that day's usage. */
+export interface UsageModelDay {
+  day: string
+  model: string
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  requests: number
+}
+
 /** One agent's transcript directory as the last pass found it. */
 export interface TokenUsageSource {
   tool: string
@@ -543,6 +554,7 @@ export interface TokenUsage {
 
   total: UsageTotals
   byDay: UsageDay[]
+  byDayModel: UsageModelDay[]
   /** Always the last 371 days, whatever the range control says. */
   heatmap: UsageDay[]
   /** Always every month there has been. */

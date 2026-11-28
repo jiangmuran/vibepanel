@@ -19,6 +19,7 @@ import {
   type Metric,
   type Ranked,
 } from './panels/spend'
+import { dailyModels, modelTone } from './panels/modelUsage'
 import { useDialogFocus } from './useDialogFocus'
 import { useSlidingMarker } from './useSlidingMarker'
 
@@ -128,10 +129,10 @@ export function TokenUsageView({
         role="dialog"
         aria-modal="true"
         aria-labelledby="vp-tokens-title"
-        className="vp-panel-in @container flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-vp-lg border border-hairline-strong bg-surface shadow-2xl"
+        className="vp-panel-in vp-usage-view @container flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-vp-lg border border-hairline-strong bg-surface shadow-2xl"
       >
-        <header className="flex shrink-0 items-center gap-2 border-b border-hairline px-5 py-3">
-          <h2 id="vp-tokens-title" className="flex-1 truncate text-vp-md font-semibold tracking-tight text-ink">
+        <header className="vp-usage-header flex shrink-0 items-center gap-2">
+          <h2 id="vp-tokens-title" className="flex-1 truncate text-vp-xl font-semibold tracking-tight text-ink">
             {t('spend.title')}
           </h2>
           <button
@@ -169,7 +170,7 @@ export function TokenUsageView({
           />
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-bg px-3 py-4 @xl:px-5">
+        <div className="vp-usage-body flex min-h-0 flex-1 flex-col overflow-y-auto bg-surface">
           {error && <Warning text={error} />}
           {!data ? (
             <p className="py-16 text-center text-vp-base text-ink-2">{t('spend.scanning')}</p>
@@ -195,15 +196,15 @@ function Filters(props: {
   const rangeRef = useRef<HTMLDivElement>(null)
   const marker = useSlidingMarker(rangeRef, `${props.days}:${lang}`)
   const select =
-    'h-7 min-w-0 max-w-[14rem] truncate rounded-md border border-hairline bg-surface px-2 text-vp-sm text-ink'
+    'h-8 min-w-0 max-w-[14rem] truncate rounded-vp border border-hairline bg-surface px-2 text-vp-sm text-ink'
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hairline px-5 py-2.5"
+      className="vp-usage-filters flex flex-wrap items-center gap-x-4 gap-y-3"
       data-testid="token-filters"
     >
       <div
         ref={rangeRef}
-        className="vp-segmented w-fit"
+        className="vp-segmented vp-usage-segmented w-fit"
         role="group"
         aria-label={t('spend.filterRange')}
         data-marker={marker ? 'on' : 'off'}
@@ -331,9 +332,9 @@ function Body({
       {skipped > 0 && <Warning text={t('spend.lowerBound', { n: exact(skipped) })} />}
       {data.passError !== '' && <Warning text={t('spend.passError', { why: data.passError })} />}
 
-      {/* Three across only when each card has room for its legend; between
-          that and a phone, the two figures pair up and the mix takes a row. */}
-      <div className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
+      {/* Keep the legend on its own row until three columns can fit without
+          truncating the token categories. */}
+      <div className="vp-usage-summary grid @xl:grid-cols-2 @5xl:grid-cols-3">
         <Stat data={data} days={days} metric="total" label="spend.totalLabel" />
         <Stat data={data} days={days} metric="output" label="spend.output" />
         <Mix totals={data.total} className="@xl:col-span-2 @5xl:col-span-1" />
@@ -341,19 +342,16 @@ function Body({
 
       <Trend data={data} days={days} metric={metric} onMetric={onMetric} />
 
-      {/* Projects down the left, models and tools stacked on the right: the
-          tool list is two or three rows, and a card of its own the height of
-          the project list was mostly empty. */}
       {/* A project filter leaves one project row, which is not a ranking; the
           card goes and the other two share the row. */}
-      <div className="grid gap-3 @3xl:grid-cols-2">
+      <div className={`grid gap-5 @3xl:grid-cols-2 ${projects.length > 1 ? '@5xl:grid-cols-3' : ''}`}>
         {projects.length > 1 && (
           <Ranking
             title={t('spend.projects')}
             rows={projects}
             metric={metric}
             testid="projects"
-            className="@3xl:row-span-2"
+            className="@3xl:row-span-2 @5xl:row-span-1"
             limit={RANK_ROWS_TALL}
           />
         )}
@@ -372,25 +370,29 @@ function Card({
   children,
   className,
   testid,
+  title,
+  aside,
 }: {
   children: React.ReactNode
   className?: string
   testid?: string
+  title?: React.ReactNode
+  aside?: React.ReactNode
 }) {
   return (
-    <section
-      data-testid={testid}
-      className={`min-w-0 rounded-vp border border-hairline bg-surface px-4 py-3 ${className ?? ''}`}
-    >
-      {children}
+    <section data-testid={testid} className={`min-w-0 ${className ?? ''}`}>
+      {title && <CardTitle aside={aside}>{title}</CardTitle>}
+      <div className="vp-usage-card min-w-0 border border-hairline bg-surface">
+        {children}
+      </div>
     </section>
   )
 }
 
 function CardTitle({ children, aside }: { children: React.ReactNode; aside?: React.ReactNode }) {
   return (
-    <div className="mb-2 flex min-h-7 items-center gap-2">
-      <h3 className="flex-1 truncate text-vp-sm font-medium text-ink-2">{children}</h3>
+    <div className="mb-4 flex min-h-7 flex-wrap items-center gap-2">
+      <h3 className="min-w-0 flex-1 truncate text-vp-lg font-medium text-ink">{children}</h3>
       {aside}
     </div>
   )
@@ -431,7 +433,7 @@ function Stat({
       <div className="flex items-baseline gap-2">
         <span
           data-testid="spend-stat-today"
-          className="tabular text-vp-2xl font-semibold tracking-tight text-ink"
+          className="text-vp-2xl tabular font-medium tracking-tight text-ink"
           title={exact(today)}
         >
           {compact(today)}
@@ -461,8 +463,8 @@ function Stat({
 const MIX: { key: keyof Omit<UsageTotals, 'requests'>; label: Key; tone: string }[] = [
   { key: 'cacheRead', label: 'spend.cacheRead', tone: 'var(--vp-state-dead)' },
   { key: 'cacheWrite', label: 'spend.cacheWrite', tone: 'var(--vp-hairline-strong)' },
-  { key: 'input', label: 'spend.input', tone: 'var(--vp-state-done)' },
-  { key: 'output', label: 'spend.output', tone: 'var(--vp-accent)' },
+  { key: 'input', label: 'spend.input', tone: 'var(--vp-ink-3)' },
+  { key: 'output', label: 'spend.output', tone: 'var(--usage-claude)' },
 ]
 
 function Mix({ totals, className }: { totals: UsageTotals; className?: string }) {
@@ -479,7 +481,7 @@ function Mix({ totals, className }: { totals: UsageTotals; className?: string })
       >
         {t('spend.breakdown')}
       </CardTitle>
-      <div className="vp-bar flex h-2.5">
+      <div className="vp-bar flex h-2">
         {MIX.map((m) =>
           totals[m.key] > 0 ? (
             <span
@@ -532,6 +534,11 @@ function Trend({
     () => sinceFirst(dayPoints(data.byDay, data.today, days, metric), 7),
     [data.byDay, data.today, days, metric],
   )
+  const modelsByDay = useMemo(() => dailyModels(data.byDayModel, metric), [data.byDayModel, metric])
+  const modelNames = useMemo(
+    () => [...new Set(data.byDayModel.map((row) => row.model))].sort(),
+    [data.byDayModel],
+  )
   const [hover, setHover] = useState<number | null>(null)
   const peak = points.reduce((m, p) => Math.max(m, p.value), 0)
   const p = pace(points, data.today)
@@ -539,30 +546,28 @@ function Trend({
   const shown: DayPoint | undefined = hover !== null ? points[hover] : points[points.length - 1]
 
   return (
-    <Card testid="spend-trend">
-      <CardTitle
-        aside={
-          <div className="vp-segmented w-fit" role="group" aria-label={t('spend.perDayTitle')}>
-            {(['total', 'output'] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                data-testid={`spend-metric-${m}`}
-                aria-pressed={metric === m}
-                data-active={metric === m}
-                onClick={() => onMetric(m)}
-                className="vp-tab whitespace-nowrap px-3 text-vp-sm"
-              >
-                {t(m === 'total' ? 'spend.totalLabel' : 'spend.output')}
-              </button>
-            ))}
-          </div>
-        }
-      >
-        {t('spend.perDayTitle')}
-      </CardTitle>
-
-      <p className="tabular mb-2 text-vp-sm text-ink-2" data-testid="spend-trend-readout">
+    <Card
+      testid="spend-trend"
+      title={t('spend.perDayTitle')}
+      aside={
+        <div className="vp-segmented vp-usage-segmented w-fit" role="group" aria-label={t('spend.perDayTitle')}>
+          {(['total', 'output'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              data-testid={`spend-metric-${m}`}
+              aria-pressed={metric === m}
+              data-active={metric === m}
+              onClick={() => onMetric(m)}
+              className="vp-tab whitespace-nowrap px-3 text-vp-sm"
+            >
+              {t(m === 'total' ? 'spend.totalLabel' : 'spend.output')}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      <p className="tabular mb-5 text-vp-sm text-ink-2" data-testid="spend-trend-readout">
         {shown ? (
           <>
             <span className="text-ink">{shortDay(shown.day)}</span>
@@ -575,9 +580,14 @@ function Trend({
       {peak === 0 ? (
         <p className="py-10 text-center text-vp-base text-ink-2">{t('spend.noData')}</p>
       ) : (
-        <>
+        <div className="vp-usage-plot">
+          <div aria-hidden="true" className="vp-usage-axis tabular text-vp-xs text-ink-3">
+            <span>{compact(peak)}</span>
+            <span>{compact(Math.round(peak / 2))}</span>
+            <span>0</span>
+          </div>
           <div
-            className="relative flex h-36 items-end gap-[2px]"
+            className="vp-usage-bars relative flex items-end gap-[3px]"
             onMouseLeave={() => setHover(null)}
             data-testid="spend-trend-bars"
           >
@@ -589,41 +599,68 @@ function Trend({
               />
             )}
             {points.map((pt, i) => {
-              const today = pt.day === data.today
-              const active = hover === null ? today : hover === i
+              const breakdown = modelNames.flatMap((model) => {
+                const value = modelsByDay.get(pt.day)?.get(model) ?? 0
+                return value > 0 ? [`${safeText(model || t('spend.unknownModel'))}: ${exact(value)}`] : []
+              }).join(', ')
               return (
                 <div
                   key={pt.day}
                   role="img"
-                  aria-label={`${pt.day} ${exact(pt.value)}`}
-                  title={`${pt.day} · ${exact(pt.value)}`}
+                  aria-label={`${pt.day} ${exact(pt.value)}. ${breakdown}`}
+                  title={`${pt.day} · ${exact(pt.value)}\n${breakdown}`}
                   onMouseEnter={() => setHover(i)}
                   className="relative flex h-full min-w-0 flex-1 items-end"
                 >
                   <span
-                    className="w-full transition-opacity duration-150"
+                    className="flex w-full flex-col-reverse transition-opacity duration-150"
                     style={{
-                      height: pt.value > 0 ? `${Math.max(1.5, (pt.value / peak) * 100)}%` : '1px',
-                      background: pt.value > 0 ? 'var(--vp-accent)' : 'var(--vp-hairline)',
-                      opacity: pt.value === 0 ? 1 : active ? 1 : 0.45,
+                      height: pt.value > 0 ? `${(pt.value / peak) * 100}%` : '1px',
+                      background: 'var(--vp-hairline)',
                     }}
-                  />
+                  >
+                    {modelNames.map((model) => {
+                      const value = modelsByDay.get(pt.day)?.get(model) ?? 0
+                      if (value <= 0) return null
+                      const label = `${safeText(model || t('spend.unknownModel'))} · ${exact(value)}`
+                      return (
+                        <span
+                          key={model}
+                          data-model={model}
+                          title={label}
+                          aria-label={label}
+                          className="w-full shrink-0"
+                          style={{ height: `${(value / pt.value) * 100}%`, background: modelTone(model) }}
+                        />
+                      )
+                    })}
+                  </span>
                 </div>
               )
             })}
           </div>
-          <div className="relative mt-1.5 h-4 text-vp-xs text-ink-2" aria-hidden="true">
-            {ticks.map((i) => {
+          <div className="vp-usage-dates relative mt-2.5 h-4 text-vp-xs text-ink-3" aria-hidden="true">
+            {ticks.map((i, index) => {
               const left = points.length > 1 ? (i / (points.length - 1)) * 100 : 0
               const edge = i === 0 ? 'translate-x-0' : i === points.length - 1 ? '-translate-x-full' : '-translate-x-1/2'
               return (
-                <span key={i} className={`tabular absolute top-0 ${edge}`} style={{ left: `${left}%` }}>
+                <span key={i} className={`tabular absolute top-0 ${edge} ${index !== 0 && index !== ticks.length - 1 && index !== Math.floor(ticks.length / 2) ? 'vp-usage-date-secondary' : ''}`} style={{ left: `${left}%` }}>
                   {shortDay(points[i].day)}
                 </span>
               )
             })}
           </div>
-        </>
+        </div>
+      )}
+      {modelNames.length > 0 && (
+        <ul className="mt-6 flex flex-wrap gap-x-6 gap-y-3" data-testid="spend-model-legend">
+          {modelNames.map((model) => (
+            <li key={model} className="flex min-w-0 items-center gap-2 text-vp-sm text-ink-2">
+              <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-md" style={{ background: modelTone(model) }} />
+              <span className="break-all">{safeText(model || t('spend.unknownModel'))}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </Card>
   )
@@ -654,12 +691,11 @@ function Ranking({
   const [all, setAll] = useState(false)
   const shown = all ? rows : rows.slice(0, limit)
   return (
-    <Card testid={`spend-rank-${testid}`} className={className}>
-      <CardTitle>{title}</CardTitle>
+    <Card testid={`spend-rank-${testid}`} className={className} title={title}>
       {rows.length === 0 ? (
         <Empty />
       ) : (
-        <ul className="flex flex-col gap-2.5" data-testid="spend-ranking">
+        <ul className="flex flex-col gap-5" data-testid="spend-ranking">
           {shown.map((r) => {
             const v = metric === 'output' ? r.output : r.total
             return (
@@ -669,6 +705,7 @@ function Ranking({
                     className="min-w-0 flex-1 truncate text-vp-base text-ink"
                     title={safeText(r.hint || r.label)}
                   >
+                    {testid === 'models' && <span aria-hidden="true" className="mr-2 inline-block h-2 w-2 rounded-md" style={{ background: modelTone(r.key) }} />}
                     {safeText(r.label)}
                   </span>
                   <span className="tabular shrink-0 text-vp-base text-ink" title={exact(v)}>
@@ -681,7 +718,7 @@ function Ranking({
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2">
                   <div
                     className="h-full rounded-full"
-                    style={{ width: `${Math.max(1, r.share * 100)}%`, background: 'var(--vp-accent)' }}
+                    style={{ width: `${Math.max(1, r.share * 100)}%`, background: testid === 'models' || testid === 'tools' ? modelTone(r.key) : 'var(--vp-ink-3)' }}
                   />
                 </div>
               </li>
@@ -705,18 +742,17 @@ function Ranking({
 function Sessions({ data }: { data: TokenUsage }) {
   const [all, setAll] = useState(false)
   const rows = all ? data.sessions : data.sessions.slice(0, SESSION_ROWS)
-  const th = 'py-1.5 pr-3 font-normal'
+  const th = 'py-3 pr-3 font-normal'
   return (
-    <Card testid="spend-sessions">
-      <CardTitle
-        aside={
-          <span className="tabular text-vp-sm text-ink-2">
-            {t('spend.sessionCount', { n: exact(data.sessionCount) })}
-          </span>
-        }
-      >
-        {t('spend.sessions')}
-      </CardTitle>
+    <Card
+      testid="spend-sessions"
+      title={t('spend.sessions')}
+      aside={
+        <span className="tabular text-vp-sm text-ink-3">
+          {t('spend.sessionCount', { n: exact(data.sessionCount) })}
+        </span>
+      }
+    >
       {data.sessions.length === 0 ? (
         <Empty />
       ) : (
@@ -751,27 +787,27 @@ function Sessions({ data }: { data: TokenUsage }) {
                     data-testid="token-session-row"
                   >
                     <td
-                      className="max-w-0 truncate py-1.5 pr-3 text-ink"
+                      className="max-w-0 truncate py-3 pr-3 text-ink"
                       title={`${safeText(s.cwd)} · ${safeText(s.session)}`}
                     >
                       {safeText(s.projectName || lastSegment(s.cwd))}
                     </td>
                     <td
-                      className="max-w-0 truncate py-1.5 pr-3 text-vp-sm text-ink-2"
+                      className="max-w-0 truncate py-3 pr-3 text-vp-sm text-ink-2"
                       title={safeText(s.models)}
                     >
                       {modelsLabel(s.models)}
                     </td>
-                    <td className="tabular whitespace-nowrap py-1.5 pr-3 text-vp-sm text-ink-2">
+                    <td className="tabular whitespace-nowrap py-3 pr-3 text-vp-sm text-ink-2">
                       {s.lastDay}
                     </td>
-                    <td className="tabular py-1.5 pr-3 text-right text-vp-sm text-ink-2">
+                    <td className="tabular py-3 pr-3 text-right text-vp-sm text-ink-2">
                       {exact(s.requests)}
                     </td>
-                    <td className="tabular py-1.5 pr-3 text-right text-ink-2" title={exact(s.output)}>
+                    <td className="tabular py-3 pr-3 text-right text-ink-2" title={exact(s.output)}>
                       {compact(s.output)}
                     </td>
-                    <td className="tabular py-1.5 text-right text-ink" title={exact(totalOf(s))}>
+                    <td className="tabular py-3 text-right text-ink" title={exact(totalOf(s))}>
                       {compact(totalOf(s))}
                     </td>
                   </tr>
@@ -814,8 +850,7 @@ function Heatmap({ data }: { data: TokenUsage }) {
   const labels = useMemo(() => monthLabels(grid), [grid])
 
   return (
-    <Card testid="spend-heatmap">
-      <CardTitle>{t('spend.heatmap')}</CardTitle>
+    <Card testid="spend-heatmap" title={t('spend.heatmap')}>
       <div className="overflow-x-auto pb-1">
         <div className="inline-block min-w-0">
           <div className="flex gap-[3px]">
@@ -882,7 +917,7 @@ function shade(total: number | null, level: number): React.CSSProperties {
     return { background: 'transparent', border: '1px dashed var(--vp-hairline)' }
   }
   if (level === 0) return { background: 'var(--vp-surface-2)' }
-  return { background: 'var(--vp-accent)', opacity: 0.25 + level * 0.1875 }
+  return { background: 'var(--usage-claude)', opacity: 0.25 + level * 0.1875 }
 }
 
 /** The last directory of a path: the part that tells two rows apart. */

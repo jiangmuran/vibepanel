@@ -1,1 +1,0 @@
-export{t as html}from"./dist-BiBBEQeY.js";

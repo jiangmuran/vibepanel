@@ -26,6 +26,13 @@
    ───────────────────────────────────────────────────────────────────────── */
 
 :root {
+  --usage-claude: #e78332;
+  --usage-codex: #5281e8;
+  --usage-grok: #8a8d96;
+  --usage-gemini: #9672b3;
+  --usage-deepseek: #458f8c;
+  --usage-kimi: #8a914e;
+
   /* What the *browser* paints, as opposed to what this stylesheet paints.
      
      Not a token, and it has to sit in all three blocks anyway, which is why it
@@ -156,10 +163,18 @@
   --mon-s2: #e06324;
   --mon-s3: #099268;
   --mon-cache: #76849b;
+
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
+    --usage-claude: #f5a15d;
+    --usage-codex: #81a4f8;
+    --usage-grok: #abaeb7;
+    --usage-gemini: #baa0d2;
+    --usage-deepseek: #7bb9b3;
+    --usage-kimi: #b4bb7a;
+
     color-scheme: dark;
 
     /* 石墨·深 (Graphite Dark): neutral deep graphite frame over a recessed
@@ -248,6 +263,13 @@
 }
 
 :root[data-theme='dark'] {
+  --usage-claude: #f5a15d;
+  --usage-codex: #81a4f8;
+  --usage-grok: #abaeb7;
+  --usage-gemini: #baa0d2;
+  --usage-deepseek: #7bb9b3;
+  --usage-kimi: #b4bb7a;
+
   color-scheme: dark;
   --vp-bg: #131417;
   --vp-surface: #181a1f;
@@ -336,6 +358,13 @@
    terminal reading sessions. Each block declares every token that `:root[data-theme='dark']`
    declares so OS dark/light preference never leaks an unmatched colour. */
 :root[data-theme='porcelain'] {
+  --usage-claude: #e78332;
+  --usage-codex: #5281e8;
+  --usage-grok: #8a8d96;
+  --usage-gemini: #9672b3;
+  --usage-deepseek: #458f8c;
+  --usage-kimi: #8a914e;
+
   color-scheme: light;
   --vp-bg: #f3f0ea;
   --vp-surface: #faf8f4;
@@ -424,6 +453,13 @@
 }
 
 :root[data-theme='wujin'] {
+  --usage-claude: #f5a15d;
+  --usage-codex: #81a4f8;
+  --usage-grok: #abaeb7;
+  --usage-gemini: #baa0d2;
+  --usage-deepseek: #7bb9b3;
+  --usage-kimi: #b4bb7a;
+
   color-scheme: dark;
   --vp-bg: #191816;
   --vp-surface: #211f1c;
@@ -2412,5 +2448,114 @@ body {
   .vp-confirm[data-phase='armed']::before {
     animation: none !important;
     transform: scaleX(1);
+  }
+}
+
+
+/* Scope the reference's flat canvas and generous spacing to the usage view;
+   the terminal and compact settings controls need their existing density. */
+.vp-usage-header {
+  padding: 1.5rem 1.25rem 0.75rem;
+}
+
+.vp-usage-filters {
+  padding: 0.75rem 1.25rem 1.25rem;
+}
+
+.vp-usage-body {
+  gap: 2rem;
+  padding: 0.25rem 1.25rem 1.75rem;
+}
+
+.vp-usage-card {
+  border-radius: var(--vp-radius-lg);
+  padding: 1.25rem;
+}
+
+.vp-usage-summary {
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid var(--vp-hairline);
+  border-radius: var(--vp-radius-lg);
+}
+
+.vp-usage-summary > section > .vp-usage-card {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.vp-usage-summary > section + section {
+  border-top: 1px solid var(--vp-hairline);
+}
+
+.vp-usage-segmented {
+  --vp-scroll-bg: var(--vp-surface);
+  border: 1px solid var(--vp-hairline);
+}
+
+.vp-usage-plot {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  column-gap: 0.75rem;
+}
+
+.vp-usage-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: right;
+}
+
+.vp-usage-bars {
+  height: 12rem;
+  border-bottom: 1px solid var(--vp-hairline-strong);
+  background: linear-gradient(var(--vp-hairline) 1px, transparent 1px) 0 0 / 100% 50%;
+}
+
+.vp-usage-dates {
+  grid-column: 2;
+}
+
+.vp-usage-date-secondary {
+  display: none;
+}
+
+@container (min-width: 36rem) {
+  .vp-usage-date-secondary {
+    display: inline;
+  }
+
+  .vp-usage-header {
+    padding: 2rem 2rem 1rem;
+  }
+
+  .vp-usage-filters {
+    padding-inline: 2rem;
+  }
+
+  .vp-usage-body {
+    gap: 2rem;
+    padding: 0.5rem 2rem 2rem;
+  }
+
+  .vp-usage-card {
+    padding: 1.5rem;
+  }
+
+  .vp-usage-summary > section:nth-child(2) {
+    border-top: 0;
+    border-left: 1px solid var(--vp-hairline);
+  }
+
+  .vp-usage-bars {
+    height: 14rem;
+  }
+}
+
+@container (min-width: 64rem) {
+  .vp-usage-summary > section:nth-child(3) {
+    border-top: 0;
+    border-left: 1px solid var(--vp-hairline);
   }
 }

@@ -1,0 +1,1 @@
+export{t as html}from"./dist-w2KXzwQl.js";

@@ -449,3 +449,47 @@ func TestAShareScopeLeavesOutTheProjectsNestedInIt(t *testing.T) {
 			"spend was counted in its parent, or an answer cached before it existed was served", got)
 	}
 }
+
+func TestTheDailyModelChartUsesTheSameWindowAndProjectAsTheTotals(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	for _, p := range []struct{ id, path string }{{"outer", "/work"}, {"inner", "/work/nested"}} {
+		if _, err := srv.DB.CreateProject(ctx, p.id, p.id, p.path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	today := time.Now().Format("2006-01-02")
+	seedTranscript(t, srv, "outer", "/work/docs", today, 17)
+	seedTranscript(t, srv, "inner", "/work/nested", today, 31)
+	seedTranscript(t, srv, "old", "/work", time.Now().AddDate(0, 0, -40).Format("2006-01-02"), 99)
+
+	for _, query := range []string{"?days=7", "?days=7&project=outer", "?days=7&project=inner", "?tool=codex"} {
+		res, err := ts.Client().Get(ts.URL + "/api/token-usage" + query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out tokenUsageResponse
+		err = json.NewDecoder(res.Body).Decode(&out)
+		res.Body.Close() //nolint:errcheck // test
+		if err != nil || res.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status %d, decode %v", query, res.StatusCode, err)
+		}
+		if out.ByDayModel == nil {
+			t.Fatalf("%s: missing array", query)
+		}
+		var sum store.UsageTotals
+		for _, bucket := range out.ByDayModel {
+			if bucket.Day != today || bucket.Model != "opus" {
+				t.Fatalf("%s: unexpected bucket %+v", query, bucket)
+			}
+			sum.Input += bucket.Input
+			sum.Output += bucket.Output
+			sum.CacheRead += bucket.CacheRead
+			sum.CacheWrite += bucket.CacheWrite
+			sum.Requests += bucket.Requests
+		}
+		if sum != out.Total {
+			t.Fatalf("%s: stacked chart %+v disagrees with total %+v", query, sum, out.Total)
+		}
+	}
+}

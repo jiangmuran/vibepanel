@@ -351,6 +351,38 @@ func (d *DB) UsageByDay(ctx context.Context, f UsageFilter) ([]UsageDay, error) 
 	return out, rows.Err()
 }
 
+// UsageModelDay keeps the model on each daily bucket so the chart never has
+// to invent daily shares from whole-window model totals.
+type UsageModelDay struct {
+	Day   string `json:"day"`
+	Model string `json:"model"`
+	UsageTotals
+}
+
+func (d *DB) UsageByDayModel(ctx context.Context, f UsageFilter) ([]UsageModelDay, error) {
+	where, args := f.where()
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT day, model,
+		       SUM(input), SUM(output), SUM(cache_read), SUM(cache_write), SUM(requests)
+		FROM usage_daily`+where+`
+		GROUP BY day, model ORDER BY day, model`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: usage by day and model: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+
+	out := []UsageModelDay{}
+	for rows.Next() {
+		var u UsageModelDay
+		if err := rows.Scan(&u.Day, &u.Model, &u.Input, &u.Output, &u.CacheRead, &u.CacheWrite,
+			&u.Requests); err != nil {
+			return nil, fmt.Errorf("store: scan usage model day: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // UsageByMonth returns a row per calendar month, oldest first.
 //
 // substr rather than strftime, because `day` is a bucket label and not a date.
