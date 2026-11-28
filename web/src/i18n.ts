@@ -145,6 +145,12 @@ const DICT = {
     en: 'Paste the one-time token the server printed, then choose an account.',
   },
   'auth.signInHint': { zh: '登录后就能看到你的会话。', en: 'Sign in to reach your sessions.' },
+  'auth.loginTitle': { zh: '登录你的工作台', en: 'Sign in to vibepanel' },
+  'auth.privateWorkspace': { zh: '你的私人编程工作台', en: 'Your private coding workspace' },
+  'auth.visualEyebrow': { zh: '为你的下一个项目', en: 'FOR YOUR NEXT PROJECT' },
+  'auth.visualTitle': { zh: '多个会话，\n一个工作台。', en: 'Room for every\nidea in progress.' },
+  'auth.visualBody': { zh: '在同一个地方管理项目、终端与 AI 编程会话。', en: 'Your projects, terminals and coding agents.\nTogether in one place.' },
+  'auth.visualFooter': { zh: '留出空间，专注创造。', en: 'Space to focus. Room to build.' },
   'auth.setupToken': { zh: '一次性 token', en: 'Setup token' },
   // Refusals from the sign-in surface, by the code the server sends beside its
   // English sentence (internal/httpapi/auth.go, Code*).

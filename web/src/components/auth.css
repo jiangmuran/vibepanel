@@ -1,0 +1,208 @@
+.auth-shell {
+  container-type: inline-size;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+}
+.auth-layout {
+  display: grid;
+  min-height: 100%;
+}
+.auth-main {
+  display: flex;
+  min-width: 0;
+  min-height: 100svh;
+  flex-direction: column;
+}
+.auth-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: max(28px, env(safe-area-inset-top)) 28px 0;
+}
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.8px;
+}
+.auth-content {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 28px;
+}
+.auth-form-wrap {
+  width: 100%;
+  max-width: 360px;
+}
+.auth-form-wide {
+  max-width: 400px;
+}
+.auth-heading {
+  margin-bottom: 32px;
+}
+.auth-heading h1 {
+  margin-top: 12px;
+  font-size: clamp(24px, 2.5cqi, 32px);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.8px;
+  text-wrap: balance;
+}
+.auth-heading p {
+  margin-top: 12px;
+  font-size: 15px;
+  line-height: 1.7;
+  text-wrap: balance;
+}
+.auth-label {
+  display: block;
+  margin-bottom: 9px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.auth-input {
+  height: 50px;
+  border-radius: 10px;
+  font-size: 16px;
+}
+.auth-input:focus-visible {
+  box-shadow: 0 0 0 3px var(--vp-selection);
+}
+.auth-submit, .auth-passkey {
+  min-height: 50px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background-color 140ms, box-shadow 140ms;
+}
+.auth-submit {
+  color: var(--vp-bg);
+  background: var(--vp-ink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 2px 4px rgb(0 0 0 / 0.08);
+}
+.auth-submit:hover:not(:disabled) {
+  background: var(--vp-ink-2);
+}
+.auth-passkey:hover:not(:disabled) {
+  background: var(--vp-surface-2);
+}
+.auth-submit:focus-visible, .auth-passkey:focus-visible {
+  outline: 2px solid var(--vp-accent);
+  outline-offset: 4px;
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 24px 0;
+  color: var(--vp-ink-3);
+  font-size: 13px;
+}
+.auth-divider span {
+  height: 1px;
+  flex: 1;
+  background: var(--vp-hairline);
+}
+.auth-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px max(28px, env(safe-area-inset-bottom));
+  color: var(--vp-ink-3);
+  font-size: 12px;
+}
+/* The image and white lettering stay together across themes; the form follows
+   the panel tokens so a theme change cannot separate its text from its surface. */
+.auth-visual {
+  position: sticky;
+  top: 24px;
+  display: none;
+  height: calc(100svh - 48px);
+  min-height: 520px;
+  margin: 24px 24px 24px 0;
+  overflow: hidden;
+  border-radius: 24px;
+  isolation: isolate;
+  background: #12495c;
+  color: #fff;
+}
+.auth-mountain, .auth-visual-shade {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.auth-mountain {
+  object-fit: cover;
+  object-position: 48% center;
+}
+.auth-visual-shade {
+  background: linear-gradient(180deg, rgb(3 35 47 / 0.82), rgb(3 35 47 / 0.28) 32%, transparent 54%, rgb(3 35 47 / 0.12) 75%, rgb(3 35 47 / 0.72));
+}
+.auth-visual-copy {
+  position: relative;
+  padding: clamp(36px, 4cqi, 64px);
+}
+.auth-visual-eyebrow {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 2px;
+}
+.auth-visual-copy h2 {
+  margin-top: 32px;
+  max-width: 460px;
+  font-size: clamp(36px, 3.6cqi, 58px);
+  font-weight: 450;
+  line-height: 1.25;
+  letter-spacing: -1.5px;
+  white-space: pre-line;
+  text-wrap: balance;
+}
+.auth-visual-copy p {
+  margin-top: 20px;
+  max-width: 400px;
+  color: rgb(255 255 255 / 0.86);
+  font-size: 15px;
+  line-height: 1.8;
+  white-space: pre-line;
+}
+.auth-visual-footer {
+  position: absolute;
+  right: 40px;
+  bottom: 32px;
+  left: 40px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+}
+.auth-visual-footer span:first-child {
+  font-weight: 600;
+}
+@container (min-width: 900px) {
+  .auth-layout {
+    grid-template-columns: 1fr 1fr;
+  }
+  .auth-topbar {
+    padding: max(36px, env(safe-area-inset-top)) 40px 0;
+  }
+  .auth-content {
+    padding: 56px 48px 72px;
+  }
+  .auth-visual {
+    display: block;
+  }
+}
+@container (max-width: 380px) {
+  .auth-topbar {
+    flex-wrap: wrap;
+  }
+}

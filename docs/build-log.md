@@ -29130,3 +29130,25 @@ check confirmed compilation, vet, frontend checks and bundle reproducibility,
 but its full Go suite failed on monitor readings, macOS temporary-path
 canonicalisation, absent systemctl and a cancelled assistant-call assertion.
 Those findings are recorded with the PR rather than counted as passing.
+
+
+## 2026-11-28 — A mountain split layout for sign-in
+
+The sign-in screen now uses a left-hand form and a locally bundled mountain
+photograph on the right. The form has 360 pixels of available width and
+rectangular 50-pixel controls. Password login comes first, followed by the
+existing passkey option. The language switch remains in the header, and
+headings and description sentences have deliberate line breaks in both
+Chinese and English.
+
+Below 900 pixels, a container query hides the photograph and leaves the form
+at the available width. Form colours use the panel's theme tokens, while the
+photograph and its white lettering remain one fixed artwork. First-run setup,
+origin-trust confirmation and the authentication API calls are preserved.
+
+Verification on the current upstream main: production build and first-run
+browser check passed; ESLint reported no errors (twelve existing warnings),
+and all 1482 frontend tests passed. Sixteen production-bundle browser fixtures
+covered 320, 390, 768 and 1440 pixels in both languages and light/dark themes,
+including password submission, translated refusals, password visibility,
+first-run fields, passkey availability and horizontal overflow.
