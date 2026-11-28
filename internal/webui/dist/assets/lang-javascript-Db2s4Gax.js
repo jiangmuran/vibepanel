@@ -1,0 +1,1 @@
+export{t as javascript}from"./dist-DSfvEr9l.js";

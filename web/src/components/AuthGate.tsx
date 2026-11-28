@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   AlertTriangle,
   ShieldAlert,
-  ChevronRight,
   Eye,
   EyeOff,
   Fingerprint,
@@ -25,6 +24,8 @@ import {
 import type { AuthState } from '../protocol/wire'
 import { LanguageSwitch } from './LanguageSwitch'
 import { blockerKey } from './settings/passkeyReason'
+import mountain from '../assets/login-mountain.png'
+import './auth.css'
 
 /**
  * Stands between a stranger and the machine.
@@ -117,12 +118,6 @@ export function Mark({ small }: { small?: boolean }) {
   )
 }
 
-/* Subtle top-edge ambient sheen rather than loud radial colour blobs, keeping
-   the sign-in screen in the same calm material language as the workbench. */
-const WASH = [
-  'radial-gradient(48rem 20rem at 50% -6rem, color-mix(in srgb, var(--vp-ink) 5%, transparent), transparent 72%)',
-].join(', ')
-
 /**
  * Every state of this screen sits on the same ground.
  *
@@ -134,22 +129,30 @@ const WASH = [
  * clock on a notched phone.
  */
 function Shell({ wide, children }: { wide?: boolean; children: React.ReactNode }) {
+  useLang()
   return (
-    <div className="relative h-full w-full overflow-y-auto bg-bg text-ink">
-      <div aria-hidden="true" className="pointer-events-none fixed inset-0" style={{ backgroundImage: WASH }} />
-      <div className="relative flex min-h-full flex-col">
-        <div className="vp-safe-pad-top flex shrink-0 justify-end px-4 pb-1">
-          <LanguageSwitch testid="auth" />
-        </div>
-        <div className="vp-safe-bottom flex flex-1 items-center justify-center px-4">
-          {/* The breathing room is on this element and not on its parent.
-              `.vp-safe-bottom` used to *replace* padding-bottom -- it is
-              emitted after Tailwind's utilities -- so a `pb-10` up there was
-              silently dead and a tall card ended flush against the bottom of a
-              short window. The class composes now (see styles.css), but the
-              padding is still better here, where the card is. */}
-          <div className={`w-full pt-2 pb-10 ${wide ? 'max-w-md' : 'max-w-sm'}`}>{children}</div>
-        </div>
+    <div className="auth-shell bg-bg text-ink">
+      <div className="auth-layout">
+        <main className="auth-main">
+          <header className="auth-topbar">
+            <div className="auth-brand"><Mark small /><span>vibepanel</span></div>
+            <LanguageSwitch testid="auth" />
+          </header>
+          <div className="auth-content">
+            <div className={`auth-form-wrap ${wide ? 'auth-form-wide' : ''}`}>{children}</div>
+          </div>
+          <footer className="auth-footer"><Lock size={13} aria-hidden="true" />{t('auth.privateWorkspace')}</footer>
+        </main>
+        <aside className="auth-visual" data-testid="auth-visual">
+          <img className="auth-mountain" src={mountain} alt="" />
+          <div className="auth-visual-shade" />
+          <div className="auth-visual-copy">
+            <span className="auth-visual-eyebrow">{t('auth.visualEyebrow')}</span>
+            <h2>{t('auth.visualTitle')}</h2>
+            <p>{t('auth.visualBody')}</p>
+          </div>
+          <div className="auth-visual-footer"><span>vibepanel</span><span>{t('auth.visualFooter')}</span></div>
+        </aside>
       </div>
     </div>
   )
@@ -220,7 +223,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-vp-sm font-medium text-ink-2">{label}</span>
+      <span className="auth-label">{label}</span>
       <div className="relative">
         <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-ink-3">
           {icon}
@@ -233,7 +236,7 @@ function Field({
 }
 
 const INPUT =
-  'w-full rounded-vp border border-hairline-strong bg-bg py-2 pr-3 pl-9 text-vp-base text-ink ' +
+  'auth-input w-full border border-hairline-strong bg-surface pr-3 pl-10 text-ink ' +
   'outline-none transition-colors duration-100 ease-vp focus:border-accent'
 
 /**
@@ -457,18 +460,17 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
 
   return (
     <Shell wide={setup}>
-      <div className="mb-5 flex flex-col items-center gap-3 text-center">
-        <Mark />
+      <div className="auth-heading">
         {setup && (
           <span className="rounded-full border border-hairline bg-surface-2 px-2.5 py-1 text-vp-xs font-medium text-ink-2">
             {t('auth.firstRun')}
           </span>
         )}
         <div>
-          <h1 className="text-vp-lg font-semibold tracking-tight text-ink">
-            {setup ? t('auth.setupTitle') : 'vibepanel'}
+          <h1>
+            {setup ? t('auth.setupTitle') : t('auth.loginTitle')}
           </h1>
-          <p className="mt-1 text-vp-base leading-relaxed text-ink-2">
+          <p className="text-ink-2">
             {setup ? t('auth.setupHint') : t('auth.signInHint')}
           </p>
         </div>
@@ -477,7 +479,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
       <form
         onSubmit={submit}
         data-testid={setup ? 'setup-form' : 'login-form'}
-        className="rounded-vp-lg border border-hairline bg-surface p-5 shadow-xl"
+        className="auth-form"
       >
         {setup ? (
           <ol>
@@ -506,35 +508,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           </ol>
         ) : (
           <>
-            {passkeyOffered && (
-              <>
-                {/* The passkey is the better answer and is offered as one: a
-                    row you press, above the fields, rather than a second
-                    button the same size as the first one underneath it. */}
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void signInWithPasskey()}
-                  data-testid="passkey-signin"
-                  className="vp-press flex w-full items-center gap-3 rounded-vp border border-hairline bg-surface-2 px-3 py-3 text-left hover:border-hairline-strong disabled:opacity-50"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
-                    <Fingerprint size={16} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-vp-md font-medium text-ink">{t('auth.usePasskey')}</span>
-                    <span className="block text-vp-sm text-ink-2">{t('auth.passkeyHint')}</span>
-                  </span>
-                  <ChevronRight size={14} className="shrink-0 text-ink-3" />
-                </button>
-                <div className="my-4 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-hairline" />
-                  <span className="text-vp-xs tracking-wider text-ink-2">{t('auth.or')}</span>
-                  <span className="h-px flex-1 bg-hairline" />
-                </div>
-              </>
-            )}
-            <div className="space-y-3">
+            <div className="space-y-5">
               {usernameField}
               {passwordField}
             </div>
@@ -551,7 +525,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           type="submit"
           disabled={busy}
           data-testid="auth-submit"
-          className="vp-primary mt-4 h-9 w-full text-vp-base"
+          className="auth-submit mt-6 flex w-full items-center justify-center gap-2 disabled:opacity-50"
         >
           {busy ? (
             <Loader2 size={14} className="animate-spin" />
@@ -562,6 +536,22 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           )}
           {busy ? t('auth.working') : setup ? t('auth.create') : t('auth.signIn')}
         </button>
+
+        {passkeyOffered && (
+          <>
+            <div className="auth-divider"><span />{t('auth.or')}<span /></div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void signInWithPasskey()}
+              data-testid="passkey-signin"
+              className="auth-passkey flex w-full items-center justify-center gap-2 border border-hairline-strong bg-surface text-ink disabled:opacity-50"
+            >
+              <Fingerprint size={19} />
+              {t('auth.usePasskey')}
+            </button>
+          </>
+        )}
 
         {!setup && !passkeyOffered && (
           <p

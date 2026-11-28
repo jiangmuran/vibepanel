@@ -29278,3 +29278,31 @@ Merging #50 then #51 by taking #51's side of `internal/ws/conn.go` compiles
 and quietly undoes #50: the pending subscribe has to carry `background`
 through to `SubscribeView`, and `socket.ts` has to keep #50's page-visibility
 tracking inside #51's rewrite.
+
+
+## 2026-11-28 — A mountain split layout for sign-in
+
+The sign-in screen now uses a left-hand form and a locally bundled mountain
+photograph on the right. The form has 360 pixels of available width and
+rectangular 50-pixel controls. Password login comes first, followed by the
+existing passkey option. The language switch remains in the header, and
+headings and description sentences have deliberate line breaks in both
+Chinese and English.
+
+Below 900 pixels, a container query hides the photograph and leaves the form
+at the available width. Form colours use the panel's theme tokens, while the
+photograph and its white lettering remain one fixed artwork. First-run setup,
+origin-trust confirmation and the authentication API calls are preserved.
+
+Verification on the current upstream main: production build and first-run
+browser check passed; ESLint reported no errors (twelve existing warnings),
+and all 1482 frontend tests passed. Sixteen production-bundle browser fixtures
+covered 320, 390, 768 and 1440 pixels in both languages and light/dark themes,
+including password submission, translated refusals, password visibility,
+first-run fields, passkey availability and horizontal overflow.
+
+`web/src/assets/login-mountain.png` was supplied by anyvation for this
+layout; that is its provenance, recorded here because nothing in the file
+says it, and it ships inside every release binary. Password comes before the
+passkey on purpose in this design, reversing the earlier order that offered
+the passkey first.
