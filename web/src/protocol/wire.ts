@@ -67,6 +67,13 @@ export interface ClientMessage {
    * the grid.
    */
   hidden?: boolean
+  /**
+   * MsgSubscribe and MsgVisibility: the browser tab itself is in the
+   * background (another tab active, window minimised, or screen locked). Live
+   * output keeps arriving when `hidden` is false, but a backgrounded tab does
+   * not hold or claim grid control.
+   */
+  background?: boolean
   cols?: number
   rows?: number
   /** MsgPaste only. Input otherwise travels as binary frames. */

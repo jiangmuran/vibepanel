@@ -2444,6 +2444,12 @@ body {
    there, whole, for the same three seconds. Written after the global rule
    that collapses animations, which would otherwise play the drain in an
    instant and leave an armed button with nothing in it. */
+/* Passive-viewer take-control pill: high-contrast token border so a shrunk
+   grid on a large desktop monitor still offers an obvious way back. */
+.vp-take-control {
+  border-color: color-mix(in srgb, var(--vp-accent) 45%, var(--vp-hairline-strong));
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vp-confirm[data-phase='armed']::before {
     animation: none !important;

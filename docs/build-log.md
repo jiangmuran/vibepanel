@@ -29130,3 +29130,47 @@ check confirmed compilation, vet, frontend checks and bundle reproducibility,
 but its full Go suite failed on monitor readings, macOS temporary-path
 canonicalisation, absent systemctl and a cancelled assistant-call assertion.
 Those findings are recorded with the PR rather than counted as passing.
+
+## 2026-11-26 — Background tabs stop reclaiming the grid, and waiting viewers take over after grace
+
+Measured on a live panel where a single session stayed stuck at `107x32` while
+ten sibling sessions ran at `298x65`: an unattended Chrome tab on a sleeping
+Mac had fallen back onto that session after its earlier session was deleted,
+then reconnected every 1–3 minutes (`hidden=false, resumed=true`, never firing
+`requestAnimationFrame` to report `terminal load`) and reclaimed grid control
+whenever the desktop switched away past the grace period. Separately, closing
+the controlling mobile/laptop browser while a desktop viewer was already open
+left that viewer passive indefinitely because nothing promoted waiting viewers
+once the grace window elapsed, and the `take-control` pill sat inside the
+scrollable wrapper without a `z-index` in muted `text-ink-2` at the bottom-right
+edge of a large empty canvas.
+
+Four pieces fix the whole loop:
+
+- **Tab visibility (`background`) separated from DOM off-screen (`hidden`).**
+  `PanelSocket` listens to `visibilitychange`, `pagehide` and `pageshow`,
+  marking `subscribe` and `visibility` messages with `background: true` while
+  `document.hidden` is set (and closing cleanly on non-BFCache `pagehide` so
+  mobile tab closes do not hang until keepalive times out). On the server,
+  `Subscriber.active()` requires `!hidden && !background`: background tabs give
+  up control immediately and never claim it on periodic reconnects, while
+  continuing to receive live output so multi-tab monitors stay current.
+- **Automatic grace-expiry handover (`controllerGrace = 20s`).** When a
+  controller disconnects or goes background, `releaseControlLocked` arms a
+  one-shot timer for `controllerGrace`; if the departed controller has not
+  returned when it expires, the most recently active foreground viewer is
+  promoted and notified via `EventSize`. Background and hidden subscribers are
+  never promoted.
+- **Reliable, visible `take-control` overlay.** `TerminalView` separates the
+  outer positioning shell from the inner scroll box so the load bar and
+  `take-control` pill stay pinned above xterm (`z-20`) even when `overflow: auto`
+  pans, retries `proposeDimensions()` across animation frames and
+  `document.fonts.ready` in both controlling and passive modes if cell metrics
+  are initially zero, outlines an unscaled smaller passive grid with hairline
+  tokens and anchors `take-control` directly outside that grid's boundary when
+  space allows (falling back to `right-3 bottom-3` for scaled/mobile viewers),
+  and styles `take-control` in `text-ink` with a `Maximize2` icon, accent-tinted
+  hairline and 40px touch target height.
+- **Revalidation teardown log hygiene.** `ws.Handler.revalidate` skips the
+  "session is no longer valid" log when `ctx.Err() != nil` (the connection was
+  already closing while the 5s ticker raced teardown).

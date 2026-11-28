@@ -567,3 +567,88 @@ describe('a stale end of stream', () => {
     expect(sent).toEqual([])
   })
 })
+
+describe('background browser tabs', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function setup(initialHidden = false) {
+    const winHandlers = new Map<string, (ev?: unknown) => void>()
+    const docHandlers = new Map<string, () => void>()
+    const doc = {
+      hidden: initialHidden,
+      addEventListener: (t: string, fn: () => void) => docHandlers.set(t, fn),
+      removeEventListener: (t: string) => docHandlers.delete(t),
+    }
+    vi.stubGlobal('document', doc)
+    vi.stubGlobal('window', {
+      addEventListener: (t: string, fn: (ev?: unknown) => void) => winHandlers.set(t, fn),
+      removeEventListener: (t: string) => winHandlers.delete(t),
+      setInterval: () => 0,
+      clearInterval: () => {},
+    })
+    const sock = new PanelSocket()
+    ;(sock as unknown as { dark: () => boolean }).dark = () => false
+    const sent: ClientMessage[] = []
+    let closedWith: number | undefined
+    ;(sock as unknown as { ws: unknown }).ws = {
+      readyState: WebSocket.OPEN,
+      send: (s: string) => sent.push(JSON.parse(s) as ClientMessage),
+      close: (code?: number) => {
+        closedWith = code
+      },
+    }
+    return {
+      sock,
+      sent,
+      doc,
+      fireVisibility: (hidden: boolean) => {
+        doc.hidden = hidden
+        docHandlers.get('visibilitychange')?.()
+      },
+      firePageHide: (persisted: boolean) => {
+        winHandlers.get('pagehide')?.({ persisted })
+      },
+      closedWith: () => closedWith,
+    }
+  }
+
+  it('marks subscribes as background when the tab is already hidden', () => {
+    const { sock, sent } = setup(true)
+    sock.subscribe('s1', 107, 32, { onData: () => {}, onSize: () => {} }, false)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toMatchObject({ t: 'subscribe', sessionId: 's1', hidden: false, background: true })
+  })
+
+  it('sends visibility updates for visible streams when tab visibility flips', () => {
+    const { sock, sent, fireVisibility } = setup(false)
+    const handlers = { onData: () => {}, onSize: () => {} }
+    sock.subscribe('visible', 107, 32, handlers, false)
+    sock.subscribe('offscreen', 107, 32, handlers, true)
+    sent.length = 0
+
+    fireVisibility(true)
+    expect(sent).toEqual([{ t: 'visibility', sessionId: 'visible', hidden: false, background: true }])
+
+    sent.length = 0
+    fireVisibility(false)
+    expect(sent).toEqual([{ t: 'visibility', sessionId: 'visible', hidden: false }])
+  })
+
+  it('closes cleanly on non-persisted pagehide and stays open for BFCache', () => {
+    const a = setup(false)
+    a.sock.subscribe('s1', 80, 24, { onData: () => {}, onSize: () => {} }, false)
+    a.sent.length = 0
+    a.firePageHide(false)
+    expect(a.sent).toEqual([{ t: 'visibility', sessionId: 's1', hidden: false, background: true }])
+    expect(a.closedWith()).toBe(1000)
+
+    const b = setup(false)
+    b.sock.subscribe('s1', 80, 24, { onData: () => {}, onSize: () => {} }, false)
+    b.sent.length = 0
+    b.firePageHide(true)
+    expect(b.sent).toEqual([{ t: 'visibility', sessionId: 's1', hidden: false, background: true }])
+    expect(b.closedWith()).toBeUndefined()
+  })
+})

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Maximize2 } from 'lucide-react'
 import { panelShortcut } from './shortcuts'
 import { shortcutOptions } from './keyprefs'
 import { alternateScrollKeys, attachTouchSelection, cellAt, wheelReport } from './mobile/touchSelect'
@@ -141,6 +142,7 @@ export function TerminalView({
   onClipboard,
 }: Props) {
   useLang()
+  const outerRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Xterm | null>(null)
@@ -155,6 +157,11 @@ export function TerminalView({
   // passive, and only so the offer to take over can be withheld when there is
   // nothing to gain by it.
   const [ownFit, setOwnFit] = useState({ cols: 0, rows: 0 })
+  // When an unscaled smaller grid sits inside a much larger monitor, anchor the
+  // take-control pill directly outside that grid's boundary instead of stranding
+  // it in the far bottom-right corner of empty space. Null falls back to
+  // bottom-right (mobile / scaled passive viewers).
+  const [pillAnchor, setPillAnchor] = useState<{ top: number; left: number } | null>(null)
   const [loadPhase, setLoadPhase] = useState<LoadPhase>('connecting')
   const [loadCounts, setLoadCounts] = useState({ total: 0, received: 0, parsed: 0 })
   const replayTotalRef = useRef(0)
@@ -1013,7 +1020,20 @@ export function TerminalView({
     const term = termRef.current
     if (!wrap || !host || !term) return
 
+    let cancelled = false
+    let retryFrame = 0
+    let retries = 0
+
+    const updateAnchor = (next: { top: number; left: number } | null) => {
+      setPillAnchor((prev) => {
+        if (!prev && !next) return prev
+        if (prev && next && prev.top === next.top && prev.left === next.left) return prev
+        return next
+      })
+    }
+
     const apply = () => {
+      if (cancelled) return
       const t = termRef.current
       const f = fitRef.current
       if (!t || !f) return
@@ -1028,32 +1048,59 @@ export function TerminalView({
 
       if (controllingRef.current) {
         // We own the grid: fit to the container and publish the result.
+        updateAnchor(null)
         wrap.style.overflow = ''
         host.style.transform = ''
+        host.style.boxShadow = ''
         host.style.width = '100%'
         host.style.height = '100%'
         const dims = f.proposeDimensions()
         if (dims && dims.cols > 0 && dims.rows > 0) {
+          retries = 0
           f.fit()
           socket.resize(sessionId, t.cols, t.rows)
+        } else if (retries < 10 && retryFrame === 0) {
+          // Right after mount or a display:none reveal, xterm's cell metrics can
+          // still read 0 until the next paint. Retry briefly so a controlling
+          // viewer never stays stuck at the previous owner's grid with no
+          // take-control affordance.
+          retries += 1
+          retryFrame = requestAnimationFrame(() => {
+            retryFrame = 0
+            apply()
+          })
         }
         return
       }
 
-      // Passive. Before scaling anything, measure what this window would render
-      // if it owned the grid — with the host still filling the box, because the
-      // fit addon reads the element it is given. Measured after the transform
-      // is applied it would only ever report the grid already on screen, which
-      // is the question nobody is asking.
+      // Passive. Clear any previous pan scrollbar before measuring what this
+      // window would render if it owned the grid — with the host still filling
+      // the box, because the fit addon reads the element it is given. Measured
+      // after the transform is applied it would only ever report the grid
+      // already on screen, which is the question nobody is asking.
+      wrap.style.overflow = ''
       host.style.transform = ''
+      host.style.boxShadow = ''
       host.style.width = '100%'
       host.style.height = '100%'
       const mine = f.proposeDimensions()
-      setOwnFit((prev) =>
-        mine && mine.cols > 0 && (prev.cols !== mine.cols || prev.rows !== mine.rows)
-          ? { cols: mine.cols, rows: mine.rows }
-          : prev,
-      )
+      if (mine && mine.cols > 0 && mine.rows > 0) {
+        retries = 0
+        setOwnFit((prev) =>
+          prev.cols !== mine.cols || prev.rows !== mine.rows
+            ? { cols: mine.cols, rows: mine.rows }
+            : prev,
+        )
+      } else if (retries < 10 && retryFrame === 0) {
+        // Right after mount or a display:none reveal, xterm's cell metrics can
+        // still read 0 until the next paint. Retry briefly so ownFit never
+        // stays {0, 0} and withholds the take-control affordance.
+        retries += 1
+        retryFrame = requestAnimationFrame(() => {
+          retryFrame = 0
+          apply()
+        })
+      }
 
       // Now the display: keep the authoritative grid and scale it into our box.
       // Scaling never exceeds 1 — blowing a small grid up to fill a large
@@ -1085,12 +1132,45 @@ export function TerminalView({
       wrap.style.overflow = scale > fit ? 'auto' : ''
       host.style.transformOrigin = 'top left'
       host.style.transform = `scale(${scale})`
+      // When an unscaled smaller grid sits inside a much larger monitor, draw
+      // a subtle boundary on its right and bottom edges so the passive grid
+      // reads as another viewer's viewport rather than a clipped terminal, and
+      // anchor the take-control pill directly outside that boundary instead of
+      // stranding it in the opposite far corner of an empty canvas.
+      const smaller =
+        scale === 1 && mine && grid.cols > 0 && (mine.cols > grid.cols || mine.rows > grid.rows)
+      host.style.boxShadow = smaller
+        ? '1px 0 0 var(--vp-hairline-strong), 0 1px 0 var(--vp-hairline-strong)'
+        : ''
+      const outer = outerRef.current
+      let nextAnchor: { top: number; left: number } | null = null
+      if (smaller && outer) {
+        const outerRect = outer.getBoundingClientRect()
+        const hostRect = host.getBoundingClientRect()
+        const belowTop = Math.round(hostRect.bottom - outerRect.top) + 10
+        const belowLeft = Math.max(12, Math.round(hostRect.left - outerRect.left))
+        const besideLeft = Math.round(hostRect.right - outerRect.left) + 12
+        const besideTop = Math.max(12, Math.round(hostRect.top - outerRect.top))
+        if (belowTop + 44 <= outerRect.height && belowLeft + 210 <= outerRect.width) {
+          nextAnchor = { top: belowTop, left: belowLeft }
+        } else if (besideLeft + 210 <= outerRect.width && besideTop + 44 <= outerRect.height) {
+          nextAnchor = { top: besideTop, left: besideLeft }
+        }
+      }
+      updateAnchor(nextAnchor)
     }
 
     apply()
     const ro = new ResizeObserver(apply)
     ro.observe(wrap)
-    return () => ro.disconnect()
+    void document.fonts?.ready.then(() => {
+      if (!cancelled) apply()
+    })
+    return () => {
+      cancelled = true
+      if (retryFrame) cancelAnimationFrame(retryFrame)
+      ro.disconnect()
+    }
   }, [socket, sessionId, controlling, grid.cols, grid.rows, hidden])
 
   // Offer to take the grid only when this window would actually render a
@@ -1108,21 +1188,25 @@ export function TerminalView({
     const f = fitRef.current
     const wrap = wrapRef.current
     if (!t || !f || !wrap) return
+    wrap.style.overflow = ''
     const host = hostRef.current
     if (host) {
       host.style.transform = ''
+      host.style.boxShadow = ''
       host.style.width = '100%'
       host.style.height = '100%'
     }
     const dims = f.proposeDimensions()
-    if (dims && dims.cols > 0 && dims.rows > 0) {
-      socket.resize(sessionId, dims.cols, dims.rows, true)
+    const cols = dims && dims.cols > 0 ? dims.cols : ownFit.cols
+    const rows = dims && dims.rows > 0 ? dims.rows : ownFit.rows
+    if (cols > 0 && rows > 0) {
+      socket.resize(sessionId, cols, rows, true)
     }
   }
 
   return (
     <div
-      ref={wrapRef}
+      ref={outerRef}
       // Which session's terminal this is, the same way a bottom tab says so.
       // The panel has several terminals on screen at once and this was the
       // only one nothing named, so anything outside the page asking "what does
@@ -1179,56 +1263,73 @@ export function TerminalView({
           </div>
         )
       })()}
-      {/* touch-action: none wherever the drag-to-scroll handler is attached,
-          and without it that handler does nothing on a real phone.
-       *
-       * attachTouchSelection waits for the finger to move past a slop
-       * threshold before deciding the gesture is a scroll and calling
-       * preventDefault. By then the browser has already handed the gesture to
-       * the compositor: every touchmove after that is `cancelable: false` and
-       * preventDefault is ignored, so the terminal never scrolls and the page
-       * sometimes moves instead.
-       *
-       * This is invisible to the render check, and that is not the check's
-       * fault. Synthesised touch events go straight to the main thread and are
-       * cancelable for as long as anybody wants, so the drag passes there and
-       * fails in a hand. 「手机端无法滚动终端」 is how it was found.
-       *
-       * `none` rather than `pan-x`: nothing here is a native horizontal
-       * scroller. The key bar is a separate strip and keeps its own pan-x, and
-       * touch-action does not stop events reaching a JS handler on an
-       * ancestor -- it only says what the browser may pan by itself. */}
-      <div
-        ref={hostRef}
-        className="h-full w-full"
-        // Opacity, not visibility or display. Both of those remove the
-        // element from hit-testing and blur focus, so a reconnect during a
-        // replay would drop the keyboard out of a terminal somebody is typing
-        // into and force a click to get it back. This keeps the layout and the
-        // focus; pointer events are off so a click on an invisible terminal
-        // does not land either.
-        style={{
-          touchAction: touchSelect ? 'none' : undefined,
-          opacity: covering ? 0 : undefined,
-          pointerEvents: covering ? 'none' : undefined,
-        }}
-      />
+      {/* Inner scroll container separated from the outer positioning shell so
+          overlays (load bar and take-control pill) stay pinned and above xterm
+          even when a scaled passive viewer pans with overflow:auto. */}
+      <div ref={wrapRef} className="h-full w-full overflow-hidden">
+        {/* touch-action: none wherever the drag-to-scroll handler is attached,
+            and without it that handler does nothing on a real phone.
+         *
+         * attachTouchSelection waits for the finger to move past a slop
+         * threshold before deciding the gesture is a scroll and calling
+         * preventDefault. By then the browser has already handed the gesture to
+         * the compositor: every touchmove after that is `cancelable: false` and
+         * preventDefault is ignored, so the terminal never scrolls and the page
+         * sometimes moves instead.
+         *
+         * This is invisible to the render check, and that is not the check's
+         * fault. Synthesised touch events go straight to the main thread and are
+         * cancelable for as long as anybody wants, so the drag passes there and
+         * fails in a hand. 「手机端无法滚动终端」 is how it was found.
+         *
+         * `none` rather than `pan-x`: nothing here is a native horizontal
+         * scroller. The key bar is a separate strip and keeps its own pan-x, and
+         * touch-action does not stop events reaching a JS handler on an
+         * ancestor -- it only says what the browser may pan by itself. */}
+        <div
+          ref={hostRef}
+          className="h-full w-full"
+          // Opacity, not visibility or display. Both of those remove the
+          // element from hit-testing and blur focus, so a reconnect during a
+          // replay would drop the keyboard out of a terminal somebody is typing
+          // into and force a click to get it back. This keeps the layout and the
+          // focus; pointer events are off so a click on an invisible terminal
+          // does not land either.
+          style={{
+            touchAction: touchSelect ? 'none' : undefined,
+            opacity: covering ? 0 : undefined,
+            pointerEvents: covering ? 'none' : undefined,
+          }}
+        />
+      </div>
       {offerControl && (
         <button
           type="button"
           data-testid="take-control"
           onClick={takeControl}
-          className="vp-press absolute right-3 bottom-3 rounded-full border border-hairline bg-elevated px-3 py-1.5 text-vp-xs text-ink-2 backdrop-blur transition-colors duration-200 ease-vp hover:text-ink"
+          style={pillAnchor ? { top: pillAnchor.top, left: pillAnchor.left } : undefined}
+          className={`vp-press vp-take-control absolute z-20 inline-flex items-center gap-1.5 rounded-full border bg-elevated px-3.5 text-vp-xs font-medium text-ink shadow-md backdrop-blur transition-colors duration-200 ease-vp hover:bg-surface-2 ${
+            pillAnchor ? '' : 'right-3 bottom-3'
+          } ${touchSelect ? 'min-h-10 py-2' : 'py-1.5'}`}
           title={t('term.takeControlWhy', {
             cols: grid.cols,
             rows: grid.rows,
             mine: `${ownFit.cols}×${ownFit.rows}`,
           })}
         >
-          <span className="tabular">
+          <Maximize2
+            size={12}
+            aria-hidden="true"
+            className="shrink-0"
+            style={{ color: 'var(--vp-accent)' }}
+          />
+          <span className="tabular text-ink-2">
             {grid.cols}×{grid.rows}
-          </span>{' '}
-          · {t('term.takeControl')}
+          </span>
+          <span aria-hidden="true" className="text-ink-3">
+            ·
+          </span>
+          <span>{t('term.takeControl')}</span>
         </button>
       )}
     </div>
