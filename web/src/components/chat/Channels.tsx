@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, Link2, LogIn, Send, Trash2 } from 'lucide-react'
+import { ArrowRight, Check, ChevronDown, Copy, Link2, LogIn, Send, Trash2, Users } from 'lucide-react'
 
 import { copyTextInGesture } from '../../clipboard'
 import { api } from '../../protocol/api'
 import type { ChatChannel, ChatFactory, ChatLogin, ChatSettings } from '../../protocol/wire'
 import { getLang, t } from '../../i18n'
+import type { Key } from '../../i18n'
 import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
-import { Card, Section } from './Chat'
+import { Section } from './Chat'
+import { ChannelIcon } from './ChannelIcon'
 import { ensureChatConsent } from './consent'
 import { chatError } from './errors'
 import { INPUT, INPUT_SHORT, Primary, Secondary, errText } from './form'
@@ -32,27 +34,68 @@ function ago(unix: number): string {
  * thing that tells them apart from a working one is when something last
  * arrived. So the card says that, in words, always.
  */
-export function Channels({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
+export function Channels({ data, selected, onSelect, onChange }: {
+  data: ChatSettings
+  selected?: string
+  onSelect: (kind: string) => void
+  onChange: () => void
+}) {
   return (
-    <Section id="channels" title={t('chat.channels')} lead={t('chat.channelsLead')}>
-      <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
-        {data.factories.map((f) => (
-          <ChannelCard
-            key={f.kind}
-            factory={f}
-            channel={data.channels.find((c) => c.kind === f.kind) ?? null}
+    <Section id="channels" title={t('chat.channels')}>
+      {!selected && (
+        <div className="chat-channel-grid">
+          {data.factories.map((f) => {
+            const channel = data.channels.find((c) => c.kind === f.kind) ?? null
+            return (
+              <button key={f.kind} type="button" className="chat-channel-tile"
+                data-testid={`chat-overview-${f.kind}`} onClick={() => onSelect(f.kind)}>
+                <span className="chat-channel-art" data-kind={f.kind}><ChannelIcon kind={f.kind} size={58} /></span>
+                <span className="chat-tile-body">
+                  <span className="chat-tile-title">{f.label}</span>
+                  <span className="chat-tile-description">{['feishu', 'telegram', 'weixin'].includes(f.kind) ? t(`chat.description.${f.kind}` as Key) : t('chat.channelsLead')}</span>
+                  <span className="chat-tile-footer">
+                    <span className="chat-tile-status"><HealthLine ch={channel} testid={false} /></span>
+                    <span className="chat-tile-arrow"><ArrowRight size={18} aria-hidden="true" /></span>
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {/* Keep forms mounted while moving between adapters so navigation does
+          not erase an unsaved token or abandon an in-progress QR login. */}
+      {data.factories.map((f) => (
+        <div key={f.kind} hidden={selected !== f.kind}>
+          <ChannelCard factory={f} channel={data.channels.find((c) => c.kind === f.kind) ?? null}
             paired={data.peers.filter((p) => p.channel === f.kind && p.status === 'paired').length}
-            consentAt={data.consentAt}
-            onChange={onChange}
-          />
-        ))}
-      </div>
+            consentAt={data.consentAt} onChange={onChange} />
+        </div>
+      ))}
     </Section>
   )
 }
 
-function HealthLine({ ch }: { ch: ChatChannel | null }) {
-  if (!ch) return <p className="text-vp-sm text-ink-3">{t('chat.notSetUp')}</p>
+function SetupStep({ number, title, done, open = false, children }: {
+  number: number
+  title: string
+  done?: boolean
+  open?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <details className="chat-setup-step" open={open}>
+      <summary>
+        <span className="chat-step-number" data-done={done}>{done ? <Check size={15} aria-hidden="true" /> : number}</span>
+        <span>{title}</span><ChevronDown size={17} className="chat-step-chevron" aria-hidden="true" />
+      </summary>
+      <div className="chat-step-body">{children}</div>
+    </details>
+  )
+}
+
+function HealthLine({ ch, testid = true }: { ch: ChatChannel | null; testid?: boolean }) {
+  if (!ch) return <span className="text-vp-sm text-ink-3">{t('chat.notSetUp')}</span>
   const h = ch.health
   // The word and the colour say the same thing (red line 4): an error that
   // is current is "error", never "running" painted red.
@@ -72,7 +115,7 @@ function HealthLine({ ch }: { ch: ChatChannel | null }) {
         ? t('chat.running')
         : t('chat.stopped')
   return (
-    <div className="text-vp-sm text-ink-2" data-testid={`chat-health-${ch.kind}`}>
+    <span className="block text-vp-sm text-ink-2" data-testid={testid ? `chat-health-${ch.kind}` : undefined}>
       <span className="font-medium" style={{ color: tone }}>
         {word}
       </span>
@@ -87,11 +130,11 @@ function HealthLine({ ch }: { ch: ChatChannel | null }) {
         </>
       )}
       {erroring && (
-        <p className="mt-1 break-words" style={{ color: 'var(--vp-state-crashed)' }}>
+        <span className="mt-1 block break-words" style={{ color: 'var(--vp-state-crashed)' }}>
           {safeText(h.lastError)}
-        </p>
+        </span>
       )}
-    </div>
+    </span>
   )
 }
 
@@ -250,141 +293,143 @@ function ChannelCard({
   }
 
   const signedIn = factory.login && channel?.configured
+  const configured = Boolean(channel?.configured)
   return (
-    <Card testid={`chat-channel-${factory.kind}`} className="flex flex-col">
-      <div className="mb-2 flex items-center gap-2">
-        <h3 className="text-vp-md font-semibold text-ink">{factory.label}</h3>
-        {paired > 0 && (
-          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-vp-xs text-ink-2">
-            {t('chat.pairedCount', { n: String(paired) })}
-          </span>
-        )}
+    <div data-testid={`chat-channel-${factory.kind}`} className="chat-channel-detail">
+      <div className="chat-detail-status">
+        <HealthLine ch={channel} />
         {channel && (
-          <label className="ml-auto flex items-center gap-1.5 text-vp-sm text-ink-2">
-            <input
-              type="checkbox"
-              className="vp-switch"
-              checked={channel.enabled}
-              onChange={(e) => void toggle(e.target.checked)}
-              data-testid={`chat-enabled-${factory.kind}`}
-            />
+          <label className="flex shrink-0 items-center gap-2 text-vp-sm text-ink-2">
+            <input type="checkbox" className="vp-switch" checked={channel.enabled}
+              onChange={(e) => void toggle(e.target.checked)} data-testid={`chat-enabled-${factory.kind}`} />
             {t('chat.enabled')}
           </label>
         )}
       </div>
-      <HealthLine ch={channel} />
-
-      {factory.login ? (
-        <div className="mt-3">
-          {signedIn && (
-            <p className="mb-2 text-vp-sm text-ink-2">
-              {t('chat.signedInAs', { id: safeText(channel?.values.user_id ?? '') })}
-            </p>
-          )}
-          {login && login.status !== 'done' ? (
-            <div className="flex flex-col items-start gap-2">
-              {login.qrUrl && (login.status === 'waiting' || login.status === 'scanned' || login.status === 'needCode') && (
-                <QR value={login.qrUrl} />
+      <div className="chat-setup-card">
+        <SetupStep number={1} title={t(factory.login ? 'chat.setupAccount' : factory.webhook ? 'chat.setupCredentials' : 'chat.setupBot')}
+          done={configured} open={!configured}>
+          {factory.login ? (
+            <div className="mt-3">
+              {signedIn && (
+                <p className="mb-2 text-vp-sm text-ink-2">
+                  {t('chat.signedInAs', { id: safeText(channel?.values.user_id ?? '') })}
+                </p>
               )}
-              <p className="text-vp-sm text-ink-2" data-testid={`chat-login-${factory.kind}`}>
-                {login.status === 'waiting' && t('chat.scanToSignIn')}
-                {login.status === 'scanned' && t('chat.scannedConfirm')}
-                {login.status === 'needCode' && t('chat.needCode')}
-                {login.status === 'expired' && t('chat.qrExpired')}
-                {login.status === 'failed' && safeText(login.error || t('chat.loginFailed'))}
-              </p>
-              {login.status === 'needCode' && (
-                <div className="flex gap-2">
-                  <input
-                    className={`${INPUT_SHORT} w-32`}
-                    inputMode="numeric"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    placeholder="123456"
-                  />
-                  <Secondary onClick={() => void sendCode()}>{t('chat.send')}</Secondary>
+              {login && login.status !== 'done' ? (
+                <div className="flex flex-col items-start gap-2">
+                  {login.qrUrl && (login.status === 'waiting' || login.status === 'scanned' || login.status === 'needCode') && (
+                    <QR value={login.qrUrl} />
+                  )}
+                  <p className="text-vp-sm text-ink-2" data-testid={`chat-login-${factory.kind}`}>
+                    {login.status === 'waiting' && t('chat.scanToSignIn')}
+                    {login.status === 'scanned' && t('chat.scannedConfirm')}
+                    {login.status === 'needCode' && t('chat.needCode')}
+                    {login.status === 'expired' && t('chat.qrExpired')}
+                    {login.status === 'failed' && safeText(login.error || t('chat.loginFailed'))}
+                  </p>
+                  {login.status === 'needCode' && (
+                    <div className="flex gap-2">
+                      <input
+                        className={`${INPUT_SHORT} w-32`}
+                        inputMode="numeric"
+                        value={code}
+                        onChange={(e) => setCode(e.target.value)}
+                        placeholder="123456"
+                        aria-label={t('chat.needCode')}
+                      />
+                      <Secondary onClick={() => void sendCode()}>{t('chat.send')}</Secondary>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    {(login.status === 'expired' || login.status === 'failed') && (
+                      <Secondary onClick={() => void startLogin()}>{t('chat.tryAgain')}</Secondary>
+                    )}
+                    <Secondary onClick={() => setLogin(null)} data-testid={`chat-login-cancel-${factory.kind}`}>
+                      {t('chat.cancel')}
+                    </Secondary>
+                  </div>
                 </div>
-              )}
-              <div className="flex gap-2">
-                {(login.status === 'expired' || login.status === 'failed') && (
-                  <Secondary onClick={() => void startLogin()}>{t('chat.tryAgain')}</Secondary>
-                )}
-                <Secondary onClick={() => setLogin(null)} data-testid={`chat-login-cancel-${factory.kind}`}>
-                  {t('chat.cancel')}
+              ) : (
+                <Secondary disabled={busy} onClick={() => void startLogin()} data-testid={`chat-login-start-${factory.kind}`}>
+                  <LogIn size={14} />
+                  {signedIn ? t('chat.signInAgain') : t('chat.signIn')}
                 </Secondary>
-              </div>
+              )}
             </div>
           ) : (
-            <Secondary disabled={busy} onClick={() => void startLogin()} data-testid={`chat-login-start-${factory.kind}`}>
-              <LogIn size={14} />
-              {signedIn ? t('chat.signInAgain') : t('chat.signIn')}
-            </Secondary>
-          )}
-        </div>
-      ) : (
-        <div className="mt-3 grid grid-cols-1 gap-2">
-          {factory.fields.map((f) => (
-            <div key={f.name} className="min-w-0">
-              <label htmlFor={`chat-${factory.kind}-${f.name}`} className="mb-1 block text-vp-sm text-ink-3">
-                {f.label}
-              </label>
-              <input
-                id={`chat-${factory.kind}-${f.name}`}
-                className={`${INPUT} font-mono`}
-                type={f.secret ? 'password' : 'text'}
-                autoComplete="off"
-                value={shown(f.name)}
-                placeholder={f.secret && channel?.secretSet[f.name] ? t('chat.secretKept') : ''}
-                onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-              />
-              {/* Under the field, not in it: a placeholder that says where to
-                  find the value read as a value already filled in. */}
-              {hint(f) && <p className="mt-0.5 text-vp-xs text-ink-3">{hint(f)}</p>}
-            </div>
-          ))}
-          {factory.webhook && channel?.webhookUrl && (
-            <div className="min-w-0">
-              <span className="mb-1 block text-vp-sm text-ink-3">{t('chat.webhookUrl')}</span>
-              <div className="flex items-center gap-1">
-                <code className="min-w-0 flex-1 truncate rounded-vp bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink">
-                  {channel.webhookUrl}
-                </code>
-                <Secondary onClick={copy} title={t('chat.copy')} aria-label={t('chat.copy')}>
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
-                </Secondary>
-              </div>
-              <p className="mt-1 text-vp-xs text-ink-3">{t('chat.webhookHint')}</p>
+            <div className="mt-3 grid grid-cols-1 gap-2">
+              {factory.fields.map((f) => (
+                <div key={f.name} className="min-w-0">
+                  <label htmlFor={`chat-${factory.kind}-${f.name}`} className="mb-1 block text-vp-sm text-ink-3">
+                    {f.label}
+                  </label>
+                  <input
+                    id={`chat-${factory.kind}-${f.name}`}
+                    className={`${INPUT} font-mono`}
+                    type={f.secret ? 'password' : 'text'}
+                    autoComplete="off"
+                    value={shown(f.name)}
+                    placeholder={f.secret && channel?.secretSet[f.name] ? t('chat.secretKept') : ''}
+                    onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                  />
+                  {/* Under the field, not in it: a placeholder that says where to
+                      find the value read as a value already filled in. */}
+                  {hint(f) && <p className="mt-0.5 text-vp-xs text-ink-3">{hint(f)}</p>}
+                </div>
+              ))}
             </div>
           )}
-        </div>
-      )}
 
-      <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
-        {!factory.login && (
-          <Primary disabled={busy} onClick={() => void save()} data-testid={`chat-save-${factory.kind}`}>
-            <Check size={14} />
-            {t('chat.save')}
-          </Primary>
+          {!factory.login && (
+            <Primary disabled={busy} className="mt-5" onClick={() => void save()} data-testid={`chat-save-${factory.kind}`}>
+              <Check size={14} />{t('chat.save')}
+            </Primary>
+          )}
+        </SetupStep>
+        {factory.webhook && (
+          <SetupStep number={2} title={t('chat.setupWebhook')} open={configured}>
+            {channel?.webhookUrl && (
+              <div className="min-w-0">
+                <span className="mb-1 block text-vp-sm text-ink-3">{t('chat.webhookUrl')}</span>
+                <div className="flex items-center gap-1">
+                  <code className="min-w-0 flex-1 truncate rounded-vp bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink">
+                    {channel.webhookUrl}
+                  </code>
+                  <Secondary onClick={copy} title={t('chat.copy')} aria-label={t('chat.copy')}>
+                    {copied ? <Check size={14} /> : <Copy size={14} />}
+                  </Secondary>
+                </div>
+                <p className="mt-1 text-vp-xs text-ink-3">{t('chat.webhookHint')}</p>
+              </div>
+            )}
+            {!channel?.webhookUrl && <p className="flex items-center gap-2 text-vp-sm text-ink-2"><Link2 size={15} />{t('chat.webhookAfterSave')}</p>}
+          </SetupStep>
         )}
-        {channel && (
-          <Secondary disabled={busy || !channel.enabled} onClick={() => void test()}>
-            <Send size={14} />
-            {t('chat.test')}
+        <SetupStep number={factory.webhook ? 3 : 2} title={t('chat.setupPair')} done={paired > 0} open={configured && paired === 0}>
+          <p className="mb-4 text-vp-base leading-relaxed text-ink-2">{t('chat.setupPairHint')}</p>
+          <a href="#peers" className="vp-outline w-fit text-vp-sm"><Users size={15} />{t('chat.openPeople')}</a>
+        </SetupStep>
+        <SetupStep number={factory.webhook ? 4 : 3} title={t('chat.setupReceive')} done={Boolean(channel?.health.lastInbound)} open={paired > 0}>
+          <p className="mb-4 text-vp-base leading-relaxed text-ink-2">{t('chat.setupReceiveHint')}</p>
+          <Secondary disabled={busy || !channel?.enabled || paired === 0} onClick={() => void test()}>
+            <Send size={14} />{t('chat.test')}
           </Secondary>
-        )}
-        {factory.webhook && !channel && (
-          <span className="flex items-center gap-1 text-vp-xs text-ink-3">
-            <Link2 size={12} />
-            {t('chat.webhookAfterSave')}
-          </span>
-        )}
-        {channel && (
-          <Secondary className="ml-auto text-ink-2" onClick={() => void remove()}>
-            <Trash2 size={14} />
-            {t('chat.remove')}
-          </Secondary>
-        )}
+        </SetupStep>
       </div>
-    </Card>
+      <div className="chat-people-heading">
+        <h3>{t('chat.connectedPeople')}</h3>
+        {paired > 0 && <span className="text-vp-sm text-ink-2">{t('chat.pairedCount', { n: String(paired) })}</span>}
+      </div>
+      <a href="#peers" className="chat-people-card">
+        <Users size={24} className="shrink-0 text-ink-3" aria-hidden="true" />
+        <span className="min-w-0 flex-1"><span className="block font-medium">{paired > 0 ? t('chat.pairedCount', { n: String(paired) }) : t('chat.noPeople')}</span>
+          <span className="mt-1 block text-vp-sm text-ink-2">{paired > 0 ? t('chat.openPeople') : t('chat.noPeopleHint')}</span></span>
+        <ArrowRight size={18} className="shrink-0" aria-hidden="true" />
+      </a>
+      {channel && <div className="mt-6 flex justify-end">
+        <Secondary onClick={() => void remove()}><Trash2 size={14} />{t('chat.remove')}</Secondary>
+      </div>}
+    </div>
   )
 }

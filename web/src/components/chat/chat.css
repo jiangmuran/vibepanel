@@ -1,0 +1,122 @@
+.chat-layout {
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
+  min-height: calc(100dvh - 57px);
+}
+.chat-nav {
+  padding: 32px 16px;
+  border-right: 1px solid var(--vp-hairline);
+  background: var(--vp-bg);
+}
+.chat-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 4px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--vp-ink-2);
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+}
+.chat-nav-item:hover { background: var(--vp-surface-2); }
+.chat-nav-item[data-active='true'] {
+  color: var(--vp-ink);
+  background: var(--vp-bg);
+  border-color: var(--vp-hairline-strong);
+  font-weight: 550;
+}
+.chat-nav-label { margin: 28px 12px 10px; font-size: 12px; color: var(--vp-ink-3); }
+.chat-nav-count { margin-left: auto; display: flex; align-items: center; gap: 3px; font-size: 12px; }
+.chat-content { min-width: 0; padding: 44px clamp(24px, 4vw, 64px) 64px; }
+.chat-heading { margin-bottom: 32px; }
+.chat-heading h1 { font-size: 28px; line-height: 1.3; font-weight: 600; letter-spacing: -0.035em; }
+.chat-heading p { max-width: 700px; margin-top: 12px; font-size: 14px; line-height: 1.8; color: var(--vp-ink-2); }
+.chat-channel-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.chat-channel-tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--vp-hairline);
+  border-radius: 14px;
+  background: var(--vp-bg);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms;
+}
+.chat-channel-tile:hover { border-color: var(--vp-ink-3); }
+.chat-channel-tile:focus-visible, .chat-nav-item:focus-visible, .chat-people-card:focus-visible {
+  outline: 2px solid var(--vp-accent);
+  outline-offset: 3px;
+}
+.chat-channel-art {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  height: 168px;
+  overflow: hidden;
+  color: white;
+  background: #06375c;
+}
+.chat-channel-art::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -80%;
+  transform: rotate(-30deg);
+  background: linear-gradient(0deg, transparent 30%, #042e53 37%, #10b9e8 39%, #b5f5ff 40%, #1580bd 41%, #073756 45%, #20b7df 47%, #c8faff 48%, #167caf 50%, #062740 55%, #249acb 58%, #8fdae4 59%, #063450 63%, transparent 70%);
+}
+.chat-channel-art[data-kind='feishu'] { background: #063a68; }
+.chat-channel-art[data-kind='feishu']::before { transform: rotate(-44deg); }
+.chat-channel-art[data-kind='weixin'] { background: #064d35; }
+.chat-channel-art[data-kind='weixin']::before { transform: rotate(27deg); filter: hue-rotate(310deg); }
+.chat-tile-body { display: flex; flex-direction: column; flex: 1; padding: 22px; }
+.chat-tile-title { font-size: 20px; font-weight: 550; letter-spacing: -0.025em; }
+.chat-tile-description { margin-top: 14px; font-size: 13px; line-height: 1.8; color: var(--vp-ink-2); }
+.chat-tile-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 24px; }
+.chat-tile-status { min-width: 0; font-size: 12px; color: var(--vp-ink-2); }
+.chat-tile-arrow { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border: 1px solid var(--vp-hairline); border-radius: 50%; }
+.chat-channel-detail { max-width: 800px; margin-inline: auto; }
+.chat-detail-status { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.chat-setup-card { border: 1px solid var(--vp-hairline); border-radius: 14px; background: var(--vp-bg); overflow: hidden; }
+.chat-setup-step + .chat-setup-step { border-top: 1px solid var(--vp-hairline); }
+.chat-setup-step summary { display: flex; align-items: center; gap: 14px; padding: 22px 24px; font-size: 17px; line-height: 1.5; font-weight: 500; list-style: none; cursor: pointer; }
+.chat-setup-step summary::-webkit-details-marker { display: none; }
+.chat-step-number { display: grid; place-items: center; flex-shrink: 0; width: 25px; height: 25px; border: 1px solid var(--vp-hairline-strong); border-radius: 50%; font-size: 13px; color: var(--vp-ink-2); }
+.chat-setup-step[open] .chat-step-number, .chat-step-number[data-done='true'] { background: var(--vp-ink); color: var(--vp-bg); border-color: var(--vp-ink); }
+.chat-step-chevron { margin-left: auto; flex-shrink: 0; color: var(--vp-ink-3); }
+.chat-setup-step[open] .chat-step-chevron { transform: rotate(180deg); }
+.chat-step-body { padding: 0 24px 24px 63px; }
+.chat-step-body > .mt-3 { margin-top: 0; }
+.chat-step-body input:not([type='checkbox']) { min-height: 42px; background: var(--vp-bg); border-radius: 8px; }
+.chat-step-body > .grid { gap: 18px; }
+.chat-people-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 36px 0 16px; }
+.chat-people-heading h3 { font-size: 18px; font-weight: 550; }
+.chat-people-card { display: flex; align-items: center; gap: 18px; padding: 24px; border: 1px solid var(--vp-hairline); border-radius: 12px; background: var(--vp-surface); text-decoration: none; }
+@container (width < 850px) {
+  .chat-channel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (width < 520px) {
+  .chat-channel-grid { grid-template-columns: minmax(0, 1fr); }
+  .chat-channel-art { height: 148px; }
+  .chat-setup-step summary { padding: 20px 16px; gap: 10px; font-size: 15px; }
+  .chat-step-body { padding: 0 16px 24px; }
+  .chat-people-card { padding: 20px 16px; }
+}
+@media (max-width: 700px) {
+  .chat-layout { display: block; }
+  .chat-nav { display: flex; align-items: center; gap: 4px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--vp-hairline); overflow-x: auto; }
+  .chat-nav-item { width: auto; flex-shrink: 0; margin: 0; white-space: nowrap; }
+  .chat-nav-label { display: none; }
+  .chat-content { padding: 28px 20px 48px; }
+  .chat-heading { margin-bottom: 24px; }
+  .chat-heading h1 { font-size: 25px; }
+}
+
+.chat-heading-detail { max-width: 800px; margin-inline: auto; }

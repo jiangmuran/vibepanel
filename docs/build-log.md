@@ -28943,3 +28943,35 @@ unsigned (signing needs a key whose public half ships in the binary —
 a trust-model change, not a patch), and the hook root token still
 authorises state writes for any session, the accepted decay from the
 September audit.
+
+
+## 2026-11-28 — Channel overview and setup pages
+
+The chat page now has a left navigation rail with an overview, one entry per
+adapter and the existing management destinations. The overview uses three
+illustrated channel cards; credentials are edited on the adapter's own page
+instead of three unrelated forms sharing a row. Each card retains the actual
+health, last inbound message, current errors and people waiting to say hello.
+The artwork is local CSS and SVG, so it adds no external image request.
+
+Adapter details use numbered, expandable steps for credentials or QR sign-in,
+the Feishu callback URL, pairing and a test message. Saved credentials collapse
+to make room for the following step and can be reopened for editing. Progress
+comes from the existing server data. The existing consent, secret clearing,
+QR polling, channel toggle, removal and test APIs are unchanged. Switching
+between adapters retains unfinished credentials and an active QR login, while
+hash addresses reopen the selected adapter on reload. Narrow screens use a
+scrolling navigation row; card and form breakpoints use their container widths.
+
+The browser regression suite now follows adapter detail navigation and checks
+draft retention, reloadable addresses, every detail's layout and navigation
+reachability. Local verification exercised the real React page with intercepted
+API fixtures: consent acceptance and refusal, credential writes and clearing,
+Feishu callback disclosure, QR and verification-code login, management views,
+current health errors and all four channel views at 320, 390, 820 and 1440 pixels
+in both languages and both themes. The fixture run reported 34 passing checks
+and no browser runtime errors. TypeScript, ESLint (existing warnings only), all
+1478 frontend tests and the production frontend build passed. `make chat-check`
+could not reach its real-backend browser suite because Go is unavailable.
+`make verify` also stopped on the system make's unsupported `--output-sync`
+option, and its separate release stage stopped on the missing Go compiler.

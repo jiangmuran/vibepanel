@@ -1,0 +1,1 @@
+export{t as html}from"./dist-D0KSg1dP.js";

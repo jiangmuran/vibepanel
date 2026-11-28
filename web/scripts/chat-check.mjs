@@ -205,9 +205,24 @@ try {
   pass('sections', 'every tab puts its sections on screen')
   await openTab(page, 'channels')
   for (const kind of ['telegram', 'feishu', 'weixin']) {
-    if ((await page.getByTestId(`chat-channel-${kind}`).count()) === 0) note('FAIL', 'channels', `no ${kind} card`)
+    if (!(await page.getByTestId(`chat-overview-${kind}`).isVisible())) note('FAIL', 'channels', `no ${kind} overview card`)
   }
   pass('channels', 'a card per adapter')
+
+  const openChannel = async (kind) => {
+    await page.getByTestId(`chat-nav-${kind}`).click()
+    await page.getByTestId(`chat-channel-${kind}`).waitFor({ state: 'visible' })
+  }
+  await page.getByTestId('chat-overview-telegram').click()
+  await page.fill('#chat-telegram-token', 'unfinished-token')
+  await openChannel('feishu')
+  await openChannel('telegram')
+  if (await page.inputValue('#chat-telegram-token') !== 'unfinished-token') note('FAIL', 'channels', 'changing adapters discarded the token draft')
+  else pass('channels', 'adapter navigation retains the credential draft')
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.getByTestId('chat-channel-telegram').waitFor({ state: 'visible' })
+  if (!page.url().endsWith('#channels/telegram')) note('FAIL', 'channels', 'the selected adapter did not survive reload')
+  else pass('channels', 'adapter detail has a reloadable URL')
 
   // ── Consent: nothing reaches an outside service before the owner accepts ─
   const refused = await api('PUT', '/api/chat/channels/telegram', { enabled: true, values: { token: '1:x' } })
@@ -238,6 +253,7 @@ try {
   else pass('telegram', 'the token is stored and not returned')
 
   // ── 飞书: the request URL appears once saved ─────────────────────────────
+  await openChannel('feishu')
   await page.fill('#chat-feishu-app_id', 'cli_test')
   await page.fill('#chat-feishu-app_secret', 'secret')
   await page.fill('#chat-feishu-verification_token', 'verify')
@@ -269,6 +285,7 @@ try {
   else pass('feishu', 'the handshake answers the challenge')
 
   // ── 微信: sign-in starts, and either draws or says why not ───────────────
+  await openChannel('weixin')
   await page.getByTestId('chat-login-start-weixin').click()
   const loginLine = page.getByTestId('chat-login-weixin')
   const loginSpoke = await until(async () => {
@@ -423,6 +440,16 @@ try {
           }
           await openTab(tab, 'channels')
         }
+        for (const kind of ['feishu', 'telegram', 'weixin']) {
+          await tab.getByTestId(`chat-nav-${kind}`).click()
+          await tab.getByTestId(`chat-channel-${kind}`).waitFor({ state: 'visible' })
+          const scan = await findUnreachable(tab, sleep)
+          if (scan.found.length) note('FAIL', `${where}/${kind}`, `unreachable detail: ${scan.found.slice(0, 4).join(' | ')}`)
+          const unnamedDetail = await findUnnamedControls(tab)
+          if (unnamedDetail.length) note('FAIL', `${where}/${kind}`, `unnamed: ${unnamedDetail.slice(0, 4).join(', ')}`)
+          await tab.screenshot({ path: join(SHOTS, `chat-${lang}-${theme}-${w}-${kind}.png`), fullPage: true })
+        }
+        await openTab(tab, 'channels')
         const overflowX = await tab.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)
         if (overflowX) note('FAIL', where, 'the page is wider than the screen')
         const { examined, found } = await findUnreachable(tab, sleep)
@@ -459,9 +486,26 @@ try {
     }
     await sleep(400)
     const chat = await findClippedTabs(tab)
-    if (chat.examined < Object.keys(TABS).length) note('FAIL', where, `measured ${chat.examined} chat tabs`)
-    else if (chat.out.length) note('FAIL', where, `chat tabs: ${chat.out.slice(0, 4).join(' | ')}`)
-    else pass(where, 'chat tabs fit their labels and are reachable')
+    if (chat.examined < 2) note('FAIL', where, `measured ${chat.examined} language tabs`)
+    else if (chat.out.length) note('FAIL', where, `language tabs: ${chat.out.slice(0, 4).join(' | ')}`)
+    else pass(where, 'language tabs fit their labels and are reachable')
+    const navigation = tab.locator('.chat-nav-item')
+    const navFailures = []
+    for (let i = 0; i < await navigation.count(); i++) {
+      const item = navigation.nth(i)
+      await item.scrollIntoViewIfNeeded()
+      const problem = await item.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        const nav = el.closest('nav').getBoundingClientRect()
+        if (el.scrollWidth > el.clientWidth + 1) return `${el.textContent}: clipped label`
+        if (r.left < Math.max(0, nav.left) - 1 || r.right > Math.min(innerWidth, nav.right) + 1) return `${el.textContent}: unreachable navigation item`
+        return ''
+      })
+      if (problem) navFailures.push(problem)
+    }
+    if (await navigation.count() !== Object.keys(TABS).length + 3) note('FAIL', where, 'missing navigation destinations')
+    else if (navFailures.length) note('FAIL', where, navFailures.join(' | '))
+    else pass(where, 'every navigation destination fits and scrolls into reach')
 
     await tab.goto(`${BASE}/`, { waitUntil: 'networkidle' })
     await tab.locator('button[title="设置"], button[title="Settings"]').first().click()
