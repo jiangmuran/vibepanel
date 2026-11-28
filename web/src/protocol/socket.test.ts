@@ -684,10 +684,33 @@ describe('liveness recovery without CLOSING deadlock or background false kills',
     expect(first.sent).toContainEqual({ t: 'ping' })
     expect(HangingCloseWS.made).toHaveLength(1)
 
+    // The deadline, then the one yield it takes before judging. See probe.
     vi.advanceTimersByTime(10_000)
+    vi.advanceTimersByTime(1)
     expect(first.readyState).toBe(HangingCloseWS.CLOSING)
     expect(HangingCloseWS.made).toHaveLength(2)
     expect(sock.status).toBe('connecting')
+    sock.close()
+  })
+
+  it('reads a pong already waiting behind a busy thread before judging the socket', () => {
+    const { sock } = setupClock()
+    sock.connect()
+    const first = HangingCloseWS.made[0]
+    first.readyState = HangingCloseWS.OPEN
+    first.onopen?.()
+
+    // A millisecond after the open, so the open is not mistaken for an answer.
+    vi.advanceTimersByTime(1)
+    ;(sock as unknown as { probe(ms: number): void }).probe(10_000)
+    // The deadline runs; the pong is queued behind it, as a busy thread
+    // delivers them, and is read in the yield.
+    vi.advanceTimersByTime(10_000)
+    expect(HangingCloseWS.made).toHaveLength(1)
+    first.onmessage?.({ data: JSON.stringify({ t: 'pong' }) })
+    vi.advanceTimersByTime(20_000)
+    expect(HangingCloseWS.made).toHaveLength(1)
+    expect(sock.status).toBe('open')
     sock.close()
   })
 
@@ -709,6 +732,7 @@ describe('liveness recovery without CLOSING deadlock or background false kills',
     vi.advanceTimersByTime(5_000)
     expect(first.sent).toContainEqual({ t: 'ping' })
     vi.advanceTimersByTime(5_000)
+    vi.advanceTimersByTime(1)
     expect(HangingCloseWS.made).toHaveLength(2)
 
     // On the new socket, a stream error reaches onError and cancels the ACK timer.

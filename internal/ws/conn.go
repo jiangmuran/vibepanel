@@ -108,6 +108,27 @@ type pendingSub struct {
 	hidden     bool
 	background bool
 	dark       *bool
+	// sizes are the resize and take-control messages that arrived while the
+	// subscribe was in flight, applied once it registers. Before subscribe
+	// left readLoop nothing could arrive in between; after, a keyboard
+	// opening on a phone or a click on Take control during a slow attach
+	// was dropped, and the grid stayed at the old size with nothing on
+	// either side left to send it again. At most a take and the resize after
+	// it: a take supersedes everything before it, a resize the resize before.
+	sizes []ClientMessage
+}
+
+// note records a size message for a subscribe still in flight. Caller holds
+// Conn.mu.
+func (p *pendingSub) note(msg ClientMessage) {
+	if msg.Type == MsgTakeControl {
+		p.sizes = []ClientMessage{msg}
+		return
+	}
+	if n := len(p.sizes); n > 0 && p.sizes[n-1].Type == MsgResize {
+		p.sizes = p.sizes[:n-1]
+	}
+	p.sizes = append(p.sizes, msg)
 }
 
 // Conn is a single browser connection.
@@ -574,24 +595,16 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 	case MsgResize, MsgTakeControl:
 		c.mu.Lock()
 		s := c.byID[msg.SessionID]
+		if s == nil {
+			if p := c.pending[msg.SessionID]; p != nil {
+				p.note(msg)
+			}
+		}
 		c.mu.Unlock()
 		if s == nil {
 			return
 		}
-		var err error
-		if msg.Type == MsgTakeControl {
-			err = s.live.TakeControl(c.clientID, msg.Cols, msg.Rows)
-		} else {
-			err = s.live.Resize(c.clientID, msg.Cols, msg.Rows)
-		}
-		if err != nil {
-			c.sendError(msg.SessionID, err.Error())
-			return
-		}
-		cols, rows := s.live.Size()
-		if rerr := c.h.Resolve.RecordSize(ctx, msg.SessionID, cols, rows); rerr != nil {
-			c.h.logger().Warn("persist size", "session", msg.SessionID, "err", rerr)
-		}
+		c.applySize(ctx, s, msg)
 
 	case MsgLoadTiming:
 		// Only for a session this connection is watching, and only with
@@ -658,6 +671,24 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 			t = t[:40] + "…"
 		}
 		c.sendError(msg.SessionID, "unknown message type: "+t)
+	}
+}
+
+// applySize applies a resize or take-control message to a registered stream.
+func (c *Conn) applySize(ctx context.Context, s *stream, msg ClientMessage) {
+	var err error
+	if msg.Type == MsgTakeControl {
+		err = s.live.TakeControl(c.clientID, msg.Cols, msg.Rows)
+	} else {
+		err = s.live.Resize(c.clientID, msg.Cols, msg.Rows)
+	}
+	if err != nil {
+		c.sendError(msg.SessionID, err.Error())
+		return
+	}
+	cols, rows := s.live.Size()
+	if rerr := c.h.Resolve.RecordSize(ctx, msg.SessionID, cols, rows); rerr != nil {
+		c.h.logger().Warn("persist size", "session", msg.SessionID, "err", rerr)
 	}
 }
 
@@ -776,6 +807,7 @@ func (c *Conn) runSubscribe(ctx context.Context, pend *pendingSub, msg ClientMes
 	delete(c.pending, sessionID)
 	latestHidden, latestBackground := pend.hidden, pend.background
 	dark := pend.dark
+	sizes := pend.sizes
 	c.nextRef++
 	ref := c.nextRef
 	s := &stream{ref: ref, sessionID: sessionID, live: live, sub: sub, cancel: pend.cancel}
@@ -792,6 +824,11 @@ func (c *Conn) runSubscribe(ctx context.Context, pend *pendingSub, msg ClientMes
 	// the question is the same as no answer.
 	if dark != nil {
 		c.applyScheme(sessionID, dark)
+	}
+	// Before the confirmation, so the grid and the controlling flag it
+	// carries are the ones these produced. See pendingSub.sizes.
+	for _, m := range sizes {
+		c.applySize(ctx, s, m)
 	}
 
 	// Build the frame list before the confirmation so the browser knows the

@@ -316,3 +316,57 @@ func TestABackgroundTabKeepsTheGridButNeverClaimsItOverTheWire(t *testing.T) {
 		t.Errorf("controller = %q after background subscribe, want unowned", got)
 	}
 }
+
+// gatedResolver holds every Resolve until gate closes, so a test can put
+// messages between a subscribe and its registration.
+type gatedResolver struct {
+	Resolver
+	started chan struct{}
+	gate    chan struct{}
+}
+
+func (r gatedResolver) Resolve(ctx context.Context, id string) (string, int, int, error) {
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-r.gate:
+	case <-ctx.Done():
+		return "", 0, 0, ctx.Err()
+	}
+	return r.Resolver.Resolve(ctx, id)
+}
+
+// A resize sent while the subscribe is still attaching is applied when it
+// registers, not dropped. See pendingSub.sizes.
+func TestAResizeDuringASlowSubscribeIsApplied(t *testing.T) {
+	s := serveSession(t, "vp_ws_pending_resize", "true")
+	gate := gatedResolver{Resolver: s.handler.Resolve, started: make(chan struct{}, 1), gate: make(chan struct{})}
+	s.handler.Resolve = gate
+
+	v := dialViewer(t, s, "phone")
+	v.send(map[string]any{"t": MsgSubscribe, "sessionId": "s1", "cols": 80, "rows": 24})
+	select {
+	case <-gate.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the subscribe never reached Resolve")
+	}
+	// The keyboard opens while the attach is still running.
+	v.send(map[string]any{"t": MsgResize, "sessionId": "s1", "cols": 100, "rows": 30})
+	// readLoop handles messages in order: the pong means the resize was read.
+	v.send(map[string]any{"t": MsgPing})
+	v.await(MsgPong)
+	close(gate.gate)
+
+	got := v.await(MsgSubscribed)
+	if !got.Controlling {
+		t.Fatal("the only viewer was not given the grid; nothing below means anything")
+	}
+	if got.Cols != 100 || got.Rows != 30 {
+		t.Errorf("subscribed with %dx%d, want the 100x30 sent while it was attaching", got.Cols, got.Rows)
+	}
+	if cols, rows := s.live.Size(); cols != 100 || rows != 30 {
+		t.Errorf("grid = %dx%d, want 100x30", cols, rows)
+	}
+}

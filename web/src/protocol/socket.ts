@@ -911,10 +911,24 @@ export class PanelSocket {
     if (this.ws?.readyState !== WebSocket.OPEN) return
     if (this.pingDeadline !== null) return
     this.send({ t: 'ping' })
-    this.pingDeadline = setTimeout(() => {
+    const sentAt = Date.now()
+    // The deadline measures the network only while this thread is free to
+    // hear the answer. A phone parsing several large replays can be busy past
+    // the deadline with the pong already queued behind it; the timer then ran
+    // first, the socket was replaced, every terminal resubscribed and
+    // replayed again, and the thread was busy again for the next ping. So the
+    // deadline yields once, and a frame already waiting is read before the
+    // socket is judged dead.
+    const check = (yielded: boolean) => {
       this.pingDeadline = null
+      if (this.lastSeenAt > sentAt) return
+      if (!yielded) {
+        this.pingDeadline = setTimeout(() => check(true), 0)
+        return
+      }
       this.dropConnection(true)
-    }, timeoutMs)
+    }
+    this.pingDeadline = setTimeout(() => check(false), timeoutMs)
   }
 
   private clearPingDeadline() {
