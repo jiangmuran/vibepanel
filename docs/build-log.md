@@ -29230,3 +29230,51 @@ Auditing a live deployment where clicking a new session frequently stalled at
   claiming focus, clicking empty backdrop space beside a passive smaller grid
   focuses xterm, and `TerminalView` only runs local echo when `socket.write`
   returns `true`.
+
+## 2026-11-28 — Seven pull requests, read and merged with what review found
+
+Read with one reviewer per pull request (two for the overlapping #50 and
+#51), each told to remove the guards a change added and watch for a red
+test; what follows is what that found and what was changed on top.
+
+- **#49, share title and favicon.** The unlock shell is the one share
+  document that is not sandboxed, and the page's icon href is copied into its
+  `<link>`. Escaping was the only guard and removing it left every test green;
+  a `data:` icon carrying `"`, `<` or `>` is now refused before the template,
+  and `TestTheUnlockShellEscapesItsIconAndTitle` renders the shell with one.
+  The shell's check that a message came from its own frame had no test either:
+  `pages-check` now posts `vp.title` and `vp.reauth` from the shell's window
+  and fails with the check removed.
+- **#54, chat setup pages.** Drafts and a QR sign-in in progress lived in
+  cards that unmounted whenever another section opened; they stay mounted and
+  hidden now, and `chat-check` visits People mid-setup. The step body's
+  spacing no longer comes from CSS selecting Tailwind class names.
+- **#55, model colours.** Two models of one family were the same fill and
+  every unknown model wore grok's grey; a further model of a family now steps
+  down in opacity (the same across bars, legend and ranking), unknown is the
+  neutral ink, and segments are divided by a line (red line 4). Orange had
+  come to mean Claude, output tokens and heatmap intensity in one dialog;
+  the latter two are the accent again. Today's bar is emphasised again.
+- **#50, background tabs.** Kept: a background tab never claims the grid,
+  on arrival or on a sleeping laptop's reconnects, which is what shrank a
+  298x65 session to 107x32 over and over. Not kept: releasing the grid the
+  moment a tab goes to the background, a twenty-second grace and a timer that
+  promoted the most recently *subscribed* foreground viewer. A phone whose
+  owner switched app to fetch a code came back to a session the desktop had
+  re-laid at its own width, and the most recently subscribed viewer was as
+  likely an unattended tab that had just reconnected. Grace is two minutes
+  again; a background tab keeps a grid it holds and still counts as watched.
+- **#51, terminal stalls.** Subscribe moved off readLoop, which opened a
+  window that did not exist before: a resize or take-control for a session
+  still attaching found no stream and was dropped, and nothing would send it
+  again. They wait on the pending subscribe now and are applied before the
+  confirmation (`TestAResizeDuringASlowSubscribeIsApplied`). The new ping
+  deadline could fire on a thread busy past it with the pong already queued;
+  it yields once before judging.
+- **#52 and #53** went in as they were. #53 had not been run against
+  `pages-check` (no Go where it was written); its templates section passes.
+
+Merging #50 then #51 by taking #51's side of `internal/ws/conn.go` compiles
+and quietly undoes #50: the pending subscribe has to carry `background`
+through to `SubscribeView`, and `socket.ts` has to keep #50's page-visibility
+tracking inside #51's rewrite.
