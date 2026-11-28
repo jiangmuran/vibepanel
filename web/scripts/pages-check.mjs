@@ -965,6 +965,23 @@ window.__probe = (async () => {
       await sleep(150)
     }
     const syncedTitle = await tab.title()
+    // The shell acts only on messages from its own frame. Posted from the
+    // shell's window itself (any window but the frame: a popup the page
+    // opened has the same standing), a title must not land and a reauth must
+    // not reload. Without this, removing the source check left every test
+    // green and both messages open to anything that can reach the window.
+    const strayed = await tab.evaluate(async () => {
+      window.__vpNotReloaded = true
+      window.postMessage({ type: 'vp.title', title: 'Not From The Frame' }, '*')
+      window.postMessage({ type: 'vp.reauth' }, '*')
+      await new Promise((r) => setTimeout(r, 300))
+      return { title: document.title, kept: window.__vpNotReloaded === true }
+    }).catch((e) => ({ title: 'reloaded: ' + e, kept: false }))
+    await sleep(300)
+    const keptAfter = await tab.evaluate(() => window.__vpNotReloaded === true).catch(() => false)
+    if (strayed.title !== 'Live Updated Report' || !strayed.kept || !keptAfter) {
+      note('FAIL', 'protect/message-source', `a message from outside the frame was acted on: title ${JSON.stringify(strayed.title)}, reloaded ${!(strayed.kept && keptAfter)}`)
+    } else pass('protect/message-source', 'vp.title and vp.reauth from outside the frame ignored')
     // Exclude the intentional /api/state CSP probe logged by window.__probe inside the iframe.
     const unexpectedErrors = tabErrors.filter((e) => !e.includes('/api/state'))
     if (

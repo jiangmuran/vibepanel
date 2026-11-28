@@ -373,6 +373,17 @@ func resolveShellIconHref(rawHref, grant string, privateFn func(string) bool) st
 		}
 	}
 	if len(href) >= 5 && strings.EqualFold(href[:5], "data:") {
+		// The payload is copied into the shell's <link href="…">, and the shell
+		// is the one document here that is not sandboxed and runs inline
+		// script on the panel's origin. Escaping on the way out is the first
+		// guard; this is the second, so that a later edit to the template that
+		// drops the escape is not a page's HTML running as its owner. A real
+		// data URI percent-encodes these. `'` and spaces stay: hand-written
+		// SVG icons use both (the templates' own uses `'`), and neither ends a
+		// double-quoted attribute.
+		if strings.ContainsAny(href, "\"<>") {
+			return ""
+		}
 		comma := strings.IndexByte(href, ',')
 		if comma < 0 || strings.TrimSpace(href[comma+1:]) == "" {
 			return ""

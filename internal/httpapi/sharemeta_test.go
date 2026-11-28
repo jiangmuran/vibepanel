@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -108,10 +109,31 @@ func TestResolveShellIconHref(t *testing.T) {
 		"admin/icon.png",
 		"vibepanel.js",
 		"data:image/png;base64,abc\ndef",
+		`data:image/svg+xml,"><script>alert(1)</script>`,
+		"data:image/svg+xml,<svg/onload=alert(1)>",
 	}
 	for _, raw := range rejected {
 		if got := resolveShellIconHref(raw, grant, isPrivate); got != "" {
 			t.Errorf("resolveShellIconHref(%q) = %q, want empty", raw, got)
 		}
+	}
+}
+
+// The shell escapes whatever it is handed, independently of what
+// resolveShellIconHref lets through: the shell runs inline script unsandboxed
+// on the panel's origin, so an unescaped quote in its <link> or <title> is a
+// published page's markup running as the signed-in owner.
+func TestTheUnlockShellEscapesItsIconAndTitle(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeUnlockShellPage(rec, "GrantTokenExample1234567890", shareShellMeta{
+		IconHref: `data:image/svg+xml,"><script>alert(1)</script>`,
+		Title:    `</title><script>alert(2)</script>`,
+	})
+	body := rec.Body.String()
+	if strings.Contains(body, "<script>alert(") {
+		t.Fatalf("the shell carried a page's markup through unescaped:\n%s", body)
+	}
+	if !strings.Contains(body, `href="data:image/svg+xml,&#34;&gt;&lt;script&gt;`) {
+		t.Fatalf("the icon href was not escaped into the attribute:\n%s", body)
 	}
 }
