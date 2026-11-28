@@ -207,6 +207,7 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"TokenUsageProject", tokenUsageProject{}},
 		{"TokenUsageTool", store.UsageToolTotals{}},
 		{"UsageDay", store.UsageDay{}},
+		{"UsageModelDay", store.UsageModelDay{}},
 		{"UsageTotals", store.UsageTotals{}},
 		// Resources. The page acts on these: a kill carries the pid and start
 		// the page was shown, and a field renamed on one side is a button that

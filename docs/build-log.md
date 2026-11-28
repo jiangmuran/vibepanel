@@ -28943,3 +28943,68 @@ unsigned (signing needs a key whose public half ships in the binary —
 a trust-model change, not a patch), and the hook root token still
 authorises state writes for any session, the accepted decay from the
 September audit.
+
+
+## 2026-11-28 — A quieter token usage view
+
+The token usage dialog now follows a flat analytics layout: a single surface,
+a joined summary strip with dividers, more space between sections and larger
+section headings. The daily chart has labelled vertical values and horizontal
+guides. Project, model and tool rankings share three columns when the dialog
+has room; a project filter leaves the other two in two columns. All responsive
+rules use the dialog container. Narrow charts retain three date labels so
+neighbouring dates do not run together.
+
+The joined summary explicitly resists flex shrinking. Without that rule,
+its clipped overflow allowed the scrolling body's flex layout to compress the
+whole strip down to its border. Totals, baselines, composition, filters,
+rankings, sessions, warnings, yearly heatmap and refresh behaviour remain in
+place. The message-channel page was left unchanged at the owner's request.
+
+Verification used the real React dialog with intercepted API fixtures at
+390, 768 and 1440 pixels in both themes. It checked summary height, horizontal
+overflow, metric switching, range/project/tool requests, the yearly heatmap,
+project-filtered columns, refresh, session expansion, Escape, and empty,
+unscanned and warning states. TypeScript, ESLint, all 1478 frontend tests and
+the production frontend build passed. The full render-check could not start
+because the environment has no Go compiler.
+
+
+## 2026-11-28 — Model colours and headings above the data
+
+The first token-view styling pass still drew every day and every ranking in
+blue. The daily chart now stacks the actual amounts for each model. Claude
+uses orange, Codex/OpenAI uses blue and Grok uses grey, with named
+colours for Gemini, DeepSeek and Kimi as well. Family colours remain stable
+when filters or ranking order change. Light and dark values are defined in
+the theme token blocks, including Porcelain and Wujin; text legends and hover
+readouts identify the models independently of colour. Project bars stay
+neutral. Chart, ranking, heatmap and session-table headings sit above their
+bordered content instead of being embedded in the data area. Message channels
+remain untouched.
+
+The authenticated token-usage response adds `byDayModel`, grouped by day and
+model with the existing date, tool, project and nested-project exclusions.
+The data was already in `usage_daily`; no migration or extra scan of agent
+files is needed. Whole-window model shares are not used to invent daily
+values. Store and HTTP tests check filtering, daily sums and empty arrays;
+the wire comparison now pins the new row too.
+
+Verification: TypeScript, focused ESLint, all 1481 frontend tests, the new
+store/HTTP tests, wire comparisons and `make build` passed. The previously
+missing Go compiler was supplied through a checksum-verified temporary
+Go 1.26.11 toolchain. Browser fixtures exercised all four built-in themes at
+390, 768 and 1440 pixels, checking distinct family colours, heading placement,
+summary height, overflow and the existing controls. The full `make render-check`
+completed with the token view passing, but reported five failures outside
+this change: one /proc-based monitor expectation on macOS, two local-echo
+assertions and two clipboard assertions. Those areas were not modified.
+
+
+The review pass raises the orange and blue saturation and removes the chart's
+opacity attenuation. The day segments now use their family token directly,
+with separate light and dark values; Grok stays neutral grey. The clean-HEAD
+check confirmed compilation, vet, frontend checks and bundle reproducibility,
+but its full Go suite failed on monitor readings, macOS temporary-path
+canonicalisation, absent systemctl and a cancelled assistant-call assertion.
+Those findings are recorded with the PR rather than counted as passing.

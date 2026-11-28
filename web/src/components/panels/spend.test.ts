@@ -37,6 +37,7 @@ const usage = (over: Partial<TokenUsage> = {}): TokenUsage => ({
   days: 30,
   total: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0 },
   byDay: [],
+  byDayModel: [],
   heatmap: [],
   byMonth: [],
   byTool: [],

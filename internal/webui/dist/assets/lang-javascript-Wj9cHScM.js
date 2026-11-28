@@ -1,0 +1,1 @@
+export{t as javascript}from"./dist-B1g4QT5R.js";

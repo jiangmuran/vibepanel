@@ -2158,7 +2158,7 @@ const DICT = {
   'spend.rangeValue': { zh: '近 {n} 天 {v}', en: '{v} in {n}d' },
   'spend.pace': { zh: '日均 {avg} · 今天是 {x}×', en: '{avg} a day · today {x}×' },
   'spend.noBaseline': { zh: '还没有可比的日子', en: 'No earlier days to compare' },
-  'spend.perDayTitle': { zh: '每天', en: 'Per day' },
+  'spend.perDayTitle': { zh: '每日用量', en: 'Daily usage' },
   'spend.models': { zh: '按模型', en: 'By model' },
   'spend.showAll': { zh: '全部 {n} 个', en: 'All {n}' },
   'spend.showLess': { zh: '收起', en: 'Show fewer' },
@@ -2180,7 +2180,7 @@ const DICT = {
   'spend.requests': { zh: '请求数', en: 'Requests' },
   'spend.tokens': { zh: 'token', en: 'tokens' },
   'spend.notInAProject': { zh: '未归入项目', en: 'Outside every project' },
-  'spend.sessions': { zh: '按会话', en: 'By session' },
+  'spend.sessions': { zh: '会话明细', en: 'Session details' },
   'spend.projects': { zh: '按项目', en: 'By project' },
   'spend.tools': { zh: '按工具', en: 'By tool' },
   'spend.toolTitle': {

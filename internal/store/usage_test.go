@@ -305,3 +305,55 @@ func TestAnExcludedDirectoryIsADirectoryNotAPrefix(t *testing.T) {
 			"not the excluded directory or anything below it", days)
 	}
 }
+
+func TestDailyModelBucketsKeepTheActualDayAndRespectEveryFilter(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+	put(t, db, "/t/claude.jsonl", "claude",
+		row("2026-11-27", "a", "/work", "opus", 10, 3),
+		row("2026-11-28", "a", "/work", "opus", 20, 7),
+		row("2026-11-28", "b", "/work/docs", "sonnet", 30, 11),
+		row("2026-11-28", "c", "/work/nested", "opus", 100, 100),
+		row("2026-11-28", "d", "/work-other", "opus", 200, 200))
+	put(t, db, "/t/codex.jsonl", "codex",
+		row("2026-11-28", "e", "/work", "gpt-5-codex", 40, 13))
+
+	f := UsageFilter{From: "2026-11-28", To: "2026-11-28", Tool: "claude",
+		CWDPrefix: "/work", Exclude: []string{"/work/nested"}}
+	got, err := db.UsageByDayModel(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Day != "2026-11-28" || got[0].Model != "opus" ||
+		got[0].Input != 20 || got[0].Output != 7 || got[1].Model != "sonnet" || got[1].Output != 11 {
+		t.Fatalf("filtered daily models: %+v", got)
+	}
+
+	all, err := db.UsageByDayModel(ctx, UsageFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	days, err := db.UsageByDay(ctx, UsageFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, day := range days {
+		var sum UsageTotals
+		for _, bucket := range all {
+			if bucket.Day == day.Day {
+				sum.Input += bucket.Input
+				sum.Output += bucket.Output
+				sum.CacheRead += bucket.CacheRead
+				sum.CacheWrite += bucket.CacheWrite
+				sum.Requests += bucket.Requests
+			}
+		}
+		if sum != day.UsageTotals {
+			t.Fatalf("%s: model buckets %+v disagree with daily totals %+v", day.Day, sum, day.UsageTotals)
+		}
+	}
+	empty, err := db.UsageByDayModel(ctx, UsageFilter{From: "2027-01-01"})
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("empty breakdown must be an array: %+v, %v", empty, err)
+	}
+}

@@ -163,6 +163,8 @@ project and by tool.
            "cacheWrite": 44120983, "requests": 67339},
  "byDay":   [{"day": "2026-08-27", "input": 12, "output": 478564, "cacheRead": 0,
               "cacheWrite": 0, "requests": 1820}],
+ "byDayModel": [{"day": "2026-08-27", "model": "claude-opus-5", "input": 12,
+                 "output": 478564, "cacheRead": 0, "cacheWrite": 0, "requests": 1820}],
  "heatmap": [{"day": "2026-08-27", "…": "the same shape, always the last 371 days"}],
  "byMonth": [{"day": "2026-08", "…": "the same shape, every month there has been"}],
  "byTool":  [{"tool": "claude", "input": 0, "output": 0, "cacheRead": 0,
@@ -222,7 +224,12 @@ folded into `output`; Hermes, pi and omp already count them inside output, so
 they are not added again. An omp subagent's spend is its session's, as a Claude
 Code subagent's is.
 
-`days` is the range for `byDay`, `total`, `byTool`, `projects` and `sessions`,
+`byDayModel` keeps a separate bucket for each day and model, using the same
+project, tool and date filters as `byDay`. It supplies the actual amounts for
+a stacked daily chart rather than estimating them from whole-window shares.
+
+`days` is the range for `byDay`, `byDayModel`, `byModel`, `total`, `byTool`,
+`projects` and `sessions`,
 clamped to 1–3660 and defaulting to 30. `heatmap` is always the last 371 days
 (53 whole weeks) and `byMonth` is always every month. A range control should
 not be able to make a year grid into a broken one. `project` is a project id,
