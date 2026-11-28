@@ -28943,3 +28943,31 @@ unsigned (signing needs a key whose public half ships in the binary —
 a trust-model change, not a patch), and the hook root token still
 authorises state writes for any session, the accepted decay from the
 September audit.
+
+
+## 2026-11-28 — A quieter session wall
+
+The built-in wall template used viewport-sized counters, coloured tile edges
+and a fitted card grid. With seven sessions, durations dominated the screen
+and the session names were pushed to the bottom of large cards. The wall now
+uses a neutral charcoal palette, a single bordered overview strip and a
+session table beside the recent-change feed. Status remains a shape and a
+word as well as a colour. The accent parameter lightly tints the table header
+instead of adding a large decorative stripe. A television-focused detail pass
+scales type with the screen, reduces the outside margins and gives each status
+a small outlined label so the names and state words can be read from farther
+away. The connection badge uses the same restrained treatment.
+
+Rows keep a fixed readable height. On a wall, sessions that cannot fit are
+counted in a final summary row, still ordered with waiting sessions first.
+Narrow screens and short windows scroll through the complete list. The
+waiting threshold, crash accounting, counts-only name fallback and explicit
+offline notice retain their existing behaviour. The template is used when
+creating a page; existing published pages keep their versioned content.
+
+Browser verification used the real page SDK with local synthetic snapshots
+for seven-session, busy, counts-only, hostile-name, empty, stale, revoked and
+disconnected states across seven screen sizes, plus resize checks (59 checks
+in total). The frontend production build
+passed. The full `make pages-check` stopped before its browser suite because
+Go is absent from this environment.

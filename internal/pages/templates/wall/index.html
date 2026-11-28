@@ -7,140 +7,143 @@
   <title>Session wall</title>
   <style>
     :root {
-      --bg: #0b0d12;
-      --panel: #141821;
-      --tile: #181d28;
-      --line: #252b38;
-      --text: #eef0f5;
-      --muted: #8d95a6;
-      --accent: #8b7cff;
-      --working: #5b8cff;
-      --waiting: #f0b429;
-      --done: #3fb67a;
-      --urgent: #ff5d4a;
-      --crashed: #ff6b5e;
-      --vp-live: #3fb67a;
-      --vp-waiting: #f0b429;
-      --vp-trouble: #ff5d4a;
-      --gap: clamp(8px, 0.8vw, 16px);
+      --bg: #101010;
+      --panel: #121212;
+      --line: #262626;
+      --text: #ededed;
+      --muted: #a0a0a0;
+      --accent: #a3a3a3;
+      --working: #7cace0;
+      --waiting: #e7b45b;
+      --done: #75b58e;
+      --urgent: #ef9588;
+      --crashed: #ef9588;
+      --vp-live: #75b58e;
+      --vp-waiting: #e7b45b;
+      --vp-trouble: #ef9588;
+      --row-height: 76px;
+      font-size: clamp(16px, 1.04vw, 24px);
       color-scheme: dark;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { height: 100%; }
     body {
-      margin: 0;
-      padding: clamp(14px, 1.8vw, 40px);
+      margin: 0 auto;
+      max-width: 1920px;
+      padding: clamp(24px, 2.5vw, 64px);
       background: var(--bg);
       color: var(--text);
-      font: clamp(14px, 1vw, 22px)/1.3 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      font: 1rem/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
-      gap: clamp(12px, 1.4vw, 32px);
+      gap: 32px;
       overflow: hidden;
+      -webkit-font-smoothing: antialiased;
     }
     .shape { width: 1em; height: 1em; flex: none; display: block; }
-    .name { unicode-bidi: isolate; overflow-wrap: anywhere; }
-
-    header { display: flex; align-items: center; gap: clamp(12px, 1.2vw, 28px); min-width: 0; }
-    header .mark { width: clamp(6px, 0.4vw, 10px); align-self: stretch; border-radius: 99px; background: var(--accent); }
+    .name { unicode-bidi: isolate; }
+    header { display: flex; align-items: center; gap: 24px; min-width: 0; }
     header .titles { min-width: 0; flex: 1; }
-    h1 { margin: 0; font-size: clamp(22px, 2.3vw, 52px); font-weight: 650; letter-spacing: -0.01em;
+    h1 { margin: 0; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.025em;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .sub { color: var(--muted); font-size: clamp(13px, 1.05vw, 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #status { font-size: clamp(14px, 1.3vw, 30px); color: var(--muted); white-space: nowrap; }
-
-    main {
-      display: grid;
-      grid-template-columns: minmax(0, 22fr) minmax(0, 56fr) minmax(0, 22fr);
-      gap: clamp(12px, 1.4vw, 32px);
-      min-height: 0;
-    }
+    .sub { margin-top: 6px; color: var(--muted); font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status { padding: 5px 12px; border: 1px solid var(--line); border-radius: 99px;
+      font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+    #status[data-vp-status="live"] { color: var(--done); border-color: color-mix(in srgb, var(--done) 20%, var(--line));
+      background: color-mix(in srgb, var(--done) 7%, var(--bg)); }
+    main { position: relative; display: grid; min-height: 0;
+      grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr);
+      grid-template-rows: auto minmax(0, 1fr); gap: 28px 32px; }
     section { min-height: 0; min-width: 0; }
-    h2 { margin: 0 0 0.6em; font-size: clamp(12px, 0.95vw, 22px); font-weight: 600; color: var(--muted);
-      text-transform: uppercase; letter-spacing: 0.08em; }
-
-    /* ── the figure you read from the door ── */
-    .hero { display: flex; flex-direction: column; gap: var(--gap); }
-    .waiting { background: var(--panel); border-radius: clamp(10px, 0.9vw, 20px); padding: clamp(16px, 1.6vw, 36px);
-      border: 2px solid transparent; }
-    .waiting .label { display: flex; align-items: center; gap: 0.45em; font-size: clamp(16px, 1.6vw, 36px); font-weight: 600; }
-    .waiting .label .shape { color: var(--waiting); }
-    .waiting .n { font-size: clamp(88px, 12vw, 280px); font-weight: 750; line-height: 0.95; letter-spacing: -0.04em;
-      font-variant-numeric: tabular-nums; margin: 0.08em 0 0.05em; }
-    .waiting .oldest { color: var(--muted); font-size: clamp(14px, 1.2vw, 28px); }
-    .waiting .oldest b { display: block; color: var(--text); font-size: clamp(30px, 3.4vw, 80px); font-weight: 700;
-      line-height: 1.05; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .waiting .alarm { display: none; align-items: center; gap: 0.4em; margin-top: 0.7em; font-weight: 650;
-      font-size: clamp(14px, 1.2vw, 28px); color: var(--urgent); }
-    .waiting.urgent { border-color: var(--urgent); background: color-mix(in srgb, var(--urgent) 12%, var(--panel)); }
+    h2 { margin: 0; font-size: 1rem; font-weight: 550; letter-spacing: -0.02em; }
+    .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+    .section-heading span { color: var(--muted); font-size: 0.8rem; }
+    .overview { grid-column: 1 / -1; }
+    .hero { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+      border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+    .metric { min-width: 0; padding: 20px 24px; border-right: 1px solid var(--line); }
+    .metric:last-child { border-right: 0; }
+    .label { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 0.85rem; }
+    .label .shape { font-size: 0.7rem; }
+    .n { display: block; margin-top: 8px; font-size: 2.25rem; line-height: 1.1; font-weight: 550;
+      letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .detail { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 8px; min-height: 21px; }
+    .oldest b { color: var(--text); font-weight: 500; margin-left: 5px; font-variant-numeric: tabular-nums; }
+    .alarm { display: none; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.8rem; color: var(--urgent); }
+    .waiting.urgent { box-shadow: inset 0 2px var(--urgent); }
     .waiting.urgent .n { color: var(--urgent); }
     .waiting.urgent .alarm { display: flex; }
-    .stat { background: var(--panel); border-radius: clamp(10px, 0.9vw, 20px); padding: clamp(12px, 1.2vw, 28px) clamp(16px, 1.6vw, 36px);
-      display: flex; align-items: center; gap: 0.5em; font-size: clamp(16px, 1.5vw, 34px); }
-    .stat[hidden] { display: none; }
-    .stat .word { flex: 1; min-width: 0; }
-    .stat .word small { display: block; color: var(--muted); font-size: 0.62em; }
-    .stat .n { font-size: clamp(36px, 4.2vw, 96px); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
-
-    /* ── tiles: the grid's shape is chosen in JS to fit however many there are ── */
-    #tiles { display: grid; gap: var(--gap); height: calc(100% - 2em); align-content: start; }
-    .tile {
-      container-type: size;
-      min-width: 0; overflow: hidden;
-      background: var(--tile);
-      border-radius: clamp(6px, 0.6vw, 14px);
-      border-left: clamp(4px, 0.35vw, 8px) solid var(--c);
-      padding: 0.5em 0.7em;
-      display: flex; flex-direction: column; justify-content: space-between;
-    }
-    .tile.waiting-tile { background: color-mix(in srgb, var(--waiting) 16%, var(--tile)); }
-    .tile.done-tile { opacity: 0.72; }
-    .tile.crashed-tile { background: color-mix(in srgb, var(--crashed) 14%, var(--tile)); }
-    .tile .top { display: flex; align-items: center; gap: 0.35em; font-size: clamp(12px, min(24cqh, 10.5cqw), 50px); color: var(--c); min-width: 0; }
-    .tile .dur { white-space: nowrap; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
-    .tile .kind { margin-left: auto; min-width: 0; color: var(--muted); font-size: 0.62em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tile .name { font-size: clamp(11px, min(20cqh, 9cqw), 40px); line-height: 1.2; display: -webkit-box; -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2; overflow: hidden; }
-    .tile .name.fallback { color: var(--muted); }
-    .tile.more { --c: var(--line); justify-content: center; }
-    .tile.more .top { color: var(--muted); gap: 0.3em; font-size: clamp(12px, 20cqh, 40px); }
-    .tile.more .big { font-size: clamp(16px, 30cqh, 60px); font-weight: 700; line-height: 1.1; }
-    .empty { color: var(--muted); font-size: clamp(16px, 1.6vw, 36px); display: flex; align-items: center; gap: 0.5em; padding: 1em 0; }
-    /* A wall that lost its data greys out, so a frozen screen never passes for a quiet one;
-       the notice says so in words, because greying alone is a colour. */
-    main { position: relative; }
-    #notice[hidden] { display: none; }
+    .sessions, .changes { display: flex; flex-direction: column; }
+    .session-table { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .table-heading, .tile { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 4rem; align-items: center; gap: 20px; padding: 0 24px; }
+    .table-heading { min-height: 48px; flex: none; font-size: 0.8rem; color: var(--muted); border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 3%, var(--bg)); }
+    .table-heading span:last-child { text-align: right; }
+    #tiles { min-height: 0; overflow: hidden; }
+    .tile { min-height: var(--row-height); border-bottom: 1px solid var(--line); }
+    .tile:last-child { border-bottom: 0; }
+    .tile .identity { min-width: 0; }
+    .tile .name { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tile .kind { display: block; color: var(--muted); font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tile .state { display: flex; align-items: center; gap: 7px; width: fit-content; padding: 3px 9px;
+      font-size: 0.8rem; line-height: 1.4; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 17%, transparent);
+      border-radius: 5px; background: color-mix(in srgb, var(--c) 6%, transparent); }
+    .tile .state .shape { font-size: 0.6rem; }
+    .tile .dur { text-align: right; font-size: 0.85rem; color: var(--text); opacity: 0.78; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .tile.waiting-tile { background: color-mix(in srgb, var(--waiting) 4%, var(--bg)); }
+    .tile.more { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.8rem; }
+    .tile.more .breakdown { display: flex; align-items: center; gap: 8px; }
+    .empty { color: var(--muted); display: flex; align-items: center; gap: 10px; padding: 28px 24px; }
+    #feed { list-style: none; margin: 0; padding: 0 22px; min-height: 0; overflow: hidden;
+      border: 1px solid var(--line); border-radius: 8px; }
+    #feed li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; align-items: center;
+      padding: 18px 0; border-bottom: 1px solid var(--line); }
+    #feed li:last-child { border-bottom: 0; }
+    #feed .shape { font-size: 0.75rem; grid-row: span 2; }
+    #feed .primary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9rem; font-weight: 500; }
+    #feed .meta { color: var(--muted); font-size: 0.8rem; grid-column: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #feed .ago { color: var(--muted); font-size: 0.75rem; grid-row: 1; grid-column: 3; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* The notice stays explicit so a disconnected screen cannot look like a quiet queue. */
     #notice { position: absolute; inset: 0; display: grid; place-items: center; z-index: 1; pointer-events: none; }
-    #notice span { background: var(--panel); border: 2px solid var(--vp-trouble); border-radius: 16px;
-      padding: 0.8em 1.4em; font-size: clamp(18px, 2vw, 44px); font-weight: 600; text-align: center; max-width: 80%; }
+    #notice span { background: var(--panel); border: 1px solid var(--vp-trouble); border-radius: 8px;
+      padding: 20px 28px; font-size: 18px; text-align: center; max-width: 80%; }
     body.offline main > section { opacity: 0.3; filter: grayscale(1); }
-
-    /* ── feed ── */
-    #feed { list-style: none; margin: 0; padding: 0; height: calc(100% - 2em); overflow: hidden;
-      mask-image: linear-gradient(to bottom, #000 80%, transparent); }
-    #feed li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0 0.6em; align-items: center;
-      padding: 0.55em 0; border-bottom: 1px solid var(--line); }
-    #feed .shape { font-size: 1.25em; grid-row: span 2; }
-    #feed .primary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; }
-    #feed .meta { color: var(--muted); font-size: 0.82em; grid-column: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #feed .ago { color: var(--muted); font-size: 0.82em; grid-row: 1; grid-column: 3; font-variant-numeric: tabular-nums; }
-
-    /* A phone or a narrow window gets one scrolling column instead of a fitted wall. */
-    @media (max-width: 900px) {
-      html, body { height: auto; }
+    @media (min-width: 2200px) {
+      :root { --row-height: 96px; }
+      body { max-width: 2560px; }
+    }
+    @media (max-width: 1000px), (max-height: 700px) {
+      html, body { height: auto; min-height: 100%; }
       body { overflow: visible; display: block; }
-      header { margin-bottom: 16px; }
-      header .mark { display: none; }
-      main { grid-template-columns: minmax(0, 1fr); }
-      .waiting .n { font-size: 30vw; }
-      #tiles { height: auto; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; grid-auto-rows: 84px; }
-      #feed { height: auto; max-height: 60vh; }
+      header { margin-bottom: 32px; }
+      main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 28px; }
+      .overview { grid-column: auto; }
+      .session-table, #tiles { overflow: visible; }
+      #feed { max-height: 480px; }
+    }
+    @media (max-width: 600px) {
+      :root { --row-height: 68px; }
+      body { padding: 24px 18px; }
+      header { align-items: flex-start; gap: 12px; }
+      h1 { font-size: 23px; }
+      .sub { font-size: 14px; }
+      #status { margin-top: 3px; font-size: 13px; padding: 3px 7px; }
+      .hero { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metric { padding: 18px; border-bottom: 1px solid var(--line); }
+      .metric:nth-child(even) { border-right: 0; }
+      .metric:last-child { border-bottom: 0; grid-column: 1 / -1; }
+      .hero:has(#crashedBox:not([hidden])) .metric:last-child { grid-column: auto; }
+      .hero:has(#crashedBox:not([hidden])) #crashedBox { border-bottom: 0; }
+      .n { font-size: 32px; }
+      .table-heading, .tile { grid-template-columns: minmax(0, 1fr) 82px 48px; gap: 10px; padding-left: 14px; padding-right: 14px; }
+      .tile .state { font-size: 13px; gap: 5px; padding: 2px 5px; }
+      .tile .dur { font-size: 13px; }
+      #feed { padding: 0 16px; }
     }
   </style>
 </head>
 <body>
   <header>
-    <div class="mark"></div>
     <div class="titles">
       <h1 id="title">Sessions</h1>
       <div class="sub" id="sub"></div>
@@ -150,25 +153,31 @@
 
   <main>
     <div id="notice" hidden><span></span></div>
-    <section class="hero">
-      <div class="waiting" id="waitingBox">
-        <div class="label" data-shape="waiting">waiting</div>
-        <div class="n" id="waiting">—</div>
-        <div class="oldest" id="oldest"></div>
-        <div class="alarm" id="alarm"></div>
+    <section class="overview">
+      <div class="section-heading"><h2>Overview</h2></div>
+      <div class="hero">
+        <div class="metric waiting" id="waitingBox">
+          <div class="label" data-shape="waiting">Waiting</div>
+          <div class="n" id="waiting">—</div>
+          <div class="detail oldest" id="oldest"></div>
+          <div class="alarm" id="alarm"></div>
+        </div>
+        <div class="metric"><div class="label" data-shape="working">Working</div><span class="n" id="working">—</span><span class="detail">In progress</span></div>
+        <div class="metric" id="crashedBox" hidden><div class="label" data-shape="crashed">Crashed</div><span class="n" id="crashed">0</span><span class="detail">Exited with an error</span></div>
+        <div class="metric"><div class="label" data-shape="done">Done</div><span class="n" id="done">—</span><span class="detail" id="doneToday"></span></div>
       </div>
-      <div class="stat"><span data-shape="working"></span><span class="word">working</span><span class="n" id="working">—</span></div>
-      <div class="stat" id="crashedBox" hidden><span data-shape="crashed"></span><span class="word">crashed</span><span class="n" id="crashed">0</span></div>
-      <div class="stat"><span data-shape="done"></span><span class="word">done<small id="doneToday"></small></span><span class="n" id="done">—</span></div>
     </section>
 
-    <section>
-      <h2>Sessions</h2>
-      <div id="tiles"></div>
+    <section class="sessions">
+      <div class="section-heading"><h2>Sessions</h2><span id="sessionCount"></span></div>
+      <div class="session-table" role="table" aria-label="Sessions">
+        <div class="table-heading" role="row"><span role="columnheader">Session</span><span role="columnheader">Status</span><span role="columnheader">Duration</span></div>
+        <div id="tiles" role="rowgroup"></div>
+      </div>
     </section>
 
-    <section>
-      <h2>Recent changes</h2>
+    <section class="changes">
+      <div class="section-heading"><h2>Recent changes</h2></div>
       <ul id="feed"></ul>
     </section>
   </main>
@@ -234,7 +243,7 @@
     })
 
     const OFFLINE = {
-      disconnected: 'Not live — these are the last numbers the panel sent',
+      disconnected: 'Not live. These are the last numbers the panel sent.',
       revoked: 'This link no longer works',
     }
     vp.on('status', (st) => {
@@ -252,53 +261,41 @@
         (shown(a) === 'done' || shown(a) === 'crashed' ? b.stateChangedAt - a.stateChangedAt : a.stateChangedAt - b.stateChangedAt))
     }
 
-    // Pick the column count that gives the most readable tiles in the space
-    // there is. Tiles aim for about 2:1 and never grow past a quarter of the
-    // height, so two sessions do not become two billboards. Returns how many
-    // tiles fit, so the rest collapse into a "+N more" tile.
-    function fitGrid(box, n) {
-      const gap = parseFloat(getComputedStyle(box).rowGap) || 12
-      const W = box.clientWidth
-      const H = box.clientHeight
-      const minW = Math.max(140, innerWidth * 0.085)
-      const minH = Math.max(72, innerHeight * 0.085)
-      const maxCols = Math.max(1, Math.floor((W + gap) / (minW + gap)))
-      const maxRows = Math.max(1, Math.floor((H + gap) / (minH + gap)))
-      const shown = Math.min(n, maxCols * maxRows)
-      let best = { cols: maxCols, rowH: minH, score: -1 }
-      for (let cols = 1; cols <= maxCols; cols++) {
-        const rows = Math.ceil(shown / cols)
-        if (rows > maxRows) continue
-        const w = (W - gap * (cols - 1)) / cols
-        const h = Math.min((H - gap * (rows - 1)) / rows, H * 0.26)
-        const score = Math.min(w / 2, h)
-        if (score >= best.score) best = { cols, rowH: h, score }
-      }
-      box.style.gridTemplateColumns = `repeat(${best.cols}, minmax(0, 1fr))`
-      box.style.gridAutoRows = `${Math.floor(best.rowH)}px`
-      return shown
+    // Keep rows at a readable height. A wall has no scrollbar to operate,
+    // so overflow is counted in a final row instead of shrinking every name.
+    function fitRows(box, n) {
+      const rowHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height'))
+      const section = box.closest('section')
+      const heading = section.querySelector('.section-heading')
+      const tableHeading = section.querySelector('.table-heading')
+      const available = section.clientHeight - heading.offsetHeight - 16 - tableHeading.offsetHeight - 2
+      return Math.min(n, Math.max(1, Math.floor(available / rowHeight)))
     }
 
     function tile(row) {
       const st = shown(row)
       const t = el('div', `tile ${st}-tile`)
+      t.setAttribute('role', 'row')
       t.style.setProperty('--c', COLOUR[st] || 'var(--muted)')
-      const top = el('div', 'top')
-      top.append(shape(st), el('span', 'dur', vp.since(row.stateChangedAt)))
-      // An exited process is worth a word; its exit code is not a name.
+      const identity = el('div', 'identity')
+      identity.setAttribute('role', 'cell')
       const exited = st === 'crashed' ? ` · exited ${row.exitStatus}` : row.exited ? ' · exited' : ''
       const name = vp.name(row)
-      // Counts mode sends no names (the default): the kind moves down into the
-      // name's place, so the tile still says what it is rather than nothing.
-      if (name) top.append(el('span', 'kind', row.kind + exited))
-      t.append(top, el('div', name ? 'name' : 'name fallback', name || `${row.kind} session${exited}`))
+      identity.append(el('span', 'name', name || `${row.kind} session`))
+      if (name || exited) identity.append(el('span', 'kind', `${name ? row.kind : ''}${exited}`.replace(/^ · /, '')))
+      const state = el('span', 'state')
+      state.setAttribute('role', 'cell')
+      state.append(shape(st), el('span', null, WORD[st]))
+      const duration = el('span', 'dur', vp.since(row.stateChangedAt))
+      duration.setAttribute('role', 'cell')
+      t.append(identity, state, duration)
       return t
     }
 
     function moreTile(hidden) {
       const t = el('div', 'tile more')
-      t.append(el('div', 'big', `+${hidden.length} more`))
-      const top = el('div', 'top')
+      t.append(el('span', null, `+${hidden.length} more`))
+      const top = el('div', 'breakdown')
       for (const state of ['waiting', 'crashed', 'working', 'done']) {
         const n = hidden.filter((r) => shown(r) === state).length
         if (n) top.append(shape(state), el('span', null, n))
@@ -317,8 +314,8 @@
         return
       }
       const rows = sortSessions(sessions)
-      const narrow = matchMedia('(max-width: 900px)').matches
-      const fits = narrow ? rows.length : fitGrid(box, rows.length)
+      const narrow = matchMedia('(max-width: 1000px), (max-height: 700px)').matches
+      const fits = narrow ? rows.length : fitRows(box, rows.length)
       const overflow = fits < rows.length
       const visible = overflow ? rows.slice(0, fits - 1) : rows
       for (const row of visible) box.append(tile(row))
@@ -359,6 +356,7 @@
       const bits = [`${c.sessions} sessions`, `${c.projects} projects`]
       if (s.remark) bits.push(s.remark)
       vp.text($('sub'), bits.join(' · '))
+      vp.text($('sessionCount'), `${c.sessions} total`)
 
       // Crashed sessions are counted on their own and taken out of the state
       // they died in. Without the rows (a link that lists none) only the
@@ -377,9 +375,9 @@
       $('crashedBox').hidden = n.crashed === 0
       vp.text($('doneToday'), `${c.doneToday} today`)
       if (c.waiting > 0 && c.longestWaitAt > 0) {
-        $('oldest').replaceChildren('longest wait', el('b', null, vp.since(c.longestWaitAt)))
+        $('oldest').replaceChildren('Longest wait', el('b', null, vp.since(c.longestWaitAt)))
       } else {
-        vp.text($('oldest'), 'nobody is waiting')
+        vp.text($('oldest'), 'No sessions waiting')
       }
       const urgent = c.waiting >= params.warnAt
       $('waitingBox').classList.toggle('urgent', urgent)
