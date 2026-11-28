@@ -864,6 +864,7 @@ const DICT = {
   'chat.setupBot': { zh: '连接机器人', en: 'Connect your bot' },
   'chat.setupAccount': { zh: '登录微信账号', en: 'Sign in to WeChat' },
   'chat.setupWebhook': { zh: '设置回调地址', en: 'Set up the request URL' },
+  'chat.webhookConfiguredNext': { zh: '已设置回调地址，下一步', en: 'Request URL configured, continue' },
   'chat.setupPair': { zh: '配对联系人', en: 'Pair a person' },
   'chat.setupPairHint': { zh: '先向机器人发一条消息，然后在联系人页面输入收到的配对码。', en: 'Message your bot, then enter the pairing code on the People page.' },
   'chat.setupReceive': { zh: '接收第一条消息', en: 'Receive your first message' },

@@ -76,21 +76,25 @@ export function Channels({ data, selected, onSelect, onChange }: {
   )
 }
 
-function SetupStep({ number, title, done, open = false, children }: {
+function SetupStep({ id, number, title, done, open, locked, onSelect, children }: {
+  id: string
   number: number
   title: string
   done?: boolean
-  open?: boolean
+  open: boolean
+  locked: boolean
+  onSelect: () => void
   children: React.ReactNode
 }) {
   return (
-    <details className="chat-setup-step" open={open}>
-      <summary>
+    <div className="chat-setup-step" data-active={open}>
+      <button type="button" className="chat-step-heading" disabled={locked}
+        aria-expanded={open} aria-controls={`${id}-body`} onClick={onSelect}>
         <span className="chat-step-number" data-done={done}>{done ? <Check size={15} aria-hidden="true" /> : number}</span>
         <span>{title}</span><ChevronDown size={17} className="chat-step-chevron" aria-hidden="true" />
-      </summary>
-      <div className="chat-step-body">{children}</div>
-    </details>
+      </button>
+      <div id={`${id}-body`} className="chat-step-body" hidden={!open}>{children}</div>
+    </div>
   )
 }
 
@@ -156,6 +160,39 @@ function ChannelCard({
   const [login, setLogin] = useState<ChatLogin | null>(null)
   const [code, setCode] = useState('')
   const [copied, setCopied] = useState(false)
+  const webhookKey = `vibepanel.chat.webhook-confirmed.${factory.kind}`
+  const [webhookConfirmed, setWebhookConfirmed] = useState<string | null>(() => {
+    try { return localStorage.getItem(webhookKey) } catch { return null }
+  })
+  const configured = Boolean(channel?.configured)
+  const pairStep = factory.webhook ? 3 : 2
+  const receiveStep = pairStep + 1
+  // A callback URL being available only means credentials were saved. The
+  // person must finish configuring it in Feishu before pairing is offered.
+  // Existing paired people prove that this part already works.
+  const webhookDone = !factory.webhook || paired > 0 || Boolean(channel?.health.lastInbound)
+    || Boolean(channel?.webhookUrl && webhookConfirmed === channel.webhookUrl)
+  const progress = !configured ? 1 : !webhookDone ? 2 : paired === 0 ? pairStep : receiveStep
+  const [selection, setSelection] = useState({ progress, step: progress })
+  if (selection.progress !== progress) setSelection({ progress, step: progress })
+  const activeStep = selection.progress === progress ? Math.min(selection.step, progress) : progress
+  const stepProps = (number: number) => ({
+    id: `chat-${factory.kind}-step-${number}`,
+    number,
+    open: activeStep === number,
+    locked: number > progress,
+    onSelect: () => setSelection({ progress, step: number }),
+  })
+  const clearWebhookConfirmation = () => {
+    setWebhookConfirmed(null)
+    try { localStorage.removeItem(webhookKey) } catch { /* The current visit still works without storage. */ }
+  }
+  const confirmWebhook = () => {
+    if (!channel?.webhookUrl) return
+    setWebhookConfirmed(channel.webhookUrl)
+    try { localStorage.setItem(webhookKey, channel.webhookUrl) } catch { /* Keep the confirmation for this visit. */ }
+    setSelection({ progress, step: pairStep })
+  }
 
   // The stored non-secret values arrive with every poll; the form keeps what
   // the person typed and shows the server's copy for fields they have not
@@ -210,6 +247,8 @@ function ChannelCard({
     setBusy(true)
     try {
       await api.saveChatChannel(factory.kind, enabled, values)
+      clearWebhookConfirmation()
+      setSelection({ progress, step: 2 })
       setValues((v) => {
         const next = { ...v }
         for (const f of factory.fields) if (f.secret) delete next[f.name]
@@ -251,6 +290,7 @@ function ChannelCard({
     if (!ok) return
     try {
       await api.removeChatChannel(factory.kind)
+      clearWebhookConfirmation()
       setValues({})
       showToast({ kind: 'success', key: 'chat.channelRemoved', params: { name: factory.label } })
       onChange()
@@ -293,7 +333,6 @@ function ChannelCard({
   }
 
   const signedIn = factory.login && channel?.configured
-  const configured = Boolean(channel?.configured)
   return (
     <div data-testid={`chat-channel-${factory.kind}`} className="chat-channel-detail">
       <div className="chat-detail-status">
@@ -307,8 +346,8 @@ function ChannelCard({
         )}
       </div>
       <div className="chat-setup-card">
-        <SetupStep number={1} title={t(factory.login ? 'chat.setupAccount' : factory.webhook ? 'chat.setupCredentials' : 'chat.setupBot')}
-          done={configured} open={!configured}>
+        <SetupStep {...stepProps(1)} title={t(factory.login ? 'chat.setupAccount' : factory.webhook ? 'chat.setupCredentials' : 'chat.setupBot')}
+          done={configured}>
           {factory.login ? (
             <div className="mt-3">
               {signedIn && (
@@ -388,7 +427,7 @@ function ChannelCard({
           )}
         </SetupStep>
         {factory.webhook && (
-          <SetupStep number={2} title={t('chat.setupWebhook')} open={configured}>
+          <SetupStep {...stepProps(2)} title={t('chat.setupWebhook')} done={configured && webhookDone}>
             {channel?.webhookUrl && (
               <div className="min-w-0">
                 <span className="mb-1 block text-vp-sm text-ink-3">{t('chat.webhookUrl')}</span>
@@ -404,13 +443,17 @@ function ChannelCard({
               </div>
             )}
             {!channel?.webhookUrl && <p className="flex items-center gap-2 text-vp-sm text-ink-2"><Link2 size={15} />{t('chat.webhookAfterSave')}</p>}
+            <Primary className="mt-5" disabled={!channel?.webhookUrl} onClick={confirmWebhook}
+              data-testid={`chat-webhook-next-${factory.kind}`}>
+              {t('chat.webhookConfiguredNext')}<ArrowRight size={14} />
+            </Primary>
           </SetupStep>
         )}
-        <SetupStep number={factory.webhook ? 3 : 2} title={t('chat.setupPair')} done={paired > 0} open={configured && paired === 0}>
+        <SetupStep {...stepProps(pairStep)} title={t('chat.setupPair')} done={paired > 0}>
           <p className="mb-4 text-vp-base leading-relaxed text-ink-2">{t('chat.setupPairHint')}</p>
           <a href="#peers" className="vp-outline w-fit text-vp-sm"><Users size={15} />{t('chat.openPeople')}</a>
         </SetupStep>
-        <SetupStep number={factory.webhook ? 4 : 3} title={t('chat.setupReceive')} done={Boolean(channel?.health.lastInbound)} open={paired > 0}>
+        <SetupStep {...stepProps(receiveStep)} title={t('chat.setupReceive')} done={Boolean(channel?.health.sent)}>
           <p className="mb-4 text-vp-base leading-relaxed text-ink-2">{t('chat.setupReceiveHint')}</p>
           <Secondary disabled={busy || !channel?.enabled || paired === 0} onClick={() => void test()}>
             <Send size={14} />{t('chat.test')}

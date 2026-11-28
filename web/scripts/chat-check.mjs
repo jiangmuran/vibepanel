@@ -213,7 +213,15 @@ try {
     await page.getByTestId(`chat-nav-${kind}`).click()
     await page.getByTestId(`chat-channel-${kind}`).waitFor({ state: 'visible' })
   }
+  const expectStep = async (kind, step, progress) => {
+    const headings = page.getByTestId(`chat-channel-${kind}`).locator('.chat-step-heading')
+    const state = await headings.evaluateAll((els) => els.map((el) => ({ open: el.getAttribute('aria-expanded') === 'true', locked: el.disabled })))
+    if (state.filter((s) => s.open).length !== 1 || !state[step - 1]?.open || state.some((s, i) => s.locked !== (i + 1 > progress))) {
+      note('FAIL', 'steps', `${kind}: expected step ${step}, progress ${progress}; got ${JSON.stringify(state)}`)
+    } else pass('steps', `${kind}: only step ${step} is open, later steps are locked`)
+  }
   await page.getByTestId('chat-overview-telegram').click()
+  await expectStep('telegram', 1, 1)
   await page.fill('#chat-telegram-token', 'unfinished-token')
   await openChannel('feishu')
   await openChannel('telegram')
@@ -251,9 +259,11 @@ try {
   const tg = chatAfterSave.channels.find((c) => c.kind === 'telegram')
   if (!tg || !tg.secretSet.token || 'token' in tg.values) note('FAIL', 'telegram', `the token leaked or was not stored: ${JSON.stringify(tg)}`)
   else pass('telegram', 'the token is stored and not returned')
+  await expectStep('telegram', 2, 2)
 
   // ── 飞书: the request URL appears once saved ─────────────────────────────
   await openChannel('feishu')
+  await expectStep('feishu', 1, 1)
   await page.fill('#chat-feishu-app_id', 'cli_test')
   await page.fill('#chat-feishu-app_secret', 'secret')
   await page.fill('#chat-feishu-verification_token', 'verify')
@@ -267,6 +277,14 @@ try {
     if (!shown.includes('/api/chat/hooks/feishu')) note('FAIL', 'feishu', `request URL is ${shown}`)
     else pass('feishu', `request URL ${shown}`)
   }
+  await expectStep('feishu', 2, 2)
+  await page.getByTestId('chat-webhook-next-feishu').click()
+  await expectStep('feishu', 3, 3)
+  await page.getByTestId('chat-channel-feishu').locator('.chat-step-heading').nth(0).click()
+  await expectStep('feishu', 1, 3)
+  await page.getByTestId('chat-channel-feishu').locator('.chat-step-heading').nth(2).click()
+  await expectStep('feishu', 3, 3)
+
   // The door answers 404 to a challenge for a kind that is not running as a
   // webhook... 飞书 is: the handshake needs the verification token. A wrong
   // one must be refused.

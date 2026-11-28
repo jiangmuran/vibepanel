@@ -28975,3 +28975,29 @@ and no browser runtime errors. TypeScript, ESLint (existing warnings only), all
 could not reach its real-backend browser suite because Go is unavailable.
 `make verify` also stopped on the system make's unsupported `--output-sync`
 option, and its separate release stage stopped on the missing Go compiler.
+
+
+## 2026-11-28 — Channel setup advances one step at a time
+
+The initial setup layout used independent native disclosure elements. A person
+could open a later step before saving credentials, and successful credential
+saving opened both callback setup and pairing. The setup now owns one active
+step. Later headings remain disabled until the preceding step is complete;
+completed steps can be reopened, replacing the currently visible body.
+
+Credential saving and QR completion advance from server state, pairing advances
+when a paired person appears, and the Feishu callback step has an explicit
+confirmation after the person configures its URL in Feishu. The server exposes
+no callback-handshake completion flag, so the presence of a callback URL is not
+used as proof of that work. The confirmation is remembered locally for that
+URL and cleared when credentials are saved or the channel is removed. Existing
+paired people or inbound messages also demonstrate that callback setup works.
+
+
+Validation covered failed saves, delayed settings refreshes, exclusive expansion,
+callback confirmation and its reload behaviour, reopening completed steps,
+pairing and QR completion. The fixture browser run passed 26 checks. A local
+Go 1.26.11 toolchain was located after the earlier environment limitation;
+`make chat-check` now runs against the real backend and passed with 0 failures
+and 0 warnings. TypeScript, ESLint, all 1478 frontend tests and the production
+build passed. The running local preview has the same sequential setup UI.

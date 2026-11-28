@@ -86,12 +86,11 @@
 .chat-detail-status { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .chat-setup-card { border: 1px solid var(--vp-hairline); border-radius: 14px; background: var(--vp-bg); overflow: hidden; }
 .chat-setup-step + .chat-setup-step { border-top: 1px solid var(--vp-hairline); }
-.chat-setup-step summary { display: flex; align-items: center; gap: 14px; padding: 22px 24px; font-size: 17px; line-height: 1.5; font-weight: 500; list-style: none; cursor: pointer; }
-.chat-setup-step summary::-webkit-details-marker { display: none; }
+.chat-step-heading { display: flex; align-items: center; gap: 14px; padding: 22px 24px; font-size: 17px; line-height: 1.5; font-weight: 500; width: 100%; text-align: left; cursor: pointer; }
 .chat-step-number { display: grid; place-items: center; flex-shrink: 0; width: 25px; height: 25px; border: 1px solid var(--vp-hairline-strong); border-radius: 50%; font-size: 13px; color: var(--vp-ink-2); }
-.chat-setup-step[open] .chat-step-number, .chat-step-number[data-done='true'] { background: var(--vp-ink); color: var(--vp-bg); border-color: var(--vp-ink); }
+.chat-setup-step[data-active='true'] .chat-step-number, .chat-step-number[data-done='true'] { background: var(--vp-ink); color: var(--vp-bg); border-color: var(--vp-ink); }
 .chat-step-chevron { margin-left: auto; flex-shrink: 0; color: var(--vp-ink-3); }
-.chat-setup-step[open] .chat-step-chevron { transform: rotate(180deg); }
+.chat-setup-step[data-active='true'] .chat-step-chevron { transform: rotate(180deg); }
 .chat-step-body { padding: 0 24px 24px 63px; }
 .chat-step-body > .mt-3 { margin-top: 0; }
 .chat-step-body input:not([type='checkbox']) { min-height: 42px; background: var(--vp-bg); border-radius: 8px; }
@@ -105,7 +104,7 @@
 @container (width < 520px) {
   .chat-channel-grid { grid-template-columns: minmax(0, 1fr); }
   .chat-channel-art { height: 148px; }
-  .chat-setup-step summary { padding: 20px 16px; gap: 10px; font-size: 15px; }
+  .chat-step-heading { padding: 20px 16px; gap: 10px; font-size: 15px; }
   .chat-step-body { padding: 0 16px 24px; }
   .chat-people-card { padding: 20px 16px; }
 }
@@ -120,3 +119,7 @@
 }
 
 .chat-heading-detail { max-width: 800px; margin-inline: auto; }
+
+.chat-step-heading:disabled { color: var(--vp-ink-3); cursor: default; }
+.chat-step-heading:disabled .chat-step-chevron { visibility: hidden; }
+.chat-step-heading:focus-visible { outline: 2px solid var(--vp-accent); outline-offset: -3px; }
