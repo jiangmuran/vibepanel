@@ -62,15 +62,15 @@ const subscriberQueue = 256
 const subscriberBytes = DefaultRingSize
 
 // controllerGrace is how long a departed controller's grid stays frozen for
-// them before an active foreground viewer takes over.
+// them.
 //
-// Long enough to cover a page reload (1-3s), a brief tab glance, or a flaky
-// socket reconnecting through several backoff steps; short enough that closing
-// a phone or laptop browser and looking at another screen does not leave that
-// screen stuck at the departed viewport for minutes. Once the grace window
-// passes without the previous controller returning, any active foreground
-// viewer watching the session is promoted automatically.
-const controllerGrace = 20 * time.Second
+// Long enough to cover a reload, a phone locking, a tunnel dropping and a
+// laptop lid closed for a meeting; short enough that "I opened the panel this
+// morning" is not spent looking at yesterday's grid scaled into a corner. Two
+// minutes is a guess, but it is a guess about human absence rather than about
+// network timing, and it fails in the direction of handing the session to
+// whoever is in front of it.
+const controllerGrace = 2 * time.Minute
 
 // Subscriber is one viewer of one session.
 type Subscriber struct {
@@ -89,16 +89,14 @@ type Subscriber struct {
 
 	// background means the browser tab itself is in the background (another
 	// browser tab is active, the window is minimised, or the device screen is
-	// locked). Unlike hidden, live output keeps flowing so background monitors
-	// stay current, but a backgrounded tab never holds or claims grid control
-	// — even when its WebSocket drops and reconnects periodically. Guarded by
-	// Live.mu.
+	// locked). It is about claiming, not holding: a backgrounded tab never
+	// claims the grid, on arrival or on any of the reconnects a sleeping
+	// laptop makes every few minutes, but a tab that already holds it keeps
+	// it. Releasing on background was tried (#50) and handed a phone's
+	// session to the desktop while its owner was fetching a code from another
+	// app. Live output keeps flowing, unlike hidden, so a monitor in another
+	// window stays current. Guarded by Live.mu.
 	background bool
-
-	// activeAt records when this subscriber last became an active foreground
-	// viewer, so grace-expiry handover picks the most recently active viewer
-	// when more than one foreground window is watching. Guarded by Live.mu.
-	activeAt time.Time
 
 	sentUntil int64
 
@@ -109,10 +107,10 @@ type Subscriber struct {
 	queued atomic.Int64
 }
 
-// active reports whether a person is actually looking at this subscriber's
-// terminal: neither switched away inside the app nor parked in a background
-// browser tab. Caller must hold Live.mu.
-func (s *Subscriber) active() bool { return !s.hidden && !s.background }
+// mayClaim reports whether this subscriber may be handed an unowned grid:
+// neither switched away inside the app nor parked in a background browser
+// tab. Caller must hold Live.mu.
+func (s *Subscriber) mayClaim() bool { return !s.hidden && !s.background }
 
 // Took tells the subscriber that an event has left its queue, so that the byte
 // bound tracks what is really held rather than only growing.
@@ -224,11 +222,6 @@ type Live struct {
 
 	// now is time.Now except in tests, which cannot wait out a grace period.
 	now func() time.Time
-
-	// gracePeriod overrides controllerGrace in tests so grace-expiry handover
-	// can run against real timers in milliseconds. Zero means controllerGrace.
-	gracePeriod time.Duration
-	graceTimer  *time.Timer
 
 	scanner *oscScanner
 	// The pane's private modes, for a snapshot that does not continue the
@@ -998,7 +991,7 @@ func (l *Live) SubscribeFrom(clientID string, hidden bool, from Resume) (*Subscr
 
 // SubscribeView is SubscribeFrom with browser-tab visibility: background=true
 // keeps live output flowing (when hidden is false) while preventing an unseen
-// or sleeping browser tab from claiming or holding the authoritative grid.
+// or sleeping browser tab from claiming the grid. See Subscriber.background.
 func (l *Live) SubscribeView(clientID string, hidden, background bool, from Resume) (*Subscriber, Replay) {
 	return l.subscribe(clientID, hidden, background, from)
 }
@@ -1211,8 +1204,7 @@ func (l *Live) finishSubscribeLocked(sub *Subscriber) {
 	// only viewer, and takes a 147-column agent view down to 46. Nobody was
 	// there to protect, and the harm happened anyway. Recency is the property
 	// that separates "reloading" from "gone".
-	if sub.active() {
-		sub.activeAt = l.now()
+	if sub.mayClaim() {
 		l.claimControlLocked(sub)
 	}
 	cols, rows := l.cols, l.rows
@@ -1226,71 +1218,15 @@ func (l *Live) finishSubscribeLocked(sub *Subscriber) {
 	}
 }
 
-func (l *Live) grace() time.Duration {
-	if l.gracePeriod > 0 {
-		return l.gracePeriod
-	}
-	return controllerGrace
-}
-
-func (l *Live) stopGraceTimerLocked() {
-	if l.graceTimer != nil {
-		l.graceTimer.Stop()
-		l.graceTimer = nil
-	}
-}
-
-// scheduleGraceHandoverLocked arms a one-shot timer so that a foreground viewer
-// waiting on a departed controller's frozen grid does not stay passive forever
-// after the grace window expires. Without this, closing the other browser while
-// this screen already had the session open left the grid frozen until someone
-// reloaded, switched sessions, or clicked take-control.
-func (l *Live) scheduleGraceHandoverLocked() {
-	l.stopGraceTimerLocked()
-	if l.closed {
-		return
-	}
-	l.graceTimer = time.AfterFunc(l.grace(), l.expireGrace)
-}
-
-func (l *Live) expireGrace() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed || l.controller != "" || l.lastControllerAt.IsZero() {
-		return
-	}
-	if l.now().Sub(l.lastControllerAt) < l.grace() {
-		return
-	}
-	l.graceTimer = nil
-	var winner *Subscriber
-	for sub := range l.subs {
-		if !sub.active() {
-			continue
-		}
-		if winner == nil || sub.activeAt.After(winner.activeAt) {
-			winner = sub
-		}
-	}
-	if winner == nil {
-		return
-	}
-	l.controller = winner.ClientID
-	l.lastController = ""
-	l.lastControllerAt = time.Time{}
-	l.broadcastLocked(Event{Kind: EventSize, Cols: l.cols, Rows: l.rows})
-}
-
 // claimControlLocked gives an unowned grid to a viewer that has just arrived,
 // under the rule described in subscribe: nobody has driven it, or it was this
 // viewer who did, or whoever did has been gone longer than controllerGrace.
 func (l *Live) claimControlLocked(sub *Subscriber) {
-	stale := !l.lastControllerAt.IsZero() && l.now().Sub(l.lastControllerAt) >= l.grace()
+	stale := !l.lastControllerAt.IsZero() && l.now().Sub(l.lastControllerAt) >= controllerGrace
 	if l.controller == "" && (stale || l.lastController == "" || l.lastController == sub.ClientID) {
 		l.controller = sub.ClientID
 		l.lastController = ""
 		l.lastControllerAt = time.Time{}
-		l.stopGraceTimerLocked()
 	}
 }
 
@@ -1346,17 +1282,16 @@ func (l *Live) releaseControlLocked(sub *Subscriber) {
 	if l.controller != sub.ClientID {
 		return
 	}
-	for other := range l.subs { // sub is already gone from the map, or inactive
-		// A hidden or backgrounded connection of the same viewer is not
-		// somebody still driving the grid.
-		if other.ClientID == sub.ClientID && other.active() {
+	for other := range l.subs { // sub is already gone from the map, or hidden
+		// A hidden connection of the same viewer is not somebody still driving
+		// the grid. It is the same browser keeping the terminal off-screen.
+		if other.ClientID == sub.ClientID && !other.hidden {
 			return
 		}
 	}
 	l.controller = ""
 	l.lastController = sub.ClientID
 	l.lastControllerAt = l.now()
-	l.scheduleGraceHandoverLocked()
 }
 
 // SetHidden records whether a viewer's terminal is mounted off-screen.
@@ -1371,18 +1306,29 @@ func (l *Live) SetHidden(sub *Subscriber, hidden bool) {
 // while viewing another session) and browser-tab visibility (background:
 // document.hidden is true).
 //
-// Two consequences are separated cleanly:
+// The browser keeps a few recently viewed terminals mounted and subscribed, so
+// that switching back to one is a visibility change rather than a cold mount.
+// Two consequences had to be separated from "somebody is looking":
 //
-//  1. Control. Either flag makes a viewer inactive so it releases the grid on
-//     departure and cannot claim it on reconnect. Measured on a live panel: an
-//     unattended Mac tab sitting in the background reconnected every 1-3
-//     minutes with hidden=false, reclaiming the grid past the grace window and
-//     shrinking a 298x65 desktop session back to 107x32 repeatedly.
+//  1. Control. Measured before hidden existed: a desktop that had merely
+//     visited a session held its grid indefinitely, and a viewer opening it
+//     long after the grace period was still told it was passive, 144x46 frozen
+//     for a terminal nobody could see. So hiding is leaving and showing is
+//     arriving, under the same rules and with the same freeze in between.
+//     Background is narrower, and only stops arriving: an unattended Mac tab
+//     reconnecting every 1-3 minutes with hidden=false reclaimed a grid past
+//     the grace window and shrank a 298x65 desktop session to 107x32, over
+//     and over. See Subscriber.background for why it does not also leave.
 //
-//  2. Output. Only hidden (display:none inside the app) withholds EventOutput
-//     and sends EventCatchUp when shown again. Keeping output flowing for
-//     background=true preserves secondary monitoring windows and multi-tab
-//     tests while still preventing unseen tabs from resizing the pane.
+//  2. Output. Keeping live output flowing to off-screen terminals meant two
+//     hidden Antigravity CLI sessions spinning at ~33 KB/s each pushed 66 KB/s
+//     over the viewer's single WebSocket and ran xterm.write() on the UI
+//     thread continuously for panes with display:none. While hidden,
+//     broadcastLocked withholds EventOutput and leaves sentUntil where the
+//     viewer stopped; showing sends the missed ring slice (or the latest
+//     snapshot if the ring wrapped past it) as EventCatchUp before live output
+//     resumes. A background tab keeps its output, so a monitor in another
+//     window stays current.
 //
 // A pair that has not changed does nothing. Repeating "I am on screen" is not
 // arriving, and a subscriber that has already gone cannot claim anything.
@@ -1397,19 +1343,21 @@ func (l *Live) setVisibilityLocked(sub *Subscriber, hidden, background bool) {
 		return
 	}
 	wasHidden := sub.hidden
-	wasActive := sub.active()
+	couldClaim := sub.mayClaim()
 	sub.hidden = hidden
 	sub.background = background
-	nowActive := sub.active()
 
-	if wasActive && !nowActive {
-		l.releaseControlLocked(sub)
-	} else if !wasActive && nowActive {
-		sub.activeAt = l.now()
+	// Hiding is leaving. Going to the background is not: see background.
+	if hidden {
+		if !wasHidden {
+			l.releaseControlLocked(sub)
+		}
+		return
+	}
+	if !couldClaim && sub.mayClaim() {
 		l.claimControlLocked(sub)
 	}
-
-	if !wasHidden || hidden {
+	if !wasHidden {
 		return
 	}
 	if l.closed || sub.sentUntil >= l.ring.Total() {
@@ -1450,12 +1398,14 @@ func (l *Live) setVisibilityLocked(sub *Subscriber, hidden, background bool) {
 }
 
 // Watched reports whether somebody is looking at this session: a viewer that
-// is subscribed, on screen and in a foreground tab.
+// is subscribed and not hidden. A hidden one is a terminal kept mounted off
+// screen, and nothing it would be told changes what anyone sees. A background
+// tab still counts: it is a window somebody left open to watch.
 func (l *Live) Watched() bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	for sub := range l.subs {
-		if sub.active() {
+		if !sub.hidden {
 			return true
 		}
 	}
@@ -1620,9 +1570,6 @@ func (l *Live) TakeControl(clientID string, cols, rows int) error {
 	}
 	moved := l.controller != clientID
 	l.controller = clientID
-	l.lastController = ""
-	l.lastControllerAt = time.Time{}
-	l.stopGraceTimerLocked()
 	sameSize := l.cols == cols && l.rows == rows
 	l.mu.Unlock()
 
@@ -1696,7 +1643,6 @@ func (l *Live) closeInternal(waitForPump bool) {
 		return
 	}
 	l.closed = true
-	l.stopGraceTimerLocked()
 	for sub := range l.subs {
 		delete(l.subs, sub)
 		close(sub.Events)

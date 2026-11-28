@@ -289,7 +289,9 @@ func TestAHiddenReconnectDefersCatchUpUntilShown(t *testing.T) {
 	}
 }
 
-func TestABackgroundTabGivesUpTheGridAndNeverReclaimsItWhileBackgrounded(t *testing.T) {
+// A background tab keeps the grid it holds, and never claims one, on arrival
+// or on the reconnects a sleeping laptop makes. See Subscriber.background.
+func TestABackgroundTabKeepsTheGridButNeverClaimsOne(t *testing.T) {
 	live := attachedFor(t, "vp_vis_bg")
 
 	mac, _ := live.Subscribe("mac")
@@ -297,48 +299,36 @@ func TestABackgroundTabGivesUpTheGridAndNeverReclaimsItWhileBackgrounded(t *test
 		t.Fatalf("Resize: %v", err)
 	}
 
-	// The browser tab goes into the background (another tab, minimised window
-	// or locked screen). It gives up the grid into the grace period, and live
-	// output still flows so secondary monitoring views stay fresh.
+	// Its owner switches app for a moment: still theirs, and still watched.
 	live.SetVisibility(mac, false, true)
-	if got := live.Controller(); got != "" {
-		t.Fatalf("controller = %q after tab went to background, want unowned", got)
-	}
-	if live.Watched() {
-		t.Errorf("Watched() = true with only a background tab subscribed")
-	}
-
-	// Bringing the same tab back within grace reclaims the grid seamlessly.
-	live.SetVisibility(mac, false, false)
 	if got := live.Controller(); got != "mac" {
-		t.Fatalf("controller = %q after returning to foreground within grace, want mac", got)
+		t.Fatalf("controller = %q after the tab went to the background, want mac kept", got)
+	}
+	if !live.Watched() {
+		t.Errorf("Watched() = false with a background tab subscribed; it is a window left open to watch")
 	}
 
-	// Now the tab goes background again and stays away past the grace window;
-	// a foreground desktop takes over, then switches away past grace. When
-	// the unattended background tab drops and reconnects (with background=true),
-	// it must NOT reclaim the grid and shrink it back to 107x32.
-	live.SetVisibility(mac, false, true)
+	// It leaves, and stays away past the grace window; a desktop arrives and
+	// takes the grid, then switches to another session past grace too.
+	live.Unsubscribe(mac)
 	graceHasPassed(t, live)
-
 	desktop, _ := live.Subscribe("desktop")
+	defer live.Unsubscribe(desktop)
 	if got := live.Controller(); got != "desktop" {
-		t.Fatalf("controller = %q, want desktop once background tab's grace expired", got)
+		t.Fatalf("controller = %q, want desktop once mac's grace expired", got)
 	}
 	if err := live.Resize("desktop", 298, 65); err != nil {
 		t.Fatalf("Resize desktop: %v", err)
 	}
-
-	// Desktop switches to another session and stays away past grace.
 	live.SetHidden(desktop, true)
 	graceHasPassed(t, live)
 
-	// The sleeping background tab drops and reconnects periodically.
-	live.Unsubscribe(mac)
+	// The sleeping laptop reconnects, backgrounded. Under the old rule this was
+	// mac arriving after grace, and the grid went back to 107x32.
 	macAgain, _ := live.SubscribeView("mac", false, true, Resume{})
 	defer live.Unsubscribe(macAgain)
 	if got := live.Controller(); got != "" {
-		t.Fatalf("controller = %q after background tab reconnected; a background tab must never steal control", got)
+		t.Fatalf("controller = %q after a background reconnect; a background tab must never claim", got)
 	}
 	if err := live.Resize("mac", 107, 32); err != nil {
 		t.Fatalf("passive background resize: %v", err)
@@ -346,91 +336,14 @@ func TestABackgroundTabGivesUpTheGridAndNeverReclaimsItWhileBackgrounded(t *test
 	if cols, rows := live.Size(); cols != 298 || rows != 65 {
 		t.Errorf("grid = %dx%d after background reconnect, want desktop's 298x65 preserved", cols, rows)
 	}
-	live.Unsubscribe(desktop)
-}
 
-func TestWaitingForegroundViewerIsPromotedAutomaticallyWhenGraceExpires(t *testing.T) {
-	live := attachedFor(t, "vp_vis_handover")
-	live.mu.Lock()
-	live.gracePeriod = 40 * time.Millisecond
-	live.mu.Unlock()
-
-	phone, _ := live.Subscribe("phone")
-	if err := live.Resize("phone", 45, 24); err != nil {
-		t.Fatalf("Resize phone: %v", err)
-	}
-
-	desktop, _ := live.Subscribe("desktop")
-	defer live.Unsubscribe(desktop)
-	bgTab, _ := live.SubscribeView("bg-mac", false, true, Resume{})
-	defer live.Unsubscribe(bgTab)
-
-	// Drain initial EventSize frames.
-	drain := func(s *Subscriber) {
-		for {
-			select {
-			case ev := <-s.Events:
-				s.Took(ev)
-			default:
-				return
-			}
-		}
-	}
-	drain(desktop)
-	drain(bgTab)
-
-	if got := live.Controller(); got != "phone" {
-		t.Fatalf("controller = %q, want phone", got)
-	}
-
-	// The user closes their phone browser while the desktop is already watching.
-	// Immediately after departure the grid stays frozen (reload protection).
-	live.Unsubscribe(phone)
-	if got := live.Controller(); got != "" {
-		t.Fatalf("controller immediately after phone left = %q, want frozen", got)
-	}
-
-	// Once the grace period passes without the phone returning, the waiting
-	// foreground desktop is promoted automatically and notified via EventSize.
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case ev := <-desktop.Events:
-			desktop.Took(ev)
-			if ev.Kind == EventSize && live.Controller() == "desktop" {
-				if err := live.Resize("desktop", 200, 60); err != nil {
-					t.Fatalf("Resize after promotion: %v", err)
-				}
-				if cols, rows := live.Size(); cols != 200 || rows != 60 {
-					t.Errorf("grid = %dx%d after promoted desktop resized, want 200x60", cols, rows)
-				}
-				return
-			}
-		case <-deadline:
-			t.Fatalf("waiting desktop was never promoted after grace expired; controller = %q", live.Controller())
-		}
+	// Brought to the front, it is arriving, under the ordinary rules.
+	live.SetVisibility(macAgain, false, false)
+	if got := live.Controller(); got != "mac" {
+		t.Errorf("controller = %q after the tab came to the front past grace, want mac", got)
 	}
 }
 
-func TestGraceExpiryNeverPromotesABackgroundOrHiddenViewer(t *testing.T) {
-	live := attachedFor(t, "vp_vis_no_bg_promote")
-	live.mu.Lock()
-	live.gracePeriod = 30 * time.Millisecond
-	live.mu.Unlock()
-
-	desktop, _ := live.Subscribe("desktop")
-	bg, _ := live.SubscribeView("bg-tab", false, true, Resume{})
-	defer live.Unsubscribe(bg)
-	hidden, _ := live.SubscribeHidden("hidden-tab")
-	defer live.Unsubscribe(hidden)
-
-	live.Unsubscribe(desktop)
-	time.Sleep(80 * time.Millisecond)
-
-	if got := live.Controller(); got != "" {
-		t.Errorf("controller = %q after grace expired with only background/hidden viewers; want unowned", got)
-	}
-}
 func TestCatchUpAfterRingOverflowDoesNotDropOnNextLiveOutput(t *testing.T) {
 	ctx := context.Background()
 	tm := newTestTmux(t)
