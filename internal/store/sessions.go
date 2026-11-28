@@ -173,7 +173,13 @@ func (d *DB) CreateSession(ctx context.Context, s Session) (Session, error) {
 	// reserved for rows written before this column existed — and a restore
 	// that cannot tell the two apart has to guess at a shell for a session
 	// that was running an agent.
-	launch, err := json.Marshal(emptyIfNil(s.LaunchCommand))
+	s.LaunchCommand = emptyIfNil(s.LaunchCommand)
+	s.Labels = emptyIfNil(s.Labels)
+	// Match the column DEFAULT (-1 = no progress reported), which the INSERT
+	// below omits. Returning the Go zero value (0) made the frontend render a
+	// 0% progress bar on freshly created sessions before the next state push.
+	s.Progress = -1
+	launch, err := json.Marshal(s.LaunchCommand)
 	if err != nil {
 		return Session{}, fmt.Errorf("store: encode launch command: %w", err)
 	}

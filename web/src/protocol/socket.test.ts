@@ -568,6 +568,176 @@ describe('a stale end of stream', () => {
   })
 })
 
+describe('liveness recovery without CLOSING deadlock or background false kills', () => {
+  class HangingCloseWS {
+    static CONNECTING = 0
+    static OPEN = 1
+    static CLOSING = 2
+    static CLOSED = 3
+    static made: HangingCloseWS[] = []
+    readyState = 0
+    binaryType = ''
+    sent: ClientMessage[] = []
+    onopen: (() => void) | null = null
+    onclose: (() => void) | null = null
+    onmessage: ((ev: { data: unknown }) => void) | null = null
+    onerror: (() => void) | null = null
+    constructor(public url: string) {
+      HangingCloseWS.made.push(this)
+    }
+    send(s: string) {
+      this.sent.push(JSON.parse(s) as ClientMessage)
+    }
+    close() {
+      // Simulates a half-open TCP socket sitting in CLOSING for ~60 s without firing onclose.
+      this.readyState = HangingCloseWS.CLOSING
+    }
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  function setupClock() {
+    vi.useFakeTimers()
+    HangingCloseWS.made = []
+    const winHandlers = new Map<string, (ev?: unknown) => void>()
+    const docHandlers = new Map<string, () => void>()
+    const doc = {
+      hidden: false,
+      addEventListener: (t: string, fn: () => void) => docHandlers.set(t, fn),
+      removeEventListener: (t: string) => docHandlers.delete(t),
+    }
+    vi.stubGlobal('WebSocket', HangingCloseWS)
+    vi.stubGlobal('location', { protocol: 'http:', host: 'panel.test' })
+    vi.stubGlobal('sessionStorage', { getItem: () => 'c1', setItem: () => {} })
+    vi.stubGlobal('document', doc)
+    vi.stubGlobal('window', {
+      addEventListener: (t: string, fn: (ev?: unknown) => void) => winHandlers.set(t, fn),
+      removeEventListener: (t: string) => winHandlers.delete(t),
+      setInterval: (fn: () => void, ms: number) => setInterval(fn, ms) as unknown as number,
+      clearInterval: (id: number) => clearInterval(id),
+    })
+    const sock = new PanelSocket()
+    ;(sock as unknown as { dark: () => boolean }).dark = () => false
+    return {
+      sock,
+      doc,
+      fireWindow: (name: string) => winHandlers.get(name)?.(),
+      fireVisibility: (hidden: boolean) => {
+        doc.hidden = hidden
+        docHandlers.get('visibilitychange')?.()
+      },
+    }
+  }
+
+  it('reconnects immediately on online even if the old socket hangs in CLOSING', () => {
+    const { sock, fireWindow } = setupClock()
+    sock.connect()
+    const first = HangingCloseWS.made[0]
+    first.readyState = HangingCloseWS.OPEN
+    first.onopen?.()
+    expect(sock.status).toBe('open')
+
+    fireWindow('offline')
+    expect(first.readyState).toBe(HangingCloseWS.CLOSING)
+    expect(sock.status).toBe('closed')
+
+    // Old socket never fires onclose; online must still open a fresh socket at once.
+    fireWindow('online')
+    expect(HangingCloseWS.made).toHaveLength(2)
+    expect(sock.status).toBe('connecting')
+    sock.close()
+  })
+
+  it('does not kill a healthy socket after a 60s background timer throttle when pong arrives', () => {
+    const { sock } = setupClock()
+    sock.connect()
+    const first = HangingCloseWS.made[0]
+    first.readyState = HangingCloseWS.OPEN
+    first.onopen?.()
+
+    // Simulate Chrome throttling: clock jumps 65 s, then the interval ticks.
+    vi.setSystemTime(Date.now() + 65_000)
+    ;(sock as unknown as { probe(ms: number): void }).probe(10_000)
+    expect(first.sent).toContainEqual({ t: 'ping' })
+    expect(HangingCloseWS.made).toHaveLength(1)
+
+    // Pong arrives within the deadline -> socket stays open.
+    first.onmessage?.({ data: JSON.stringify({ t: 'pong' }) })
+    vi.advanceTimersByTime(15_000)
+    expect(HangingCloseWS.made).toHaveLength(1)
+    expect(sock.status).toBe('open')
+    sock.close()
+  })
+
+  it('replaces a half-open socket when ping gets no answer within timeout', () => {
+    const { sock } = setupClock()
+    sock.connect()
+    const first = HangingCloseWS.made[0]
+    first.readyState = HangingCloseWS.OPEN
+    first.onopen?.()
+
+    // 25 s interval sends ping; 10 s later with no response it detaches and reconnects immediately.
+    vi.advanceTimersByTime(25_000)
+    expect(first.sent).toContainEqual({ t: 'ping' })
+    expect(HangingCloseWS.made).toHaveLength(1)
+
+    vi.advanceTimersByTime(10_000)
+    expect(first.readyState).toBe(HangingCloseWS.CLOSING)
+    expect(HangingCloseWS.made).toHaveLength(2)
+    expect(sock.status).toBe('connecting')
+    sock.close()
+  })
+
+  it('probes on subscribe ACK timeout and delivers stream errors to onError', () => {
+    const { sock } = setupClock()
+    sock.connect()
+    const first = HangingCloseWS.made[0]
+    first.readyState = HangingCloseWS.OPEN
+    first.onopen?.()
+
+    const errors: string[] = []
+    sock.subscribe('s1', 80, 24, {
+      onData: () => {},
+      onSize: () => {},
+      onError: (m) => errors.push(m),
+    })
+
+    // No subscribed confirmation for 5 s -> probes with a 5 s timeout -> replaces dead socket.
+    vi.advanceTimersByTime(5_000)
+    expect(first.sent).toContainEqual({ t: 'ping' })
+    vi.advanceTimersByTime(5_000)
+    expect(HangingCloseWS.made).toHaveLength(2)
+
+    // On the new socket, a stream error reaches onError and cancels the ACK timer.
+    const second = HangingCloseWS.made[1]
+    second.readyState = HangingCloseWS.OPEN
+    second.onopen?.()
+    second.onmessage?.({
+      data: JSON.stringify({ t: 'error', sessionId: 's1', message: 'subscribe: gone' }),
+    })
+    expect(errors).toEqual(['subscribe: gone'])
+    sock.close()
+  })
+
+  it('probes immediately on foreground wake after an idle gap', () => {
+    const { sock, fireVisibility } = setupClock()
+    sock.connect()
+    const first = HangingCloseWS.made[0]
+    first.readyState = HangingCloseWS.OPEN
+    first.onopen?.()
+
+    fireVisibility(true)
+    vi.setSystemTime(Date.now() + 40_000)
+    first.sent.length = 0
+    fireVisibility(false)
+    expect(first.sent).toContainEqual({ t: 'ping' })
+    sock.close()
+  })
+})
+
 describe('background browser tabs', () => {
   afterEach(() => {
     vi.unstubAllGlobals()

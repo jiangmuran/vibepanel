@@ -100,6 +100,16 @@ type stream struct {
 	cancel    context.CancelFunc
 }
 
+// pendingSub tracks an in-flight subscribe running off readLoop so that
+// unsubscribe, duplicate subscribe, visibility or scheme updates arriving
+// while Attach or tmux capture-pane runs still apply cleanly.
+type pendingSub struct {
+	cancel     context.CancelFunc
+	hidden     bool
+	background bool
+	dark       *bool
+}
+
 // Conn is a single browser connection.
 type Conn struct {
 	h        *Handler
@@ -123,6 +133,7 @@ type Conn struct {
 	mu      sync.Mutex
 	streams map[uint32]*stream
 	byID    map[string]*stream
+	pending map[string]*pendingSub
 	nextRef uint32
 }
 
@@ -307,6 +318,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		stateWake: make(chan struct{}, 1),
 		streams:   map[uint32]*stream{},
 		byID:      map[string]*stream{},
+		pending:   map[string]*pendingSub{},
 	}
 	defer conn.closeAll()
 
@@ -522,15 +534,16 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 		c.sendJSON(ServerMessage{Type: MsgPong})
 
 	case MsgSubscribe:
-		if err := c.subscribe(ctx, msg.SessionID, msg.Cols, msg.Rows, msg.Hidden, msg.Background, msg.resume()); err != nil {
-			c.sendError(msg.SessionID, err.Error())
+		if msg.SessionID == "" {
+			c.sendError("", "subscribe: missing sessionId")
 			return
 		}
-		// Before anything in the pane has had a chance to ask. An application
-		// queries the terminal's colours once, at startup, and acts on the
-		// answer for the rest of its life -- so an answer that arrives after
-		// the question is the same as no answer.
-		c.applyScheme(msg.SessionID, msg.Dark)
+		// Run off readLoop. Attach and ring-overflow capture-pane fork tmux
+		// subprocesses (up to 2 s each) and replay writes up to 2 MiB of
+		// frames; doing either inline stops readLoop from reading RFC 6455
+		// pongs, answering client pings, forwarding keystrokes, or handling
+		// an unsubscribe when the user clicks to another session.
+		c.startSubscribe(ctx, msg)
 
 	case MsgScheme:
 		c.applyScheme(msg.SessionID, msg.Dark)
@@ -605,6 +618,12 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 	case MsgVisibility:
 		c.mu.Lock()
 		s := c.byID[msg.SessionID]
+		if s == nil {
+			if p := c.pending[msg.SessionID]; p != nil {
+				p.hidden = msg.Hidden
+				p.background = msg.Background
+			}
+		}
 		c.mu.Unlock()
 		if s == nil {
 			return
@@ -642,23 +661,77 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 	}
 }
 
-// subscribe attaches (if needed), registers a viewer and starts pumping its
-// events onto the socket.
-func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, hidden, background bool, from session.Resume) error {
-	subscribeStarted := time.Now()
-	if sessionID == "" {
-		return errors.New("subscribe: missing sessionId")
+// startSubscribe replaces any active or in-flight subscription for msg.SessionID
+// and launches runSubscribe off readLoop.
+//
+// Replacing an existing entry instead of silently ignoring a duplicate matters:
+// a raced restore or retry resubscribe that arrived before the old stream
+// finished tearing down used to return nil with no MsgSubscribed, leaving the
+// browser stuck at "Connecting terminal 0%" forever.
+func (c *Conn) startSubscribe(ctx context.Context, msg ClientMessage) {
+	subCtx, cancel := context.WithCancel(ctx)
+	var darkCopy *bool
+	if msg.Dark != nil {
+		d := *msg.Dark
+		darkCopy = &d
 	}
+	pend := &pendingSub{
+		cancel:     cancel,
+		hidden:     msg.Hidden,
+		background: msg.Background,
+		dark:       darkCopy,
+	}
+
 	c.mu.Lock()
-	if _, dup := c.byID[sessionID]; dup {
-		c.mu.Unlock()
-		return nil // already subscribed; treat as idempotent
+	if c.pending == nil {
+		c.pending = map[string]*pendingSub{}
+	}
+	oldPending := c.pending[msg.SessionID]
+	c.pending[msg.SessionID] = pend
+	oldStream := c.byID[msg.SessionID]
+	if oldStream != nil {
+		delete(c.byID, msg.SessionID)
+		delete(c.streams, oldStream.ref)
 	}
 	c.mu.Unlock()
 
+	if oldPending != nil {
+		oldPending.cancel()
+	}
+	if oldStream != nil {
+		oldStream.cancel()
+		oldStream.live.Unsubscribe(oldStream.sub)
+	}
+
+	go c.runSubscribe(subCtx, pend, msg)
+}
+
+// runSubscribe attaches (if needed), registers a viewer, streams its replay
+// and then pumps live events on this goroutine.
+func (c *Conn) runSubscribe(ctx context.Context, pend *pendingSub, msg ClientMessage) {
+	subscribeStarted := time.Now()
+	sessionID := msg.SessionID
+	cols, rows := msg.Cols, msg.Rows
+	from := msg.resume()
+
+	clearPending := func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.pending[sessionID] != pend {
+			return false
+		}
+		delete(c.pending, sessionID)
+		return true
+	}
+
 	tmuxName, storedCols, storedRows, err := c.h.Resolve.Resolve(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("subscribe: %w", err)
+		stillCurrent := clearPending()
+		pend.cancel()
+		if stillCurrent && ctx.Err() == nil {
+			c.sendError(sessionID, fmt.Sprintf("subscribe: %v", err))
+		}
+		return
 	}
 	if storedCols > 0 {
 		cols, rows = storedCols, storedRows
@@ -666,25 +739,69 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 
 	live, err := c.h.Manager.Attach(ctx, sessionID, tmuxName, cols, rows)
 	if err != nil {
-		return fmt.Errorf("subscribe: %w", err)
+		stillCurrent := clearPending()
+		pend.cancel()
+		if stillCurrent && ctx.Err() == nil {
+			c.sendError(sessionID, fmt.Sprintf("subscribe: %v", err))
+		}
+		return
 	}
 	attachedAt := time.Now()
+
+	c.mu.Lock()
+	if c.pending[sessionID] != pend || ctx.Err() != nil {
+		if c.pending[sessionID] == pend {
+			delete(c.pending, sessionID)
+		}
+		c.mu.Unlock()
+		pend.cancel()
+		return
+	}
+	hidden, background := pend.hidden, pend.background
+	c.mu.Unlock()
+
 	sub, snap := live.SubscribeView(c.clientID, hidden, background, from)
 	replay := snap.Data
 
 	c.mu.Lock()
+	if c.pending[sessionID] != pend || ctx.Err() != nil {
+		if c.pending[sessionID] == pend {
+			delete(c.pending, sessionID)
+		}
+		c.mu.Unlock()
+		pend.cancel()
+		live.Unsubscribe(sub)
+		return
+	}
+	delete(c.pending, sessionID)
+	latestHidden, latestBackground := pend.hidden, pend.background
+	dark := pend.dark
 	c.nextRef++
 	ref := c.nextRef
-	sctx, cancel := context.WithCancel(ctx)
-	s := &stream{ref: ref, sessionID: sessionID, live: live, sub: sub, cancel: cancel}
+	s := &stream{ref: ref, sessionID: sessionID, live: live, sub: sub, cancel: pend.cancel}
 	c.streams[ref] = s
 	c.byID[sessionID] = s
 	c.mu.Unlock()
+
+	if latestHidden != hidden || latestBackground != background {
+		live.SetVisibility(sub, latestHidden, latestBackground)
+	}
+	// Before anything in the pane has had a chance to ask. An application
+	// queries the terminal's colours once, at startup, and acts on the
+	// answer for the rest of its life -- so an answer that arrives after
+	// the question is the same as no answer.
+	if dark != nil {
+		c.applyScheme(sessionID, dark)
+	}
 
 	// Build the frame list before the confirmation so the browser knows the
 	// exact replay work it is about to receive.
 	frames := replayFrames(ref, replay)
 	gridCols, gridRows := live.Size()
+	if ctx.Err() != nil {
+		c.deregister(s)
+		return
+	}
 	c.sendJSON(ServerMessage{
 		Type: MsgSubscribed, SessionID: sessionID, Ref: ref,
 		Cols: gridCols, Rows: gridRows,
@@ -699,6 +816,10 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 	replayStarted := time.Now()
 	var firstFrameMS int64
 	for i, frame := range frames {
+		if ctx.Err() != nil {
+			c.deregister(s)
+			return
+		}
 		c.sendBinary(frame)
 		if i == 0 {
 			// After the write rather than before it. Before it, this measured
@@ -710,8 +831,8 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 	if debugTiming {
 		c.h.logger().Info("terminal subscribe",
 			"session", sessionID,
-			"hidden", hidden,
-			"background", background,
+			"hidden", latestHidden,
+			"background", latestBackground,
 			"resumed", snap.Continued,
 			"attach_ms", attachedAt.Sub(subscribeStarted).Milliseconds(),
 			"replay_bytes", len(replay),
@@ -722,8 +843,7 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 		)
 	}
 
-	go c.pumpStream(sctx, s)
-	return nil
+	c.pumpStream(ctx, s)
 }
 
 // resume is the subscribe's resume point, or the zero value when the viewer
@@ -896,7 +1016,7 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 			c.sendBinary(EncodeData(s.ref, data[start:end]))
 		}
 	}
-	sendControl := func(ev session.Event) {
+	sendControl := func(ev session.Event) bool {
 		switch ev.Kind {
 		case session.EventCatchUp:
 			r := ev.Replay
@@ -909,6 +1029,9 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 				Controlling: s.live.Controller() == c.clientID,
 			})
 			for _, frame := range frames {
+				if ctx.Err() != nil {
+					return true
+				}
 				c.sendBinary(frame)
 			}
 		case session.EventSize:
@@ -922,8 +1045,15 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 		case session.EventTitle:
 			c.sendJSON(ServerMessage{Type: MsgTitle, SessionID: s.sessionID, Text: ev.Text})
 		case session.EventExit:
+			// Deregister before sending MsgExit, matching finish(): a client
+			// restoring the session answers the state push with an immediate
+			// subscribe, and deregistering first ensures the old stream is
+			// already gone and prevents finish() from sending a second MsgExit.
+			c.deregister(s)
 			c.sendJSON(ServerMessage{Type: MsgExit, SessionID: s.sessionID, Ref: s.ref})
+			return true
 		}
+		return false
 	}
 
 	for {
@@ -942,7 +1072,9 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 				return
 			}
 			if ev.Kind != session.EventOutput {
-				sendControl(ev)
+				if sendControl(ev) {
+					return
+				}
 				continue
 			}
 			batch, next, open := readOutputBatch(ctx, s.sub, ev.Data)
@@ -950,8 +1082,8 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 				return
 			}
 			sendOutput(batch)
-			if next != nil {
-				sendControl(*next)
+			if next != nil && sendControl(*next) {
+				return
 			}
 			if !open {
 				finish()
@@ -1018,8 +1150,16 @@ func (c *Conn) applyScheme(sessionID string, dark *bool) {
 	}
 	c.mu.Lock()
 	s := c.byID[sessionID]
-	c.mu.Unlock()
+	var pend *pendingSub
 	if s == nil {
+		pend = c.pending[sessionID]
+		if pend != nil {
+			d := *dark
+			pend.dark = &d
+		}
+	}
+	c.mu.Unlock()
+	if s == nil && pend == nil {
 		return
 	}
 	// Remembered for every session that attaches next, not only this one.
@@ -1030,17 +1170,26 @@ func (c *Conn) applyScheme(sessionID string, dark *bool) {
 	// 「codex 用户消息框的文字和背景颜色一样」, measured as a 222,224,227
 	// background under light-grey default text.
 	c.h.Manager.RememberScheme(*dark)
-	s.live.SetScheme(*dark)
+	if s != nil {
+		s.live.SetScheme(*dark)
+	}
 }
 
 func (c *Conn) unsubscribe(sessionID string) {
 	c.mu.Lock()
+	pend := c.pending[sessionID]
+	if pend != nil {
+		delete(c.pending, sessionID)
+	}
 	s := c.byID[sessionID]
 	if s != nil {
 		delete(c.byID, sessionID)
 		delete(c.streams, s.ref)
 	}
 	c.mu.Unlock()
+	if pend != nil {
+		pend.cancel()
+	}
 	if s != nil {
 		s.cancel()
 		s.live.Unsubscribe(s.sub)
@@ -1049,6 +1198,11 @@ func (c *Conn) unsubscribe(sessionID string) {
 
 func (c *Conn) closeAll() {
 	c.mu.Lock()
+	allPending := make([]*pendingSub, 0, len(c.pending))
+	for _, p := range c.pending {
+		allPending = append(allPending, p)
+	}
+	c.pending = map[string]*pendingSub{}
 	all := make([]*stream, 0, len(c.streams))
 	for _, s := range c.streams {
 		all = append(all, s)
@@ -1056,6 +1210,9 @@ func (c *Conn) closeAll() {
 	c.streams = map[uint32]*stream{}
 	c.byID = map[string]*stream{}
 	c.mu.Unlock()
+	for _, p := range allPending {
+		p.cancel()
+	}
 	for _, s := range all {
 		s.cancel()
 		s.live.Unsubscribe(s.sub)

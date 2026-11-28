@@ -285,7 +285,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // tier puts the column back without a stale sheet waiting behind it.
   const [sheet, setSheet] = useState<'panel' | 'terminals' | null>(null)
   const sheetLayout = narrow || compact
-  const sheetShown = sheetLayout ? sheet : null
+  // On compact (!narrow), BottomTerminals is already rendered inline under main;
+  // keeping sheetShown === 'terminals' across a narrow -> compact rotation would
+  // mount two BottomTerminals for the same scratch session id simultaneously.
+  const sheetShown = sheetLayout ? (sheet === 'terminals' && !narrow ? 'panel' : sheet) : null
   const keyFit = useViewportFit(narrow)
   // Width decides the layout; the pointer decides the gestures. A tablet in
   // landscape is not narrow and still has nothing but fingers, so keying
@@ -1200,9 +1203,23 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     // scratch says which list it lands in; nearSessionId only says where it
     // starts. They were one field, and they stopped being one question when
     // the strip became the project's.
-    void guard(() =>
-      api.createSession(current.projectId, [], { scratch: true, nearSessionId: current.id }),
-    )
+    void guard(async () => {
+      const made = await api.createSession(current.projectId, [], {
+        scratch: true,
+        nearSessionId: current.id,
+      })
+      const row: Session = {
+        ...made,
+        launchCommand: made.launchCommand ?? [],
+        labels: made.labels ?? [],
+        progress: typeof made.progress === 'number' ? made.progress : -1,
+      }
+      setState((prev) =>
+        prev.sessions.some((s) => s.id === row.id)
+          ? prev
+          : { ...prev, sessions: [...prev.sessions, row] },
+      )
+    })
   }
 
   // Removing a project kills every session in it, which is the part nobody
@@ -2092,6 +2109,22 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             pagePrompt.current = null
             void guard(async () => {
               const made = await api.createSession(project.id, [], { launchProfileId })
+              const row: Session = {
+                ...made,
+                launchCommand: made.launchCommand ?? [],
+                labels: made.labels ?? [],
+                progress: typeof made.progress === 'number' ? made.progress : -1,
+              }
+              // Insert optimistically before selecting: POST /api/sessions returns
+              // before Hub.Notify's 60 ms coalesce window pushes `state`. Selecting
+              // an id missing from `state.sessions` made `current` flash null,
+              // unmounting every cached terminal and stalling up to 30 s when WS
+              // was reconnecting.
+              setState((prev) =>
+                prev.sessions.some((s) => s.id === row.id)
+                  ? prev
+                  : { ...prev, sessions: [row, ...prev.sessions] },
+              )
               // Shown as soon as it exists. It was selected only when a page
               // handed over a prompt, so starting an agent from the picker
               // added a row and left you on the session you were in.

@@ -1,8 +1,11 @@
 package session
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/jiangmuran/vibepanel/internal/tmux"
 )
 
 // The browser keeps recently viewed terminals mounted, so a subscription no
@@ -426,5 +429,93 @@ func TestGraceExpiryNeverPromotesABackgroundOrHiddenViewer(t *testing.T) {
 
 	if got := live.Controller(); got != "" {
 		t.Errorf("controller = %q after grace expired with only background/hidden viewers; want unowned", got)
+	}
+}
+func TestCatchUpAfterRingOverflowDoesNotDropOnNextLiveOutput(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_vis_catchup_drop"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 120, Height: 40,
+		Command: []string{"sh", "-c", "sleep 30"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Production DefaultRingSize (2 MiB) so a ring-wrapped EventCatchUp plus a
+	// mode prefix exceeds subscriberBytes (2 MiB) by itself.
+	m := NewManager(tm, DefaultRingSize)
+	t.Cleanup(m.DetachAll)
+	live, err := m.Attach(ctx, "s1", name, 120, 40)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	sub, _ := live.Subscribe("desktop")
+	defer live.Unsubscribe(sub)
+	// Drain initial EventSize.
+	select {
+	case ev := <-sub.Events:
+		sub.Took(ev)
+	default:
+	}
+
+	live.SetHidden(sub, true)
+
+	// Overflow the ring and record a private mode so the full-ring EventCatchUp
+	// plus mode prefix exceeds subscriberBytes (2 MiB).
+	live.mu.Lock()
+	live.modes.feed([]byte("\x1b[?1000h\x1b[?1006h\x1b[?2004h"))
+	big := make([]byte, subscriberBytes+4096)
+	for i := range big {
+		big[i] = 'a'
+	}
+	_, _ = live.ring.Write(big)
+	live.mu.Unlock()
+
+	// Unhiding queues EventCatchUp (size > subscriberBytes).
+	live.SetHidden(sub, false)
+
+	// Live output arrives BEFORE pumpStream dequeues EventCatchUp. Previously
+	// sub.queued held EventCatchUp's >2 MiB payload so this single write
+	// dropped the subscriber immediately and forced a second full resubscribe.
+	after := []byte("still-alive\r\n")
+	live.mu.Lock()
+	_, _ = live.ring.Write(after)
+	live.broadcastLocked(Event{Kind: EventOutput, Data: after})
+	live.mu.Unlock()
+
+	if sub.Dropped() {
+		t.Fatal("subscriber was dropped immediately after queuing a ring-wrapped EventCatchUp")
+	}
+	// Drain queued events (tmux's own initial attach burst may also be in flight)
+	// and verify both the ring-wrapped EventCatchUp and our follow-up live output
+	// arrive without dropping the subscriber.
+	var sawCatchUp, sawAfter bool
+	for {
+		select {
+		case ev, ok := <-sub.Events:
+			if !ok {
+				t.Fatal("subscriber channel closed unexpectedly after EventCatchUp")
+			}
+			sub.Took(ev)
+			if ev.Kind == EventCatchUp {
+				if len(ev.Replay.Data) <= subscriberBytes {
+					t.Errorf("EventCatchUp len = %d, want > subscriberBytes (%d) to exercise overflow path",
+						len(ev.Replay.Data), subscriberBytes)
+				}
+				sawCatchUp = true
+			}
+			if ev.Kind == EventOutput && string(ev.Data) == string(after) {
+				sawAfter = true
+			}
+		default:
+			if !sawCatchUp {
+				t.Fatal("never received EventCatchUp after unhiding")
+			}
+			if !sawAfter {
+				t.Fatalf("never received live EventOutput %q after EventCatchUp", after)
+			}
+			return
+		}
 	}
 }

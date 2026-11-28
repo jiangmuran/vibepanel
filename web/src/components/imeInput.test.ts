@@ -1,16 +1,31 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { attachImeCommitFix, releaseImeCommit, type TextInputLike } from './imeInput'
+import {
+  attachImeCommitFix,
+  releaseImeCommit,
+  resetStuckComposition,
+  type TextInputLike,
+} from './imeInput'
 
 /** The private shape xterm 6.0.0 has, which the fix reaches into. */
 function core(overrides: { composing?: boolean; sending?: boolean; seen?: boolean } = {}) {
+  const classes = new Set<string>(overrides.composing ? ['active'] : [])
   return {
     _keyDownSeen: overrides.seen ?? true,
+    textarea: { value: overrides.composing ? 'zhong' : '' },
     _compositionHelper: {
       _isComposing: overrides.composing ?? false,
       _isSendingComposition: overrides.sending ?? false,
+      _dataAlreadySent: overrides.composing ? 'z' : '',
+      _compositionView: {
+        textContent: overrides.composing ? 'zhong' : '',
+        classList: {
+          remove: (name: string) => classes.delete(name),
+          has: (name: string) => classes.has(name),
+        },
+      },
     },
   }
 }
@@ -120,22 +135,50 @@ describe('releaseImeCommit', () => {
   })
 })
 
+describe('resetStuckComposition', () => {
+  it('clears orphaned composition flags left behind by blur or display:none', () => {
+    const term = { _core: core({ composing: true, sending: true, seen: true }) }
+    expect(resetStuckComposition(term)).toBe(true)
+    expect(term._core._keyDownSeen).toBe(false)
+    expect(term._core._compositionHelper._isComposing).toBe(false)
+    expect(term._core._compositionHelper._isSendingComposition).toBe(false)
+    expect(term._core._compositionHelper._dataAlreadySent).toBe('')
+    expect(term._core._compositionHelper._compositionView.textContent).toBe('')
+    expect(term._core._compositionHelper._compositionView.classList.has('active')).toBe(false)
+    expect(term._core.textarea.value).toBe('')
+  })
+
+  it('returns false when nothing is stuck', () => {
+    const term = { _core: core({ composing: false, sending: false, seen: false }) }
+    expect(resetStuckComposition(term)).toBe(false)
+  })
+})
+
 describe('attachImeCommitFix', () => {
-  it('listens for beforeinput in the capture phase and can be detached', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('listens for beforeinput and blur in capture phase and clears orphaned composition', () => {
+    vi.useFakeTimers()
     const host = new FakeHost()
-    const term = host.terminal()
+    const term = { _core: core({ composing: true, seen: true }) }
     const detach = attachImeCommitFix(host as unknown as EventTarget, term)
 
-    expect(host.added).toHaveLength(1)
-    expect(host.added[0].type).toBe('beforeinput')
-    // Capture, so it runs before the textarea's own listeners.
-    expect(host.added[0].capture).toBe(true)
+    expect(host.added.map((a) => [a.type, a.capture])).toEqual([
+      ['beforeinput', true],
+      ['blur', true],
+    ])
 
-    host.fire(event())
-    expect((term as { _core: { _keyDownSeen?: boolean } })._core._keyDownSeen).toBe(false)
+    // Trigger blur listener: waits one macrotask so a legitimate compositionend can finalize first.
+    host.added.find((a) => a.type === 'blur')?.listener({})
+    expect(term._core._compositionHelper._isComposing).toBe(true)
+    vi.advanceTimersByTime(1)
+    expect(term._core._compositionHelper._isComposing).toBe(false)
+    expect(term._core._keyDownSeen).toBe(false)
 
     detach()
-    expect(host.removed).toBe(1)
+    expect(host.removed).toBe(2)
   })
 })
 
@@ -156,6 +199,8 @@ describe('the xterm internals the workaround depends on', () => {
       '_compositionHelper',
       '_isComposing',
       '_isSendingComposition',
+      '_compositionView',
+      '_dataAlreadySent',
     ]) {
       expect(
         source.includes(name),

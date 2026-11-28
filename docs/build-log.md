@@ -29174,3 +29174,59 @@ Four pieces fix the whole loop:
 - **Revalidation teardown log hygiene.** `ws.Handler.revalidate` skips the
   "session is no longer valid" log when `ctx.Err() != nil` (the connection was
   already closing while the 5s ticker raced teardown).
+
+## 2026-11-26 — Stop terminals stalling at 0% and TUI input boxes freezing
+
+Auditing a live deployment where clicking a new session frequently stalled at
+"Connecting terminal 0%" for 40–67 s (and TUI prompts in `claude`, `codex`,
+`agy` occasionally refused typing) surfaced four interacting root causes:
+
+- **WebSocket `CLOSING` deadlock and background-throttled false kills
+  (`web/src/protocol/socket.ts`).** `dropConnection()` left `this.ws` set until
+  `ws.onclose` fired, so Chromium's ~60 s closing handshake on half-open TCP
+  sockets blocked `connect()` and `onOnline()` for 40–67 s. Meanwhile
+  `startPing()` checked `Date.now() - lastSeenAt > 60_000` *before* sending a
+  ping, so Chrome's 60 s background timer throttling routinely self-killed
+  healthy idle sockets right before the user returned. `dropConnection()` now
+  detaches `this.ws` immediately and reconnects on demand; liveness uses an
+  actual ping/pong deadline (`PING_TIMEOUT_MS = 10s`, `WAKE_PING_TIMEOUT_MS = 5s`)
+  cleared by any incoming frame; returning to foreground (`visibilitychange` /
+  `pageshow`) reconnects or probes immediately; and an unconfirmed `subscribe`
+  triggers a probe after 5 s instead of hanging at 0%.
+- **Optimistic session insertion and compact-sheet dedup (`web/src/App.tsx`,
+  `internal/store/sessions.go`).** `POST /api/sessions` returns before
+  `Hub.Notify`'s 60 ms coalesce window pushes `state`, so
+  `selectSession(made.id)` made `current` flash `null`, unmounting every cached
+  terminal and stalling up to 30 s when the WebSocket was reconnecting. Both
+  main and scratch session creation now insert the returned session into
+  `state.sessions` optimistically before selecting it (and `CreateSession`
+  returns non-nil `LaunchCommand`/`Labels` slices plus `Progress = -1`,
+  matching `ListSessions`). Rotating from `narrow` to `compact` with the
+  `terminals` sheet open now maps the sheet to `panel` instead of mounting a
+  duplicate `BottomTerminals`.
+- **Non-blocking server `subscribe`, catch-up drop fix, and load error UI
+  (`internal/ws/conn.go`, `internal/session/event.go`, `Terminal.tsx`,
+  `terminalReplay.ts`).** `MsgSubscribe` now runs off `readLoop` with
+  per-session `pendingSub` tracking so slow `Attach`/`captureForReplay`/replay
+  writes never starve RFC 6455 pongs, client pings, keystrokes, or
+  unsubscribes. Duplicate subscribes replace and re-confirm cleanly instead of
+  silently returning `nil`; `EventExit` deregisters before sending `MsgExit`;
+  `EventCatchUp` snapshots no longer count against live `subscriberBytes` (which
+  previously dropped the viewer on the first live byte after a 2 MiB + prefix
+  catch-up); `TerminalReplay` adds a 100 ms timer backstop when
+  `requestAnimationFrame` is paused in background tabs; and `TerminalView`
+  handles stream `error` frames with an alert banner and Retry button.
+- **Desktop IME freeze, orphaned xterm composition, focus race, and echo
+  honesty (`iosInput.ts`, `imeInput.ts`, `focus.ts`, `Terminal.tsx`).**
+  `bypassIOSKeydown` (`keyCode === 229 && !isComposing`) previously ran
+  unconditionally on Windows/macOS desktop Chrome, swallowing CJK IME
+  composition starts and non-text keys (Enter/Backspace/Escape/arrows) and
+  never disarming on `blur`/`compositionstart`; it is now scoped strictly to
+  `isIOSWebKit()`. `imeInput.ts` clears orphaned xterm 6.0
+  `_compositionHelper._isComposing` / `_isSendingComposition` / `_keyDownSeen`
+  flags on deferred `blur` and on cached-terminal unhide (`display: none`
+  drops `compositionend` in Chromium). `focusTerminal` now waits until a cached
+  terminal's element is actually laid out (`getClientRects().length > 0`) before
+  claiming focus, clicking empty backdrop space beside a passive smaller grid
+  focuses xterm, and `TerminalView` only runs local echo when `socket.write`
+  returns `true`.

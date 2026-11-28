@@ -1,7 +1,50 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { iosInputText, shouldBypassXtermKeydown } from './iosInput'
+import { iosInputText, isIOSWebKit, shouldBypassXtermKeydown } from './iosInput'
+
+describe('iOS WebKit detection', () => {
+  it('matches iPhone, iPad, and iPadOS desktop-mode Safari/Chrome', () => {
+    expect(
+      isIOSWebKit({
+        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+        platform: 'iPhone',
+        maxTouchPoints: 5,
+      }),
+    ).toBe(true)
+    expect(
+      isIOSWebKit({
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15',
+        platform: 'MacIntel',
+        maxTouchPoints: 5,
+      }),
+    ).toBe(true)
+  })
+
+  it('excludes desktop macOS, Windows, and Linux browsers', () => {
+    expect(
+      isIOSWebKit({
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/134.0.0.0',
+        platform: 'MacIntel',
+        maxTouchPoints: 0,
+      }),
+    ).toBe(false)
+    expect(
+      isIOSWebKit({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/134.0.0.0',
+        platform: 'Win32',
+        maxTouchPoints: 10,
+      }),
+    ).toBe(false)
+    expect(
+      isIOSWebKit({
+        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/134.0.0.0',
+        platform: 'Linux x86_64',
+        maxTouchPoints: 0,
+      }),
+    ).toBe(false)
+  })
+})
 
 describe('iOS direct IME input', () => {
   it('bypasses xterm for a non-composition keyCode 229 event', () => {
@@ -52,5 +95,11 @@ describe('and the terminal installs the workaround', () => {
   it('disarms on any other keydown, not only on keyup', () => {
     const bypass = code.slice(code.indexOf('const bypassIOSKeydown'), code.indexOf('const forwardIOSInput'))
     expect(bypass).toMatch(/shouldBypassXtermKeydown\(event\)\)\s*\{[\s\S]*forwardingIOSInput = false/)
+  })
+
+  it('scopes the keydown bypass strictly to iOS/iPadOS WebKit and disarms on blur', () => {
+    expect(code).toMatch(/isIOSWebKit\(\)/)
+    expect(code).toMatch(/host\.addEventListener\('blur', finishIOSInput, true\)/)
+    expect(code).toMatch(/host\.addEventListener\('compositionstart', finishIOSInput, true\)/)
   })
 })
