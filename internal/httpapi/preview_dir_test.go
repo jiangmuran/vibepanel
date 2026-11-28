@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -88,6 +89,95 @@ func TestAPreviewCannotReachOutOfItsDirectory(t *testing.T) {
 		if strings.Contains(body, "SHOULD_NOT_BE_SERVED") {
 			t.Errorf("%s: the file outside the root came back", path)
 		}
+	}
+}
+
+// TestAPreviewIndexCannotReachOutOfItsDirectory.
+//
+// The implicit index.html was the one path in a directory preview built with
+// filepath.Join instead of browse.Resolve, so a symlink there was followed
+// wherever it led -- `ln -s /etc/passwd index.html` in a published directory,
+// or whatever an archive or a build tool left behind. The same name requested
+// directly was refused, which is what made the shortcut look harmless.
+//
+// Both the root and a subdirectory resolve an index, so both are checked.
+func TestAPreviewIndexCannotReachOutOfItsDirectory(t *testing.T) {
+	ts, _ := newTestServer(t)
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	write(t, secret, "SHOULD_NOT_BE_SERVED")
+
+	root := t.TempDir()
+	if err := os.Symlink(secret, filepath.Join(root, "index.html")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(root, "sub", "index.html")); err != nil {
+		t.Fatal(err)
+	}
+
+	tok := makePreview(t, ts, root)
+	for _, path := range []string{"/", "/sub/"} {
+		body, code := getRaw(t, ts, "/preview/"+tok+path)
+		if code != http.StatusOK {
+			t.Errorf("%s: status %d, want the listing", path, code)
+			continue
+		}
+		if strings.Contains(body, "SHOULD_NOT_BE_SERVED") {
+			t.Errorf("%s: a symlinked index.html served a file outside the root", path)
+		}
+	}
+
+	// An index.html symlinked to another file *inside* its own root must keep
+	// being served: this is containment, not a ban on symlinks.
+	inside := t.TempDir()
+	write(t, filepath.Join(inside, "page.html"), "<h1>INSIDE</h1>")
+	if err := os.Symlink(filepath.Join(inside, "page.html"), filepath.Join(inside, "index.html")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	tok = makePreview(t, ts, inside)
+	if body, code := getRaw(t, ts, "/preview/"+tok+"/"); code != http.StatusOK || !strings.Contains(body, "INSIDE") {
+		t.Errorf("an index.html symlinked inside the root answered %d: %s", code, body)
+	}
+}
+
+// TestADirectoryPreviewRefusesNonRegularFiles.
+//
+// Same reason as TestPreviewRefusesNonRegularFiles, and the same tap on the
+// same kind of row: os.Open on a FIFO blocks until somebody opens the write
+// end, and nobody does. The single-file preview and the download both refuse
+// one; this route opened whatever the path named.
+func TestADirectoryPreviewRefusesNonRegularFiles(t *testing.T) {
+	ts, _ := newTestServer(t)
+	root := t.TempDir()
+	write(t, filepath.Join(root, "index.html"), "<h1>OK</h1>")
+	if err := syscall.Mkfifo(filepath.Join(root, "pipe"), 0o644); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	tok := makePreview(t, ts, root)
+
+	done := make(chan int, 1)
+	go func() {
+		c := ts.Client()
+		c.Timeout = 5 * time.Second
+		res, err := c.Get(ts.URL + "/preview/" + tok + "/pipe")
+		if err != nil {
+			done <- 0
+			return
+		}
+		res.Body.Close()
+		done <- res.StatusCode
+	}()
+
+	select {
+	case status := <-done:
+		if status != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", status)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no response: the handler is blocked on the FIFO, and shutdown will hang with it")
 	}
 }
 

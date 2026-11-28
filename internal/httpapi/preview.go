@@ -303,6 +303,16 @@ func (s *Server) handleDirPreview(w http.ResponseWriter, r *http.Request) {
 
 // previewFile writes one file with a type derived from its name.
 func (s *Server) dirPreviewFile(w http.ResponseWriter, r *http.Request, abs string, info os.FileInfo) {
+	// Regular files only, the same rule openRegularFile applies to every other
+	// file route. os.Open on a FIFO blocks until somebody opens the write end;
+	// nobody does, so the request goroutine -- and graceful shutdown behind it
+	// -- never returns. `mkfifo` needs no privileges and build scripts create
+	// them, so this is a thing a published directory contains rather than an
+	// attack somebody has to arrange.
+	if !info.Mode().IsRegular() {
+		writeErr(w, http.StatusBadRequest, "not a regular file")
+		return
+	}
 	f, err := os.Open(abs) //nolint:gosec // abs came from browse.Resolve
 	if err != nil {
 		http.NotFound(w, r)
@@ -340,9 +350,19 @@ func (s *Server) dirPreviewFile(w http.ResponseWriter, r *http.Request, abs stri
 func (s *Server) dirPreviewIndex(
 	w http.ResponseWriter, r *http.Request, link store.PreviewLink, abs, rel string,
 ) {
-	if idx := filepath.Join(abs, "index.html"); dirPreviewFileExists(idx) {
-		info, err := os.Stat(idx)
-		if err == nil {
+	// Through browse.Resolve, not filepath.Join beside it.
+	//
+	// The join was the one path in this feature that never met the containment
+	// check every other name goes through: `index.html` may be a symlink, and
+	// one pointing out of the directory was served as the page -- `ln -s
+	// /etc/passwd index.html` in a published directory, or whatever an archive
+	// or a build tool left there. Asking for the same name directly was
+	// refused, which is what made the difference look like nothing.
+	//
+	// A refusal is not an error: a directory with no usable index.html has
+	// always answered with its listing, and that is what it does here.
+	if idx, err := browse.Resolve(link.Root, path.Join(rel, "index.html")); err == nil {
+		if info, serr := os.Stat(idx); serr == nil && info.Mode().IsRegular() {
 			s.dirPreviewFile(w, r, idx, info)
 			return
 		}
@@ -429,11 +449,6 @@ a{color:#6ea8fe}
 a:hover{background:rgb(255 255 255/.06)}
 }
 </style>`
-
-func dirPreviewFileExists(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && !info.IsDir()
-}
 
 // ─── managing the links ───────────────────────────────────────────────────
 
